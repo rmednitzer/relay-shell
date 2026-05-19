@@ -68,6 +68,7 @@ class Relay:
             settings.session_buffer_bytes,
         )
         self.ssh = SshPool(settings=settings, inventory=self.inventory)
+        self.sudo_binary = shutil.which("sudo") or ""
 
     def clamp_timeout(self, timeout: int) -> int:
         return clamp(timeout, 1, self.settings.max_timeout)
@@ -650,7 +651,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                     "euid": euid,
                     "user": user,
                     "is_root": euid == 0,
-                    "sudo_binary": shutil.which("sudo") or "",
+                    "sudo_binary": app.sudo_binary,
                 },
                 "limits": {
                     "default_timeout": cfg.default_timeout,
