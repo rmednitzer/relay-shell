@@ -117,6 +117,10 @@ account, only on hosts you are authorized to administer, behind the network
 controls in [`docs/deployment.md`](docs/deployment.md). See
 [`SECURITY.md`](SECURITY.md) for the threat model and reporting.
 
+If your use case requires maximum model capability, `relay-shell` also supports
+an explicit privileged posture (root/sudo workflows). Use that only on isolated
+administrative hosts with strict network controls and full audit shipping.
+
 ## Layout
 
 ```
@@ -133,6 +137,11 @@ ruff check . && ruff format --check .
 mypy
 pytest
 ```
+
+## AI contributor guidance
+
+- [`AGENTS.md`](AGENTS.md) - repository-wide agent operating contract
+- [`CLAUDE.md`](CLAUDE.md) - Claude-focused development and review guidance
 
 ## License
 

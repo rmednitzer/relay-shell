@@ -6,11 +6,13 @@ from relay_shell.policy import Policy, Tier, classify
 def test_classify_read_only() -> None:
     assert classify("server_info") is Tier.READ_ONLY
     assert classify("ssh_hosts") is Tier.READ_ONLY
+    assert classify("ssh_forward_list") is Tier.READ_ONLY
 
 
 def test_classify_tiers() -> None:
     assert classify("shell_exec", "rm -rf /var/tmp/x") is Tier.IRREVERSIBLE
     assert classify("shell_exec", "systemctl restart nginx") is Tier.STATEFUL
+    assert classify("shell_exec", "sudo ls -la /root") is Tier.STATEFUL
     assert classify("shell_exec", "ls -la") is Tier.REVERSIBLE
     assert classify("ssh_upload", "upload a b") is Tier.STATEFUL
 

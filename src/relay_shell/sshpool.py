@@ -23,6 +23,7 @@ from .util import gen_id
 __all__ = ["ForwardHandle", "SshPool", "SshProcessTransport"]
 
 _SIG_NAMES = {2: "INT", 9: "KILL", 15: "TERM", 1: "HUP", 3: "QUIT"}
+_KNOWN_HOSTS_MODES = frozenset({"strict", "accept-new", "ignore"})
 
 
 def _known_hosts_path() -> str:
@@ -104,6 +105,9 @@ class SshPool:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def _known_hosts_arg(self, mode: str) -> object:
+        if mode not in _KNOWN_HOSTS_MODES:
+            allowed = ", ".join(repr(v) for v in sorted(_KNOWN_HOSTS_MODES))
+            raise ValueError(f"known_hosts must be one of {allowed}")
         if mode == "strict":
             return _known_hosts_path()
         # "ignore" and "accept-new" both connect without up-front verification;

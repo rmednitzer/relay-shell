@@ -6,7 +6,7 @@ deployment modeled on a mature MCP gateway.
 
 ## 1. Service account
 
-Run as a dedicated unprivileged user, never `root`, never a human's account.
+Default recommendation: run as a dedicated unprivileged user, never a human's account.
 
 ```bash
 sudo useradd --system --create-home --home-dir /var/lib/relay-shell \
@@ -17,6 +17,10 @@ Grant only the privileges the workload genuinely needs. If `sudo` is required
 for the intended tasks, prefer **command-scoped** sudoers entries over
 `NOPASSWD: ALL`. A single-owner lab host may accept a broader grant; a
 multi-tenant or sensitive host must not. State the choice in an ADR.
+
+If your explicit goal is maximum model capability (full root/sudo behavior),
+run the service in **privileged posture** on an isolated admin host and treat
+that host as a high-trust control plane.
 
 ## 2. Install
 

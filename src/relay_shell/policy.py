@@ -34,7 +34,7 @@ class Tier(IntEnum):
 
 # Tools that never mutate local/remote state.
 _READ_ONLY_TOOLS = frozenset(
-    {"server_info", "ssh_hosts", "ssh_check", "session_list", "session_recv"}
+    {"server_info", "ssh_hosts", "ssh_check", "session_list", "session_recv", "ssh_forward_list"}
 )
 
 # Substrings that strongly imply an irreversible / high-blast action.
@@ -66,6 +66,9 @@ _TIER2 = re.compile(
     r")"
 )
 
+# Privilege escalation wrappers should not be treated as low-risk commands.
+_PRIV_ESC_PATTERN = re.compile(r"(?ix)\b(sudo|doas|pkexec)\b")
+
 # Tools whose primary effect is to change remote/local state.
 _MUTATING_TOOLS = frozenset({"ssh_upload", "ssh_download", "ssh_forward"})
 
@@ -81,6 +84,8 @@ def classify(tool: str, command: str = "") -> Tier:
     text = command or ""
     if _TIER3.search(text):
         return Tier.IRREVERSIBLE
+    if _PRIV_ESC_PATTERN.search(text):
+        return Tier.STATEFUL
     if _TIER2.search(text):
         return Tier.STATEFUL
     if tool in _MUTATING_TOOLS:

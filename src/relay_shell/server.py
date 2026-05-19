@@ -16,8 +16,11 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import pwd
 import signal
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -37,6 +40,19 @@ from .util import clamp, truncate
 __all__ = ["Relay", "build_server"]
 
 Work = Callable[[], Awaitable[tuple[str, int | None]]]
+_SUDO_SEARCH_PATHS = (Path("/usr/bin/sudo"), Path("/bin/sudo"), Path("/usr/local/bin/sudo"))
+
+
+def _find_sudo_binary() -> str:
+    """Return an executable sudo path from well-known locations, or ``""``.
+
+    This is informational metadata for ``server_info`` only; command execution
+    behavior does not depend on this lookup.
+    """
+    for path in _SUDO_SEARCH_PATHS:
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return ""
 
 
 def _ctx_ids(ctx: Context | None) -> tuple[str, str]:
@@ -65,6 +81,7 @@ class Relay:
             settings.session_buffer_bytes,
         )
         self.ssh = SshPool(settings=settings, inventory=self.inventory)
+        self.sudo_binary = _find_sudo_binary()
 
     def clamp_timeout(self, timeout: int) -> int:
         return clamp(timeout, 1, self.settings.max_timeout)
@@ -632,11 +649,23 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         """Report version, effective limits, policy mode, and audit status."""
 
         async def _work() -> tuple[str, int | None]:
+            uid = os.getuid()
+            euid = os.geteuid()
+            user = ""
+            with contextlib.suppress(KeyError):
+                user = pwd.getpwuid(euid).pw_name
             info = {
                 "name": "relay-shell",
                 "version": __version__,
                 "transport": cfg.transport,
                 "policy_mode": cfg.policy_mode,
+                "runtime": {
+                    "uid": uid,
+                    "euid": euid,
+                    "user": user,
+                    "is_root": euid == 0,
+                    "sudo_binary": app.sudo_binary,
+                },
                 "limits": {
                     "default_timeout": cfg.default_timeout,
                     "max_timeout": cfg.max_timeout,

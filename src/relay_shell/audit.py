@@ -44,6 +44,11 @@ class AuditLogger:
         try:
             target = Path(path).expanduser()
             target.parent.mkdir(parents=True, exist_ok=True)
+            # Pre-create with mode 0600 to avoid a permissive first-create window.
+            target.touch(mode=0o600, exist_ok=True)
+            # Defensive for existing files that might already be too permissive.
+            with contextlib.suppress(OSError):
+                target.chmod(0o600)
             sink = WatchedFileHandler(str(target), encoding="utf-8")
         except OSError as exc:  # unwritable path -> degrade, never crash
             self.degraded = True
