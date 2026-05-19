@@ -45,9 +45,9 @@ dev = [
 relay-shell = "relay_shell.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/rmednitzer/mcp"
-Source = "https://github.com/rmednitzer/mcp"
-Issues = "https://github.com/rmednitzer/mcp/issues"
+Homepage = "https://github.com/rmednitzer/relay-shell"
+Source = "https://github.com/rmednitzer/relay-shell"
+Issues = "https://github.com/rmednitzer/relay-shell/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/relay_shell"]

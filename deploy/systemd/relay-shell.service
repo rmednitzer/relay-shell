@@ -1,6 +1,6 @@
 [Unit]
 Description=relay-shell - MCP server for shell and SSH operations
-Documentation=https://github.com/rmednitzer/mcp
+Documentation=https://github.com/rmednitzer/relay-shell
 After=network-online.target
 Wants=network-online.target
 

@@ -70,7 +70,7 @@ Full reference: [`docs/tools.md`](docs/tools.md).
 ## Quickstart
 
 ```bash
-git clone https://github.com/rmednitzer/mcp.git && cd mcp
+git clone https://github.com/rmednitzer/relay-shell.git && cd relay-shell
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 
