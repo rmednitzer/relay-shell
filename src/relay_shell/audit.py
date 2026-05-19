@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import sys
 from logging.handlers import WatchedFileHandler
 from pathlib import Path
@@ -44,6 +45,8 @@ class AuditLogger:
         try:
             target = Path(path).expanduser()
             target.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(target), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+            os.close(fd)
             sink = WatchedFileHandler(str(target), encoding="utf-8")
             with contextlib.suppress(OSError):
                 target.chmod(0o600)
