@@ -1,0 +1,129 @@
+# Deployment
+
+`mcpx` grants real administrative power. The single most important control is
+**where and as whom it runs**. This guide describes a production-grade
+deployment modeled on a mature MCP gateway.
+
+## 1. Service account
+
+Run as a dedicated unprivileged user, never `root`, never a human's account.
+
+```bash
+sudo useradd --system --create-home --home-dir /var/lib/mcpx \
+     --shell /usr/sbin/nologin mcpx
+```
+
+Grant only the privileges the workload genuinely needs. If `sudo` is required
+for the intended tasks, prefer **command-scoped** sudoers entries over
+`NOPASSWD: ALL`. A single-owner lab host may accept a broader grant; a
+multi-tenant or sensitive host must not. State the choice in an ADR.
+
+## 2. Install
+
+```bash
+sudo -u mcpx python3 -m venv /var/lib/mcpx/venv
+sudo -u mcpx /var/lib/mcpx/venv/bin/pip install --upgrade pip
+sudo -u mcpx /var/lib/mcpx/venv/bin/pip install /path/to/mcp   # or: pip install mcpx
+```
+
+`deploy/install.sh` does this idempotently. It deliberately does **not**
+auto-start the service; review the unit and configuration first.
+
+## 3. systemd
+
+`deploy/systemd/mcpx.service` plus the `mcpx.service.d/hardening.conf`
+drop-in. The hardening is intentionally **partial**: filesystem, capability,
+and syscall confinement (`ProtectSystem=strict`, `NoNewPrivileges`,
+`SystemCallFilter`) would break the very shell/SSH capability this service
+exists to provide (see `docs/adr/0002`). What is applied: resource caps
+(`MemoryMax`, `CPUQuota`, `TasksMax`), `PrivateTmp`, restart limits, and the
+non-execution-breaking `Protect*` directives. Encrypted credentials are
+delivered via `LoadCredentialEncrypted=`.
+
+```bash
+sudo cp deploy/systemd/mcpx.service /etc/systemd/system/
+sudo mkdir -p /etc/systemd/system/mcpx.service.d
+sudo cp deploy/systemd/mcpx.service.d/hardening.conf /etc/systemd/system/mcpx.service.d/
+sudo systemctl daemon-reload
+sudo systemctl enable --now mcpx
+```
+
+## 4. Network edge (HTTP transport)
+
+The HTTP transport binds `127.0.0.1` by design. Terminate TLS and restrict by
+source IP at a reverse proxy. `deploy/Caddyfile` is a reference:
+
+- automatic TLS (ACME),
+- an `@blocked` matcher that 403s any source outside the allowlisted CIDRs,
+- HSTS / `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy`,
+- `reverse_proxy` to the loopback MCP port.
+
+Set the allowlist to the CIDRs of your MCP client only. The OAuth browser
+endpoints (`/authorize`, `/.well-known/*`) are reachable for the redirect
+flow; tool traffic and `/token` are CIDR-restricted.
+
+Defense in depth: a host firewall (only 80/443 inbound), the proxy CIDR
+matcher, OAuth 2.1, then the policy/audit layer.
+
+## 5. OAuth 2.1 (optional)
+
+```bash
+MCPX_TRANSPORT=http
+MCPX_AUTH_ENABLED=true
+MCPX_AUTH_ISSUER=https://mcpx.example.org
+MCPX_AUTH_STATE_DIR=/var/lib/mcpx/oauth
+MCPX_AUTH_SINGLE_CLIENT=true       # lock DCR after the first client registers
+```
+
+Install the `[http]` extra. Tokens are file-backed under the state dir
+(`clients.json`, `codes.json`, `tokens.json`), access tokens are short-lived,
+refresh tokens rotate on use, and expiry is enforced lazily on read. With
+single-client lockdown, dynamic registration is refused once one client
+exists.
+
+## 6. Audit
+
+`MCPX_AUDIT_PATH` (default `/var/log/mcpx/audit.jsonl`). Make it append-only
+and rotate it without losing that attribute:
+
+```bash
+sudo mkdir -p /var/log/mcpx && sudo chown mcpx:mcpx /var/log/mcpx
+sudo touch /var/log/mcpx/audit.jsonl && sudo chattr +a /var/log/mcpx/audit.jsonl
+sudo cp deploy/logrotate/mcpx /etc/logrotate.d/mcpx
+```
+
+The bundled logrotate config drops the append-only bit only for the rotate
+and restores it immediately. **Ship the log off-host** and alert on gaps; an
+on-host log is evidence only until the host is compromised.
+
+## 7. SSH credential scoping
+
+The realized credential surface is whatever keys the service account can use.
+Prefer one key per role/scope, revocable independently, over one all-powerful
+key. `MCPX_SSH_KNOWN_HOSTS=strict` is recommended for production; pre-populate
+`~/.ssh/known_hosts` for the service account. Provide a JSON inventory via
+`MCPX_INVENTORY` for hosts not in `ssh_config`.
+
+## 8. Policy posture
+
+- `open` - full access, every call still classified and audited. The
+  documented single-owner default.
+- `guarded` - Tier 2+ refused unless `MCPX_POLICY_ALLOW` matches; set an
+  allowlist of sanctioned change patterns.
+- `readonly` - only Tier 0. Useful for an observation-only client.
+
+`MCPX_POLICY_DENY` is enforced first in **every** mode; use it for absolute
+prohibitions regardless of posture.
+
+## 9. Health
+
+`scripts/healthcheck.sh` checks the local HTTP port. For stdio, liveness is
+the supervising client's concern. `server_info` reports effective limits and
+whether the audit sink is degraded (a degraded audit sink is an alert).
+
+## Emergency
+
+- Disable fast: `sudo systemctl stop mcpx` (and revoke OAuth tokens by
+  clearing `tokens.json`, or rotate the proxy CIDR allowlist to none).
+- Revoke SSH reach: remove/disable the service account's keys on targets.
+- The audit log (off-host copy) is the post-incident record.

@@ -1,0 +1,7 @@
+"""mcpx - a reliable, capable MCP server for shell and SSH operations."""
+
+from __future__ import annotations
+
+__all__ = ["__version__"]
+
+__version__ = "0.1.0"

@@ -1,0 +1,15 @@
+mcpx
+Copyright 2026 rmednitzer
+
+This product includes software developed as an open-source Model Context
+Protocol (MCP) server for shell and SSH operations.
+
+Architecture, security model (tiered authority, append-only hashed audit,
+optional OAuth 2.1), and deployment patterns are modeled on a production
+MCP gateway ("Vertex") and established operational best practices.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0

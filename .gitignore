@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime state / secrets (NEVER commit)
+*.env
+.env
+state/
+audit.jsonl
+*.log
+oauth/
+*.pem
+*.key
+id_ed25519*
+id_rsa*
+known_hosts
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store

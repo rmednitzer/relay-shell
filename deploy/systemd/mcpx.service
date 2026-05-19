@@ -1,0 +1,28 @@
+[Unit]
+Description=mcpx - MCP server for shell and SSH operations
+Documentation=https://github.com/rmednitzer/mcp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mcpx
+Group=mcpx
+WorkingDirectory=/var/lib/mcpx
+# Configuration is environment-driven; keep secrets out of the unit.
+EnvironmentFile=-/etc/mcpx/mcpx.env
+Environment=MCPX_TRANSPORT=http
+Environment=MCPX_HTTP_HOST=127.0.0.1
+Environment=MCPX_HTTP_PORT=8080
+Environment=MCPX_AUDIT_PATH=/var/log/mcpx/audit.jsonl
+ExecStart=/var/lib/mcpx/venv/bin/python -m mcpx
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=300
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mcpx
+
+[Install]
+WantedBy=multi-user.target

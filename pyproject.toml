@@ -1,0 +1,96 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcpx"
+version = "0.1.0"
+description = "A highly reliable, maximally capable MCP server for complete shell and SSH mastery."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "rmednitzer" }]
+keywords = ["mcp", "model-context-protocol", "shell", "ssh", "automation", "fleet"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: System :: Systems Administration",
+  "Topic :: System :: Shells",
+]
+dependencies = [
+  "mcp==1.26.0",
+  "pydantic>=2.11",
+  "pydantic-settings>=2.7",
+  "asyncssh>=2.18",
+  "uvicorn>=0.34",
+  "starlette>=0.47",
+  "anyio>=4.6",
+]
+
+[project.optional-dependencies]
+http = ["PyJWT>=2.10", "cryptography>=44"]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.8",
+  "mypy>=1.13",
+  "PyJWT>=2.10",
+  "cryptography>=44",
+]
+
+[project.scripts]
+mcpx = "mcpx.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/rmednitzer/mcp"
+Source = "https://github.com/rmednitzer/mcp"
+Issues = "https://github.com/rmednitzer/mcp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcpx"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ASYNC", "PIE", "PTH", "BLE"]
+# B008: FastMCP tools use callable defaults by design.
+# RUF006: background tasks are owned by the session registry by design.
+# ASYNC109: timeout params are intentional and enforced via asyncio.wait_for.
+# ASYNC240: also flags non-blocking path-string ops (expanduser/join); the
+#   only real blocking filesystem IO is offloaded via asyncio.to_thread.
+ignore = ["B008", "RUF006", "ASYNC109", "ASYNC240"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B", "BLE", "PTH"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+disallow_untyped_defs = true
+files = ["src/mcpx"]
+
+[[tool.mypy.overrides]]
+module = ["asyncssh.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["mcpx.server"]
+# FastMCP's Context is generic and its tool decorator typing varies by SDK
+# minor version; relax just these two checks for the wiring module.
+disallow_untyped_decorators = false
+disallow_any_generics = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]

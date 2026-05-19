@@ -1,0 +1,56 @@
+# Reference Caddyfile for the mcpx HTTP transport.
+#
+# mcpx binds 127.0.0.1:8080 by design. Caddy terminates TLS, restricts the
+# source to an explicit CIDR allowlist, sets security headers, and reverse
+# proxies to the loopback MCP port. Replace the domain and the CIDRs.
+
+{
+	email admin@example.org
+}
+
+mcpx.example.org {
+	# OAuth browser/redirect + discovery must be reachable for the auth
+	# flow; they still require a registered client and PKCE.
+	handle /authorize {
+		reverse_proxy localhost:8080 {
+			header_up Host {upstream_hostport}
+		}
+	}
+	handle /.well-known/oauth-authorization-server {
+		reverse_proxy localhost:8080 {
+			header_up Host {upstream_hostport}
+		}
+	}
+	handle /.well-known/oauth-protected-resource* {
+		reverse_proxy localhost:8080 {
+			header_up Host {upstream_hostport}
+		}
+	}
+
+	# Everything else (tool traffic, /token) is CIDR-restricted. Set these
+	# to the source ranges of your MCP client ONLY.
+	@blocked not remote_ip 203.0.113.0/24 198.51.100.0/24 127.0.0.1/8 ::1
+	handle @blocked {
+		respond "Forbidden" 403
+	}
+
+	reverse_proxy localhost:8080 {
+		header_up Host {upstream_hostport}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/mcpx-access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+		format json
+	}
+}
