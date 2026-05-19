@@ -27,12 +27,22 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     # Bearer / token=... / api[_-]?key=...
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]+"),
     re.compile(r"(?i)\b(api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*\S+"),
-    # CLI-style flags: --password value, --token=value, --api-key foo.
-    # The negative lookahead on ``-`` prevents the regex from swallowing the
-    # next option token (e.g. ``--password --host db`` must not consume
-    # ``--host``, since ``--password`` alone usually means "prompt").
+    # CLI-style flags: ``--password value``, ``--token=value``,
+    # ``--api-key "two words"``. The value is either a single bare token
+    # (with negative lookahead on ``-`` so we don't eat the next option),
+    # or a fully quoted string - escape-aware - so passphrase secrets with
+    # embedded whitespace are scrubbed as a unit instead of leaking the
+    # trailing words.
     re.compile(
-        r"(?i)(--?(?:password|passwd|pwd|secret|token|api[_-]?key))(?:[=\s]+)(?!-)\S+",
+        r"""(?ix)
+        --?(?:password|passwd|pwd|secret|token|api[_-]?key)
+        [=\s]+
+        (?:
+            "(?:[^"\\]|\\.)*"     # double-quoted, escape-aware
+          | '(?:[^'\\]|\\.)*'     # single-quoted, escape-aware
+          | (?!-)\S+              # bare value not starting with a dash
+        )
+        """,
     ),
     # Common provider token shapes
     re.compile(r"\bgith(?:ub)?_pat_[A-Za-z0-9_]+"),
@@ -46,12 +56,22 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
 # replacement; everything else collapses to the placeholder.
 _URL_CREDS = re.compile(r"://[^/\s:@]+:[^/\s:@]+@")
 
-# Short-form ``-p<value>`` is dangerously overloaded across tools (mysql
-# password, ssh/nmap port, ``-proxy``, etc.). Only scrub it when an obvious
-# database-family invocation is present in the *same* argument string, so
-# generic command flags retain their audit fidelity.
+# Short-form ``-p<value>`` is dangerously overloaded: mysql password vs
+# ssh/nmap port spec vs generic ``-proxy`` and long options like
+# ``--protocol``. Two narrowings stack:
+#   * the lookbehind excludes a leading ``-`` so we never start matching at
+#     the second dash of a long option (``--protocol`` -> no match);
+#   * application is per-line and gated on the same line containing a
+#     mysql-family token, so a multi-line script with both ``mysql -psecret``
+#     and a later ``ssh -p22`` only redacts the mysql line.
 _DB_CLI = re.compile(r"\b(?:mysql|mariadb|mysqldump|mysqladmin|mycli)\b")
-_DB_PASSWORD_FLAG = re.compile(r"(?<![A-Za-z0-9])(-p)[^\s=-]\S*")
+_DB_PASSWORD_FLAG = re.compile(r"(?<![A-Za-z0-9-])(-p)[^\s=-]\S*")
+
+
+def _scrub_db_password_in_line(line: str) -> str:
+    if not _DB_CLI.search(line):
+        return line
+    return _DB_PASSWORD_FLAG.sub(lambda m: f"{m.group(1)}{_PLACEHOLDER}", line)
 
 
 def redact(text: str) -> str:
@@ -60,7 +80,9 @@ def redact(text: str) -> str:
     for pat in _PATTERNS:
         out = pat.sub(_PLACEHOLDER, out)
     if _DB_CLI.search(out):
-        out = _DB_PASSWORD_FLAG.sub(lambda m: f"{m.group(1)}{_PLACEHOLDER}", out)
+        # Per-line scoping: only lines that themselves carry a mysql-family
+        # token are eligible for the overloaded ``-p<value>`` substitution.
+        out = "\n".join(_scrub_db_password_in_line(line) for line in out.split("\n"))
     return out
 
 

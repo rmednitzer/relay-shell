@@ -54,6 +54,39 @@ def test_redact_cli_flag_does_not_eat_next_flag() -> None:
     assert "--quiet" in out2
 
 
+def test_redact_cli_flag_handles_quoted_value() -> None:
+    # Quoted passphrase-style secrets must be scrubbed as a unit, not just
+    # up to the first whitespace.
+    out = redact('--password "top secret pass" --host db')
+    assert "top secret" not in out
+    assert "secret" not in out
+    assert "--host" in out and "db" in out
+    # Single quotes too.
+    out2 = redact("--token 'super secret value'")
+    assert "super secret" not in out2
+    # Escape-aware: inner ``\"`` does not end the quoted region.
+    out3 = redact(r'--password "esc\"aped value" --next')
+    assert "aped value" not in out3
+    assert "--next" in out3
+
+
+def test_dash_p_does_not_match_long_option_value() -> None:
+    # ``--protocol`` starts with two dashes; the ``-p`` regex must not start
+    # at the second dash and rewrite the option name.
+    out = redact("mysql --protocol=tcp -uroot mydb")
+    assert "--protocol=tcp" in out
+
+
+def test_dash_p_scoping_is_per_line() -> None:
+    # In a multi-line script, a ``mysql`` line must not enable ``-p`` scrub
+    # on unrelated lines (e.g. an ``ssh -p22 host`` later in the script).
+    script = "mysql -puploaded-secret -h db\nssh -p22 user@host\n"
+    out = redact(script)
+    assert "uploaded-secret" not in out
+    assert "-p22" in out
+    assert "user@host" in out
+
+
 def test_redact_mysql_dash_p_only_in_db_context() -> None:
     # In MySQL-family context, ``-p<secret>`` is scrubbed in place.
     assert "leaked" not in redact("mysql -uroot -pleaked-pw -h db")
