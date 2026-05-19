@@ -43,6 +43,17 @@ def test_redact_cli_flag_forms() -> None:
     assert "abcd1234" not in redact("--api-key abcd1234 --quiet")
 
 
+def test_redact_cli_flag_does_not_eat_next_flag() -> None:
+    # ``--password`` with no value (interactive prompt) followed by another
+    # flag must not cause ``--host`` to be redacted as if it were the secret.
+    out = redact("mysql --password --host db.example -u root")
+    assert "--host" in out
+    assert "db.example" in out
+    # ``--token`` followed by ``--quiet`` likewise leaves ``--quiet`` intact.
+    out2 = redact("client --token --quiet")
+    assert "--quiet" in out2
+
+
 def test_redact_mysql_dash_p_only_in_db_context() -> None:
     # In MySQL-family context, ``-p<secret>`` is scrubbed in place.
     assert "leaked" not in redact("mysql -uroot -pleaked-pw -h db")

@@ -27,9 +27,12 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     # Bearer / token=... / api[_-]?key=...
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]+"),
     re.compile(r"(?i)\b(api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*\S+"),
-    # CLI-style flags: --password value, --token=value, --api-key foo
+    # CLI-style flags: --password value, --token=value, --api-key foo.
+    # The negative lookahead on ``-`` prevents the regex from swallowing the
+    # next option token (e.g. ``--password --host db`` must not consume
+    # ``--host``, since ``--password`` alone usually means "prompt").
     re.compile(
-        r"(?i)(--?(?:password|passwd|pwd|secret|token|api[_-]?key))(?:[=\s]+)\S+",
+        r"(?i)(--?(?:password|passwd|pwd|secret|token|api[_-]?key))(?:[=\s]+)(?!-)\S+",
     ),
     # Common provider token shapes
     re.compile(r"\bgith(?:ub)?_pat_[A-Za-z0-9_]+"),
