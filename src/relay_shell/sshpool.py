@@ -106,7 +106,8 @@ class SshPool:
 
     def _known_hosts_arg(self, mode: str) -> object:
         if mode not in _KNOWN_HOSTS_MODES:
-            raise ValueError("known_hosts must be one of 'strict', 'accept-new', or 'ignore'")
+            allowed = ", ".join(repr(v) for v in sorted(_KNOWN_HOSTS_MODES))
+            raise ValueError(f"known_hosts must be one of {allowed}")
         if mode == "strict":
             return _known_hosts_path()
         # "ignore" and "accept-new" both connect without up-front verification;

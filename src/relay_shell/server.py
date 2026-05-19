@@ -43,6 +43,11 @@ Work = Callable[[], Awaitable[tuple[str, int | None]]]
 
 
 def _find_sudo_binary() -> str:
+    """Return an executable sudo path from well-known locations, or ``""``.
+
+    This is informational metadata for ``server_info`` only; command execution
+    behavior does not depend on this lookup.
+    """
     for path in (Path("/usr/bin/sudo"), Path("/bin/sudo"), Path("/usr/local/bin/sudo")):
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
