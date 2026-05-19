@@ -14,10 +14,10 @@ from typing import Any
 import asyncssh
 import pytest
 
-from mcpx.config import Settings
-from mcpx.inventory import Inventory
-from mcpx.sessions import SessionRegistry
-from mcpx.sshpool import SshPool
+from relay_shell.config import Settings
+from relay_shell.inventory import Inventory
+from relay_shell.sessions import SessionRegistry
+from relay_shell.sshpool import SshPool
 
 
 class _NoAuthServer(asyncssh.SSHServer):

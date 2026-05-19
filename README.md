@@ -1,9 +1,9 @@
-# mcpx
+# relay-shell
 
 A highly reliable, maximally capable [Model Context Protocol](https://modelcontextprotocol.io)
 server for **complete shell and SSH mastery**.
 
-`mcpx` gives an MCP client (Claude, or any MCP-compatible agent) a robust,
+`relay-shell` gives an MCP client (Claude, or any MCP-compatible agent) a robust,
 auditable interface to operate a Linux host and a fleet of remote hosts over
 SSH: one-shot command execution, long-lived interactive PTY sessions, scripted
 runs, SFTP transfer, port forwarding, and host-inventory aware connectivity.
@@ -75,16 +75,16 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 
 # stdio transport (local agent / Claude Desktop / MCP Inspector)
-mcpx
+relay-shell
 
 # HTTP transport (streamable-http on 127.0.0.1:8080)
-MCPX_TRANSPORT=http mcpx
+RELAY_SHELL_TRANSPORT=http relay-shell
 ```
 
 Register with an MCP client (stdio):
 
 ```json
-{ "mcpServers": { "mcpx": { "command": "mcpx" } } }
+{ "mcpServers": { "relay-shell": { "command": "relay-shell" } } }
 ```
 
 Configuration is environment-driven; see [`.env.example`](.env.example) and
@@ -92,7 +92,7 @@ Configuration is environment-driven; see [`.env.example`](.env.example) and
 
 ## Security posture
 
-`mcpx` runs unsandboxed with the privileges of its service account by design
+`relay-shell` runs unsandboxed with the privileges of its service account by design
 (see [`docs/adr/0002-no-sandbox-full-access.md`](docs/adr/0002-no-sandbox-full-access.md)):
 sandboxing the process would defeat the very capability it exists to provide.
 Safety is achieved with **compensating controls**, not by crippling the tool:
@@ -102,7 +102,7 @@ Safety is achieved with **compensating controls**, not by crippling the tool:
   client id, and the assessed tier. Append-only on disk; rotation-safe handler.
 - **Tiered authority** - every call is classified Tier 0..3
   ([`docs/adr/0003-tiered-authority.md`](docs/adr/0003-tiered-authority.md)).
-  `MCPX_POLICY_MODE` selects `open` (default), `guarded`, or `readonly`.
+  `RELAY_SHELL_POLICY_MODE` selects `open` (default), `guarded`, or `readonly`.
 - **Redaction** - audited arguments are scrubbed for tokens, keys, and
   `Authorization` material.
 - **Bounds** - timeout and output caps on every tool; bounded session count
@@ -120,7 +120,7 @@ controls in [`docs/deployment.md`](docs/deployment.md). See
 ## Layout
 
 ```
-src/mcpx/        server, config, audit, policy, redaction, sessions, tools, auth
+src/relay-shell/        server, config, audit, policy, redaction, sessions, tools, auth
 deploy/          systemd unit + hardening drop-in, Caddyfile, logrotate, install.sh
 docs/            architecture, tool reference, deployment, ADRs
 tests/           unit + integration (in-process SSH server, no network)

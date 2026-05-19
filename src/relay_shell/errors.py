@@ -6,18 +6,18 @@ auditable string. These helpers make that consistent.
 
 from __future__ import annotations
 
-__all__ = ["McpxError", "PolicyDenied", "SessionError", "fmt_exc"]
+__all__ = ["PolicyDenied", "RelayError", "SessionError", "fmt_exc"]
 
 
-class McpxError(Exception):
+class RelayError(Exception):
     """Base class for expected, operator-facing errors."""
 
 
-class PolicyDenied(McpxError):
+class PolicyDenied(RelayError):
     """Raised/returned when the policy layer refuses a call."""
 
 
-class SessionError(McpxError):
+class SessionError(RelayError):
     """Raised when a session id is unknown or a session operation fails."""
 
 

@@ -3,7 +3,7 @@
 Pure execution helpers returning ``(body, exit_code)``. They never raise for
 ordinary failures (timeouts, bad cwd, decode issues) - the server wrapper adds
 the ``[exit N]`` prefix, truncation, policy, and audit. Long-lived interactive
-PTYs are handled by :mod:`mcpx.sessions`; this module covers one-shot runs.
+PTYs are handled by :mod:`relay_shell.sessions`; this module covers one-shot runs.
 """
 
 from __future__ import annotations

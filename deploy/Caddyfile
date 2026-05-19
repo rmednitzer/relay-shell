@@ -1,6 +1,6 @@
-# Reference Caddyfile for the mcpx HTTP transport.
+# Reference Caddyfile for the relay-shell HTTP transport.
 #
-# mcpx binds 127.0.0.1:8080 by design. Caddy terminates TLS, restricts the
+# relay-shell binds 127.0.0.1:8080 by design. Caddy terminates TLS, restricts the
 # source to an explicit CIDR allowlist, sets security headers, and reverse
 # proxies to the loopback MCP port. Replace the domain and the CIDRs.
 
@@ -8,7 +8,7 @@
 	email admin@example.org
 }
 
-mcpx.example.org {
+relay-shell.example.org {
 	# OAuth browser/redirect + discovery must be reachable for the auth
 	# flow; they still require a registered client and PKCE.
 	handle /authorize {
@@ -47,7 +47,7 @@ mcpx.example.org {
 	}
 
 	log {
-		output file /var/log/caddy/mcpx-access.log {
+		output file /var/log/caddy/relay-shell-access.log {
 			roll_size 50MiB
 			roll_keep 5
 		}

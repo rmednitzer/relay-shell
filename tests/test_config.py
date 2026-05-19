@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from mcpx.config import Settings
+from relay_shell.config import Settings
 
 
 def test_defaults(clean_env: None) -> None:
@@ -14,9 +14,9 @@ def test_defaults(clean_env: None) -> None:
 
 
 def test_env_override(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MCPX_TRANSPORT", "http")
-    monkeypatch.setenv("MCPX_POLICY_MODE", "guarded")
-    monkeypatch.setenv("MCPX_HTTP_PORT", "9000")
+    monkeypatch.setenv("RELAY_SHELL_TRANSPORT", "http")
+    monkeypatch.setenv("RELAY_SHELL_POLICY_MODE", "guarded")
+    monkeypatch.setenv("RELAY_SHELL_HTTP_PORT", "9000")
     s = Settings()
     assert s.transport == "http"
     assert s.policy_mode == "guarded"
@@ -24,12 +24,12 @@ def test_env_override(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_invalid_transport(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MCPX_TRANSPORT", "carrier-pigeon")
+    monkeypatch.setenv("RELAY_SHELL_TRANSPORT", "carrier-pigeon")
     with pytest.raises(ValidationError):
         Settings()
 
 
 def test_invalid_known_hosts(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MCPX_SSH_KNOWN_HOSTS", "whatever")
+    monkeypatch.setenv("RELAY_SHELL_SSH_KNOWN_HOSTS", "whatever")
     with pytest.raises(ValidationError):
         Settings()

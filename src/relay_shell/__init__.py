@@ -1,4 +1,4 @@
-"""mcpx - a reliable, capable MCP server for shell and SSH operations."""
+"""relay_shell - a reliable, capable MCP server for shell and SSH operations."""
 
 from __future__ import annotations
 

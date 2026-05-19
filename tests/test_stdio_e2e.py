@@ -20,13 +20,13 @@ async def test_stdio_initialize_list_and_call(tmp_path: Path) -> None:
     env = dict(os.environ)
     env.update(
         {
-            "MCPX_TRANSPORT": "stdio",
-            "MCPX_AUDIT_PATH": str(tmp_path / "audit.jsonl"),
-            "MCPX_POLICY_MODE": "open",
-            "MCPX_SSH_CONFIG": str(tmp_path / "no_cfg"),
+            "RELAY_SHELL_TRANSPORT": "stdio",
+            "RELAY_SHELL_AUDIT_PATH": str(tmp_path / "audit.jsonl"),
+            "RELAY_SHELL_POLICY_MODE": "open",
+            "RELAY_SHELL_SSH_CONFIG": str(tmp_path / "no_cfg"),
         }
     )
-    params = StdioServerParameters(command=sys.executable, args=["-m", "mcpx"], env=env)
+    params = StdioServerParameters(command=sys.executable, args=["-m", "relay_shell"], env=env)
 
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
@@ -41,7 +41,7 @@ async def test_stdio_initialize_list_and_call(tmp_path: Path) -> None:
         info_text = "".join(
             block.text for block in info.content if getattr(block, "type", "") == "text"
         )
-        assert '"name": "mcpx"' in info_text
+        assert '"name": "relay-shell"' in info_text
         assert '"policy_mode": "open"' in info_text
 
         # The command (an argument) is deliberately audited; the OUTPUT body is

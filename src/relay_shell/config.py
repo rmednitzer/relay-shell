@@ -1,6 +1,6 @@
 """Typed, environment-driven configuration.
 
-All settings are read from ``MCPX_*`` environment variables (and an optional
+All settings are read from ``RELAY_SHELL_*`` environment variables (and an optional
 ``.env``). Invalid values fail fast at startup rather than mid-run.
 """
 
@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     """Effective server configuration. Immutable after load."""
 
     model_config = SettingsConfigDict(
-        env_prefix="MCPX_",
+        env_prefix="RELAY_SHELL_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     policy_allow: str = ""
 
     # Audit
-    audit_path: str = "/var/log/mcpx/audit.jsonl"
+    audit_path: str = "/var/log/relay-shell/audit.jsonl"
     audit_stderr: bool = False
 
     # SSH
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # OAuth 2.1 (HTTP transport only)
     auth_enabled: bool = False
     auth_issuer: str = "https://localhost:8080"
-    auth_state_dir: str = "/var/lib/mcpx/oauth"
+    auth_state_dir: str = "/var/lib/relay-shell/oauth"
     auth_single_client: bool = True
     auth_access_ttl: int = Field(default=3600, ge=60)
     auth_refresh_ttl: int = Field(default=2_592_000, ge=300)

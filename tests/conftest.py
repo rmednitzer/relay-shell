@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mcpx.config import Settings
+from relay_shell.config import Settings
 
 
 @pytest.fixture
@@ -28,6 +28,6 @@ def settings(tmp_path: Path) -> Settings:
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     for key in list(__import__("os").environ):
-        if key.startswith("MCPX_"):
+        if key.startswith("RELAY_SHELL_"):
             monkeypatch.delenv(key, raising=False)
     yield

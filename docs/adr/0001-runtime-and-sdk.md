@@ -5,7 +5,7 @@
 
 ## Context
 
-`mcpx` must speak the Model Context Protocol reliably, run arbitrary local
+`relay-shell` must speak the Model Context Protocol reliably, run arbitrary local
 commands and interactive PTYs, and perform full SSH operations (exec, PTY,
 SFTP, port forwarding, jump hosts). The choice affects protocol correctness,
 type safety, and how much transport/auth code we own versus delegate.

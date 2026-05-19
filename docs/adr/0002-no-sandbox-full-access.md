@@ -5,7 +5,7 @@
 
 ## Context
 
-`mcpx` exists to give an MCP client genuine shell and SSH mastery over hosts
+`relay-shell` exists to give an MCP client genuine shell and SSH mastery over hosts
 the operator administers. A meaningful internal sandbox (filesystem
 confinement, dropped capabilities, a syscall allowlist, no-new-privileges)
 directly contradicts that purpose: the tool's job is to run arbitrary

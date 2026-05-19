@@ -1,9 +1,9 @@
 # Architecture
 
-`mcpx` is a single Python process exposing shell and SSH operations as MCP
+`relay-shell` is a single Python process exposing shell and SSH operations as MCP
 tools. It is intentionally thin: the MCP SDK (FastMCP) owns the protocol and
 (optional) OAuth edge; `asyncssh` owns SSH; the operating system owns
-execution. `mcpx` owns the parts that make that combination *safe to operate*:
+execution. `relay-shell` owns the parts that make that combination *safe to operate*:
 classification, bounding, auditing, and session lifecycle.
 
 ```
@@ -13,7 +13,7 @@ MCP client (Claude / Inspector / SDK)
         v
    FastMCP (mcp==1.26.0)
         v
-   Mcpx.run()  ── policy.check ──> tier + admit/deny      (deny list first, always)
+   Relay.run()  ── policy.check ──> tier + admit/deny      (deny list first, always)
         |        ── redaction ───> audit args
         |        ── work() ──────> the actual operation
         |        ── truncate ────> output budget
@@ -29,14 +29,14 @@ MCP client (Claude / Inspector / SDK)
 
 ## Request lifecycle
 
-Every tool body is identical in shape (`Mcpx.run`):
+Every tool body is identical in shape (`Relay.run`):
 
 1. **Identify** - best-effort `request_id` / `client_id` from the MCP context.
 2. **Classify + admit** - `policy.check(tool, text)`. The deny list is applied
    first in every mode. `readonly` permits only Tier 0; `guarded` refuses
    Tier 2+ unless an allow pattern matches; `open` permits all but still
    classifies. A refusal is audited and returned as a `[DENIED ...]` string.
-3. **Execute** - the work coroutine runs. `McpxError` and any other exception
+3. **Execute** - the work coroutine runs. `RelayError` and any other exception
    are converted to a bounded `[ERROR: ...]` string; nothing propagates into
    the transport.
 4. **Bound** - the body is truncated to the effective output budget (byte
@@ -52,7 +52,7 @@ out, or be denied, but it always returns a single bounded, audited string.
 
 | Module | Responsibility |
 |--------|----------------|
-| `config` | Typed `MCPX_*` settings; invalid values fail fast at startup. |
+| `config` | Typed `RELAY_SHELL_*` settings; invalid values fail fast at startup. |
 | `util` | Time, hashing, byte-safe truncation, id generation. |
 | `redaction` | Scrub secrets from audited arguments. |
 | `audit` | Rotation-safe append-only JSONL; hash, never body. |

@@ -24,15 +24,15 @@ Classify every call into a tier and admit it according to a configured mode.
 Classification is conservative (ambiguity rounds **up**) and based on the tool
 plus a scan of the command/script text.
 
-Modes (`MCPX_POLICY_MODE`):
+Modes (`RELAY_SHELL_POLICY_MODE`):
 
 - `open` - permit all, still classify and audit. Default; matches the
   documented single-owner posture.
-- `guarded` - refuse Tier >= 2 unless `MCPX_POLICY_ALLOW` matches; lower
+- `guarded` - refuse Tier >= 2 unless `RELAY_SHELL_POLICY_ALLOW` matches; lower
   tiers pass.
 - `readonly` - permit only Tier 0.
 
-`MCPX_POLICY_DENY` is evaluated **first in every mode**, including `open`, so
+`RELAY_SHELL_POLICY_DENY` is evaluated **first in every mode**, including `open`, so
 an absolute prohibition always holds. A refusal is audited (with the tier and
 reason) and returned as a `[DENIED ...]` string, never an exception.
 

@@ -2,7 +2,7 @@
 
 ## Model
 
-`mcpx` is operator infrastructure. It deliberately runs **without an internal
+`relay-shell` is operator infrastructure. It deliberately runs **without an internal
 sandbox** and executes commands with the full privileges of its service
 account. That is the point of the tool; see
 `docs/adr/0002-no-sandbox-full-access.md`. Security is achieved by
@@ -17,11 +17,11 @@ contents, or remote command output). The protections below are designed so
 that a persuaded model still cannot exceed the operator-defined envelope:
 
 - **Tiered authority** (`docs/adr/0003-tiered-authority.md`). Every call is
-  classified Tier 0 (read-only) to Tier 3 (irreversible). `MCPX_POLICY_MODE`:
+  classified Tier 0 (read-only) to Tier 3 (irreversible). `RELAY_SHELL_POLICY_MODE`:
   - `open` (default): full access, every call still classified and audited.
-  - `guarded`: Tier 2+ refused unless `MCPX_POLICY_ALLOW` matches.
+  - `guarded`: Tier 2+ refused unless `RELAY_SHELL_POLICY_ALLOW` matches.
   - `readonly`: only Tier 0 permitted.
-  `MCPX_POLICY_DENY` is always enforced first, in every mode.
+  `RELAY_SHELL_POLICY_DENY` is always enforced first, in every mode.
 - **Append-only audit** (`audit.jsonl`). One JSON object per line:
   timestamp, tool, redacted/truncated args, SHA-256 of the output, output
   byte length, exit code, request id, client id, tier. The output **body is

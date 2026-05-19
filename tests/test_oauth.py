@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from mcpx.auth.oauth import FileOAuthProvider, build_auth_settings, make_oauth_provider
-from mcpx.config import Settings
+from relay_shell.auth.oauth import FileOAuthProvider, build_auth_settings, make_oauth_provider
+from relay_shell.config import Settings
 
 
 def _provider(tmp_path: Path, **kw: object) -> FileOAuthProvider:

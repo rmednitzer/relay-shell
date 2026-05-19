@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcpx.policy import Policy, Tier, classify
+from relay_shell.policy import Policy, Tier, classify
 
 
 def test_classify_read_only() -> None:

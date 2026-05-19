@@ -114,7 +114,7 @@ class Policy:
         probe = f"{tool} {command}".strip()
 
         if self._deny is not None and self._deny.search(probe):
-            return PolicyDecision(False, tier, "matched MCPX_POLICY_DENY")
+            return PolicyDecision(False, tier, "matched RELAY_SHELL_POLICY_DENY")
 
         if self.mode == "readonly" and tier != Tier.READ_ONLY:
             return PolicyDecision(
@@ -123,12 +123,12 @@ class Policy:
 
         if self.mode == "guarded" and tier >= Tier.STATEFUL:
             if self._allow is not None and self._allow.search(probe):
-                return PolicyDecision(True, tier, "guarded: allowed by MCPX_POLICY_ALLOW")
+                return PolicyDecision(True, tier, "guarded: allowed by RELAY_SHELL_POLICY_ALLOW")
             return PolicyDecision(
                 False,
                 tier,
                 f"guarded mode refuses Tier {int(tier)} ({tier.name}) "
-                f"without an MCPX_POLICY_ALLOW match",
+                f"without an RELAY_SHELL_POLICY_ALLOW match",
             )
 
         return PolicyDecision(True, tier, "permitted")

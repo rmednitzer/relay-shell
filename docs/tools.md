@@ -2,13 +2,13 @@
 
 Every tool returns a single string and is audited. `timeout` and output are
 clamped to the configured limits. Each tool's default tier is shown; the
-effective decision also depends on `MCPX_POLICY_MODE` and the deny/allow lists.
+effective decision also depends on `RELAY_SHELL_POLICY_MODE` and the deny/allow lists.
 
 Conventions:
 
 - `host` is an inventory / `ssh_config` alias or `user@host`.
 - `known_hosts` is `strict` | `accept-new` | `ignore` (default from
-  `MCPX_SSH_KNOWN_HOSTS`).
+  `RELAY_SHELL_SSH_KNOWN_HOSTS`).
 - `jump` is an `ssh_config`-style `user@host[:port]` bastion (asyncssh
   `tunnel`); `ssh_config` `ProxyJump` is also honoured automatically.
 
@@ -20,8 +20,8 @@ Run a command on the local host; returns `[exit N]` + combined output.
 | param | type | default | notes |
 |-------|------|---------|-------|
 | `command` | str | - | the command |
-| `timeout` | int | 60 | clamped to `[1, MCPX_MAX_TIMEOUT]` |
-| `max_output` | int | 65536 | clamped to `[1024, MCPX_MAX_OUTPUT_HARD]` |
+| `timeout` | int | 60 | clamped to `[1, RELAY_SHELL_MAX_TIMEOUT]` |
+| `max_output` | int | 65536 | clamped to `[1024, RELAY_SHELL_MAX_OUTPUT_HARD]` |
 | `cwd` | str | "" | working directory |
 | `stdin` | str | "" | written to the process stdin |
 | `merge_stderr` | bool | true | fold stderr into stdout |

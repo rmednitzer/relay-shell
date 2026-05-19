@@ -2,7 +2,7 @@
 
 One JSON object per line. The output *body* is never written - only its
 SHA-256 and byte length - so the log is safe to ship off-host. Arguments are
-redacted by the caller (see :mod:`mcpx.redaction`) before they arrive here.
+redacted by the caller (see :mod:`relay_shell.redaction`) before they arrive here.
 
 The handler is rotation-safe (:class:`logging.handlers.WatchedFileHandler`):
 make ``audit.jsonl`` append-only on disk with ``chattr +a`` and rotate it with
@@ -34,7 +34,7 @@ class AuditLogger:
         self.path = path
         self.degraded = False
         self.degraded_reason = ""
-        self._log = logging.getLogger("mcpx.audit")
+        self._log = logging.getLogger("relay_shell.audit")
         self._log.setLevel(logging.INFO)
         self._log.propagate = False
         for handler in list(self._log.handlers):

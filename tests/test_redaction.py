@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcpx.redaction import redact, redact_args
+from relay_shell.redaction import redact, redact_args
 
 
 def test_redact_bearer_and_kv() -> None:

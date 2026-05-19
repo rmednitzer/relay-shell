@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcpx.util import clamp, gen_id, now_iso, sha256_hex, truncate, utf8_len
+from relay_shell.util import clamp, gen_id, now_iso, sha256_hex, truncate, utf8_len
 
 
 def test_clamp() -> None:

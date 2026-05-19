@@ -1,6 +1,6 @@
-"""Entrypoint: ``mcpx`` / ``python -m mcpx``.
+"""Entrypoint: ``relay_shell`` / ``python -m relay_shell``.
 
-Transport and all behaviour come from ``MCPX_*`` environment variables (see
+Transport and all behaviour come from ``RELAY_SHELL_*`` environment variables (see
 ``.env.example``). Logging goes to **stderr** only: the stdio transport owns
 stdout/stdin for JSON-RPC, so a stray stdout write would corrupt the stream.
 """
@@ -27,16 +27,16 @@ def _configure_logging() -> None:
 def main() -> int:
     """Build and run the server. Returns a process exit code."""
     _configure_logging()
-    log = logging.getLogger("mcpx")
+    log = logging.getLogger("relay_shell")
     try:
         settings = get_settings()
     except Exception as exc:  # noqa: BLE001
-        print(f"mcpx: invalid configuration: {exc}", file=sys.stderr)
+        print(f"relay_shell: invalid configuration: {exc}", file=sys.stderr)
         return 2
 
     server = build_server(settings)
     log.info(
-        "mcpx starting (transport=%s, policy=%s, audit=%s)",
+        "relay_shell starting (transport=%s, policy=%s, audit=%s)",
         settings.transport,
         settings.policy_mode,
         settings.audit_path,
@@ -47,10 +47,10 @@ def main() -> int:
         else:
             server.run(transport="stdio")
     except KeyboardInterrupt:
-        log.info("mcpx stopped (interrupt)")
+        log.info("relay_shell stopped (interrupt)")
         return 0
     except Exception as exc:  # noqa: BLE001
-        log.error("mcpx exited with error: %s", exc)
+        log.error("relay_shell exited with error: %s", exc)
         return 1
     return 0
 

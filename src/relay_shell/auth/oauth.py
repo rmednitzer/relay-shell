@@ -6,7 +6,7 @@ short-lived authorization codes, rotating refresh tokens, and lazy expiry on
 read. State is three JSON files under ``auth_state_dir``; no database.
 
 This is optional and only constructed for the HTTP transport when
-``MCPX_AUTH_ENABLED=true``. Errors here must surface as auth failures, never
+``RELAY_SHELL_AUTH_ENABLED=true``. Errors here must surface as auth failures, never
 as a crashed transport, so reconstruction is defensive.
 """
 

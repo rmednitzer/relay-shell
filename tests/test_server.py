@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from mcpx.config import Settings
-from mcpx.server import build_server
+from relay_shell.config import Settings
+from relay_shell.server import build_server
 
 _EXPECTED = {
     "shell_exec",

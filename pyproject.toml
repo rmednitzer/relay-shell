@@ -3,15 +3,15 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mcpx"
+name = "relay-shell"
 version = "0.1.0"
-description = "A highly reliable, maximally capable MCP server for complete shell and SSH mastery."
+description = "A highly reliable, maximally capable MCP server for complete shell and SSH mastery: a governed relay in the shell/SSH path."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "rmednitzer" }]
-keywords = ["mcp", "model-context-protocol", "shell", "ssh", "automation", "fleet"]
+keywords = ["mcp", "model-context-protocol", "shell", "ssh", "automation", "fleet", "relay"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: System Administrators",
@@ -42,7 +42,7 @@ dev = [
 ]
 
 [project.scripts]
-mcpx = "mcpx.__main__:main"
+relay-shell = "relay_shell.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/rmednitzer/mcp"
@@ -50,7 +50,7 @@ Source = "https://github.com/rmednitzer/mcp"
 Issues = "https://github.com/rmednitzer/mcp/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mcpx"]
+packages = ["src/relay_shell"]
 
 [tool.ruff]
 line-length = 100
@@ -76,14 +76,14 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 no_implicit_optional = true
 disallow_untyped_defs = true
-files = ["src/mcpx"]
+files = ["src/relay_shell"]
 
 [[tool.mypy.overrides]]
 module = ["asyncssh.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["mcpx.server"]
+module = ["relay_shell.server"]
 # FastMCP's Context is generic and its tool decorator typing varies by SDK
 # minor version; relax just these two checks for the wiring module.
 disallow_untyped_decorators = false

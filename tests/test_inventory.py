@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from mcpx.inventory import Inventory
+from relay_shell.inventory import Inventory
 
 
 def test_parse_ssh_config(tmp_path: Path) -> None:

@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from mcpx.audit import AuditLogger
-from mcpx.util import sha256_hex
+from relay_shell.audit import AuditLogger
+from relay_shell.util import sha256_hex
 
 
 def test_audit_writes_jsonl_with_hash_not_body(tmp_path: Path) -> None:

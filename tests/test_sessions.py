@@ -5,8 +5,8 @@ import signal
 
 import pytest
 
-from mcpx.errors import SessionError
-from mcpx.sessions import LocalPtyTransport, SessionRegistry
+from relay_shell.errors import SessionError
+from relay_shell.sessions import LocalPtyTransport, SessionRegistry
 
 
 async def _spawn(reg: SessionRegistry, argv: list[str]) -> str:

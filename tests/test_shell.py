@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcpx.shelltools import build_env, run_command, run_script, spawn_argv
+from relay_shell.shelltools import build_env, run_command, run_script, spawn_argv
 
 
 async def test_run_command_echo() -> None:
@@ -28,7 +28,7 @@ async def test_run_command_stdin_and_no_shell() -> None:
 
 
 async def test_run_command_env_overlay() -> None:
-    out, code = await run_command("echo $MCPX_T", timeout=5, env_json='{"MCPX_T": "zzz"}')
+    out, code = await run_command("echo $OVL_VAR", timeout=5, env_json='{"OVL_VAR": "zzz"}')
     assert code == 0 and "zzz" in out
 
 

@@ -25,7 +25,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from . import __version__
 from .audit import AuditLogger
 from .config import Settings, get_settings
-from .errors import McpxError, fmt_exc
+from .errors import RelayError, fmt_exc
 from .inventory import Inventory
 from .policy import Policy
 from .redaction import redact_args
@@ -34,7 +34,7 @@ from .shelltools import build_env, run_command, run_script, spawn_argv
 from .sshpool import SshPool
 from .util import clamp, truncate
 
-__all__ = ["Mcpx", "build_server"]
+__all__ = ["Relay", "build_server"]
 
 Work = Callable[[], Awaitable[tuple[str, int | None]]]
 
@@ -51,7 +51,7 @@ def _ctx_ids(ctx: Context | None) -> tuple[str, str]:
     return request_id, client_id
 
 
-class Mcpx:
+class Relay:
     """Holds shared state and runs every tool through the audited path."""
 
     def __init__(self, settings: Settings) -> None:
@@ -101,7 +101,7 @@ class Mcpx:
 
         try:
             body, exit_code = await work()
-        except McpxError as exc:
+        except RelayError as exc:
             body, exit_code = fmt_exc(exc), None
         except Exception as exc:  # noqa: BLE001
             body, exit_code = fmt_exc(exc), None
@@ -134,7 +134,7 @@ class Mcpx:
 def build_server(settings: Settings | None = None) -> FastMCP:
     """Construct the FastMCP server with every tool registered."""
     cfg = settings or get_settings()
-    app = Mcpx(cfg)
+    app = Relay(cfg)
 
     fastmcp_kwargs: dict[str, Any] = {
         "instructions": _INSTRUCTIONS,
@@ -149,7 +149,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         fastmcp_kwargs["auth"] = build_auth_settings(cfg.auth_issuer)
         fastmcp_kwargs["auth_server_provider"] = make_oauth_provider(cfg)
 
-    mcp = FastMCP("mcpx", **fastmcp_kwargs)
+    mcp = FastMCP("relay-shell", **fastmcp_kwargs)
 
     # ---- local shell -------------------------------------------------------
     @mcp.tool()
@@ -633,7 +633,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
 
         async def _work() -> tuple[str, int | None]:
             info = {
-                "name": "mcpx",
+                "name": "relay-shell",
                 "version": __version__,
                 "transport": cfg.transport,
                 "policy_mode": cfg.policy_mode,
@@ -666,7 +666,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
 
 
 _INSTRUCTIONS = """\
-mcpx - shell and SSH operations.
+relay-shell - shell and SSH operations.
 
 Local: shell_exec (one-shot), shell_script (multi-line), shell_spawn (PTY).
 SSH:   ssh_exec, ssh_spawn, ssh_upload/ssh_download, ssh_forward(/list/close),
