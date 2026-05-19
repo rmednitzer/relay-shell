@@ -73,8 +73,14 @@ async def test_single_client_lockdown(tmp_path: Path, single: bool) -> None:
         await p.register_client(c2)
 
 
-async def test_revoke_token_removes_access_and_refresh(tmp_path: Path) -> None:
+async def test_revoke_access_token_removes_only_access(tmp_path: Path) -> None:
+    """Revoking an access token must not cascade to its paired refresh token.
+
+    RFC 7009 leaves that direction unspecified and the provider opts out;
+    cascade in the other direction (refresh -> access) is exercised below.
+    """
     from mcp.server.auth.provider import AccessToken
+    from mcp.shared.auth import OAuthClientInformationFull
 
     p = _provider(tmp_path)
     issued = p._issue("client-a", ["mcp:tools"])
@@ -88,6 +94,30 @@ async def test_revoke_token_removes_access_and_refresh(tmp_path: Path) -> None:
         )
     )
     assert await p.load_access_token(issued.access_token) is None
+    # The paired refresh token survives a plain access-token revocation.
+    client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
+    assert issued.refresh_token is not None
+    assert await p.load_refresh_token(client, issued.refresh_token) is not None
+
+
+async def test_revoke_refresh_token_removes_refresh(tmp_path: Path) -> None:
+    from mcp.server.auth.provider import RefreshToken
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path)
+    issued = p._issue("client-a", ["mcp:tools"])
+    assert issued.refresh_token is not None
+    client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
+    assert await p.load_refresh_token(client, issued.refresh_token) is not None
+    await p.revoke_token(
+        RefreshToken(
+            token=issued.refresh_token,
+            client_id="client-a",
+            scopes=["mcp:tools"],
+            expires_at=2**31,
+        )
+    )
+    assert await p.load_refresh_token(client, issued.refresh_token) is None
 
 
 async def test_refresh_exchange_rotates_tokens(tmp_path: Path) -> None:

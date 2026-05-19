@@ -43,11 +43,21 @@ def test_redact_cli_flag_forms() -> None:
     assert "abcd1234" not in redact("--api-key abcd1234 --quiet")
 
 
-def test_redact_mysql_dash_p() -> None:
+def test_redact_mysql_dash_p_only_in_db_context() -> None:
+    # In MySQL-family context, ``-p<secret>`` is scrubbed in place.
     assert "leaked" not in redact("mysql -uroot -pleaked-pw -h db")
-    # Negative: -p as flag with no value (e.g. ``ssh -p 22``) must not bleed.
+    assert "leaked" not in redact("mysqldump -pleaked-pw mydb > dump.sql")
+    assert "leaked" not in redact("mariadb -pleaked-pw -e 'show databases'")
+    # Outside that context, ``-p`` is overloaded and must be left intact:
+    # SSH port, nmap port range, and generic flags like ``-proxy``.
     safe = redact("ssh -p 22 user@host")
     assert "22" in safe and "user" in safe
+    compact = redact("ssh -p22 user@host")
+    assert "-p22" in compact and "user@host" in compact
+    nmap = redact("nmap -p1-1000 host.example")
+    assert "-p1-1000" in nmap
+    proxy = redact("java -proxy host:8080 -jar app.jar")
+    assert "-proxy" in proxy
 
 
 def test_redact_args_preserves_non_strings() -> None:

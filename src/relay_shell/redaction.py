@@ -31,9 +31,6 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"(?i)(--?(?:password|passwd|pwd|secret|token|api[_-]?key))(?:[=\s]+)\S+",
     ),
-    # MySQL-style single-letter -psecret (no space). Anchored to a word
-    # boundary so we don't redact "tcp", "lsp", etc.
-    re.compile(r"(?<![A-Za-z0-9])-p[^\s=-]\S*"),
     # Common provider token shapes
     re.compile(r"\bgith(?:ub)?_pat_[A-Za-z0-9_]+"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
@@ -46,12 +43,21 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
 # replacement; everything else collapses to the placeholder.
 _URL_CREDS = re.compile(r"://[^/\s:@]+:[^/\s:@]+@")
 
+# Short-form ``-p<value>`` is dangerously overloaded across tools (mysql
+# password, ssh/nmap port, ``-proxy``, etc.). Only scrub it when an obvious
+# database-family invocation is present in the *same* argument string, so
+# generic command flags retain their audit fidelity.
+_DB_CLI = re.compile(r"\b(?:mysql|mariadb|mysqldump|mysqladmin|mycli)\b")
+_DB_PASSWORD_FLAG = re.compile(r"(?<![A-Za-z0-9])(-p)[^\s=-]\S*")
+
 
 def redact(text: str) -> str:
     """Replace secret-looking spans in ``text`` with a placeholder."""
     out = _URL_CREDS.sub("://[REDACTED]@", text)
     for pat in _PATTERNS:
         out = pat.sub(_PLACEHOLDER, out)
+    if _DB_CLI.search(out):
+        out = _DB_PASSWORD_FLAG.sub(lambda m: f"{m.group(1)}{_PLACEHOLDER}", out)
     return out
 
 
