@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import pwd
+import shutil
 import signal
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -632,11 +635,23 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         """Report version, effective limits, policy mode, and audit status."""
 
         async def _work() -> tuple[str, int | None]:
+            uid = os.getuid()
+            euid = os.geteuid()
+            user = ""
+            with contextlib.suppress(KeyError):
+                user = pwd.getpwuid(euid).pw_name
             info = {
                 "name": "relay-shell",
                 "version": __version__,
                 "transport": cfg.transport,
                 "policy_mode": cfg.policy_mode,
+                "runtime": {
+                    "uid": uid,
+                    "euid": euid,
+                    "user": user,
+                    "is_root": euid == 0,
+                    "sudo_binary": shutil.which("sudo") or "",
+                },
                 "limits": {
                     "default_timeout": cfg.default_timeout,
                     "max_timeout": cfg.max_timeout,

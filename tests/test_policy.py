@@ -11,6 +11,7 @@ def test_classify_read_only() -> None:
 def test_classify_tiers() -> None:
     assert classify("shell_exec", "rm -rf /var/tmp/x") is Tier.IRREVERSIBLE
     assert classify("shell_exec", "systemctl restart nginx") is Tier.STATEFUL
+    assert classify("shell_exec", "sudo ls -la /root") is Tier.STATEFUL
     assert classify("shell_exec", "ls -la") is Tier.REVERSIBLE
     assert classify("ssh_upload", "upload a b") is Tier.STATEFUL
 

@@ -45,6 +45,8 @@ class AuditLogger:
             target = Path(path).expanduser()
             target.parent.mkdir(parents=True, exist_ok=True)
             sink = WatchedFileHandler(str(target), encoding="utf-8")
+            with contextlib.suppress(OSError):
+                target.chmod(0o600)
         except OSError as exc:  # unwritable path -> degrade, never crash
             self.degraded = True
             self.degraded_reason = str(exc)

@@ -43,6 +43,7 @@ async def test_stdio_initialize_list_and_call(tmp_path: Path) -> None:
         )
         assert '"name": "relay-shell"' in info_text
         assert '"policy_mode": "open"' in info_text
+        assert '"runtime"' in info_text
 
         # The command (an argument) is deliberately audited; the OUTPUT body is
         # not - only its hash. Use a value that appears solely in the output.

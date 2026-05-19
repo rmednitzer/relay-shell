@@ -42,7 +42,10 @@ that a persuaded model still cannot exceed the operator-defined envelope:
 
 These are **required**, not optional, for any non-local deployment:
 
-1. Run as a dedicated unprivileged service account, never `root`.
+1. Choose one explicit runtime posture:
+   - **Scoped** (recommended): dedicated unprivileged service account
+   - **Privileged** (maximum capability): root/system-level service on an isolated host
+   In either posture, document and review the decision.
 2. Bind the HTTP transport to loopback and place a TLS reverse proxy in
    front with an IP allowlist (reference `deploy/Caddyfile`).
 3. Apply the systemd unit and hardening drop-in (`deploy/systemd/`).
@@ -56,9 +59,9 @@ These are **required**, not optional, for any non-local deployment:
 
 If the MCP client or the transport is compromised, an attacker obtains the
 capabilities of the service account on this host and any host its SSH
-credentials reach. Scope the account and the keys accordingly, and isolate
-the host. This is stated plainly so it can be designed around rather than
-discovered.
+credentials reach. In privileged posture, this is effectively root-level host
+control. Scope accounts/keys accordingly and isolate the host. This is stated
+plainly so it can be designed around rather than discovered.
 
 ## Reporting a vulnerability
 
