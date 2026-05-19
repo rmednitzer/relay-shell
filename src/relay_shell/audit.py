@@ -48,9 +48,9 @@ class AuditLogger:
             # Pre-create with mode 0600 to avoid a permissive first-create window.
             fd = os.open(str(target), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
             os.close(fd)
-            sink = WatchedFileHandler(str(target), encoding="utf-8")
             with contextlib.suppress(OSError):
                 target.chmod(0o600)
+            sink = WatchedFileHandler(str(target), encoding="utf-8")
         except OSError as exc:  # unwritable path -> degrade, never crash
             self.degraded = True
             self.degraded_reason = str(exc)

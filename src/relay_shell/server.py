@@ -18,9 +18,9 @@ import contextlib
 import json
 import os
 import pwd
-import shutil
 import signal
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -40,6 +40,13 @@ from .util import clamp, truncate
 __all__ = ["Relay", "build_server"]
 
 Work = Callable[[], Awaitable[tuple[str, int | None]]]
+
+
+def _find_sudo_binary() -> str:
+    for path in (Path("/usr/bin/sudo"), Path("/bin/sudo"), Path("/usr/local/bin/sudo")):
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return ""
 
 
 def _ctx_ids(ctx: Context | None) -> tuple[str, str]:
@@ -68,7 +75,7 @@ class Relay:
             settings.session_buffer_bytes,
         )
         self.ssh = SshPool(settings=settings, inventory=self.inventory)
-        self.sudo_binary = shutil.which("sudo") or ""
+        self.sudo_binary = _find_sudo_binary()
 
     def clamp_timeout(self, timeout: int) -> int:
         return clamp(timeout, 1, self.settings.max_timeout)
