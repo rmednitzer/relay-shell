@@ -67,7 +67,7 @@ _TIER2 = re.compile(
 )
 
 # Privilege escalation wrappers should not be treated as low-risk commands.
-_PRIV_ESC = re.compile(r"(?ix)\b(sudo|doas|pkexec)\b")
+_PRIV_ESC_PATTERN = re.compile(r"(?ix)\b(sudo|doas|pkexec)\b")
 
 # Tools whose primary effect is to change remote/local state.
 _MUTATING_TOOLS = frozenset({"ssh_upload", "ssh_download", "ssh_forward"})
@@ -84,7 +84,7 @@ def classify(tool: str, command: str = "") -> Tier:
     text = command or ""
     if _TIER3.search(text):
         return Tier.IRREVERSIBLE
-    if _PRIV_ESC.search(text):
+    if _PRIV_ESC_PATTERN.search(text):
         return Tier.STATEFUL
     if _TIER2.search(text):
         return Tier.STATEFUL

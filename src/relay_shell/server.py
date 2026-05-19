@@ -40,6 +40,7 @@ from .util import clamp, truncate
 __all__ = ["Relay", "build_server"]
 
 Work = Callable[[], Awaitable[tuple[str, int | None]]]
+_SUDO_SEARCH_PATHS = (Path("/usr/bin/sudo"), Path("/bin/sudo"), Path("/usr/local/bin/sudo"))
 
 
 def _find_sudo_binary() -> str:
@@ -48,7 +49,7 @@ def _find_sudo_binary() -> str:
     This is informational metadata for ``server_info`` only; command execution
     behavior does not depend on this lookup.
     """
-    for path in (Path("/usr/bin/sudo"), Path("/bin/sudo"), Path("/usr/local/bin/sudo")):
+    for path in _SUDO_SEARCH_PATHS:
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
     return ""
