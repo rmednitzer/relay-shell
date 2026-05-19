@@ -1,22 +1,22 @@
-# /etc/logrotate.d/mcpx
+# /etc/logrotate.d/relay-shell
 #
 # The audit log is append-only on disk (chattr +a). The append-only attribute
 # must be dropped only for the rotate itself and restored immediately, so a
 # compromised process cannot rewrite history through the rotation window.
 
-/var/log/mcpx/audit.jsonl {
+/var/log/relay-shell/audit.jsonl {
     daily
     rotate 90
     missingok
     notifempty
     compress
     delaycompress
-    create 0600 mcpx mcpx
+    create 0600 relay-shell relay-shell
     dateext
     prerotate
-        /usr/bin/chattr -a /var/log/mcpx/audit.jsonl 2>/dev/null || true
+        /usr/bin/chattr -a /var/log/relay-shell/audit.jsonl 2>/dev/null || true
     endscript
     postrotate
-        /usr/bin/chattr +a /var/log/mcpx/audit.jsonl 2>/dev/null || true
+        /usr/bin/chattr +a /var/log/relay-shell/audit.jsonl 2>/dev/null || true
     endscript
 }

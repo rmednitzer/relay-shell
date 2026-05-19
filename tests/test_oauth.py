@@ -54,11 +54,9 @@ async def test_refresh_rotation(tmp_path: Path) -> None:
     assert issued.refresh_token is not None
 
 
-def test_unknown_client_is_none(tmp_path: Path) -> None:
-    import asyncio
-
+async def test_unknown_client_is_none(tmp_path: Path) -> None:
     p = _provider(tmp_path)
-    assert asyncio.get_event_loop().run_until_complete(p.get_client("nope")) is None
+    assert await p.get_client("nope") is None
 
 
 @pytest.mark.parametrize("single", [True])
@@ -73,3 +71,82 @@ async def test_single_client_lockdown(tmp_path: Path, single: bool) -> None:
     c2 = OAuthClientInformationFull(client_id="c2", redirect_uris=["https://y/cb"])
     with pytest.raises(ValueError, match="closed"):
         await p.register_client(c2)
+
+
+async def test_revoke_token_removes_access_and_refresh(tmp_path: Path) -> None:
+    from mcp.server.auth.provider import AccessToken
+
+    p = _provider(tmp_path)
+    issued = p._issue("client-a", ["mcp:tools"])
+    assert await p.load_access_token(issued.access_token) is not None
+    await p.revoke_token(
+        AccessToken(
+            token=issued.access_token,
+            client_id="client-a",
+            scopes=["mcp:tools"],
+            expires_at=2**31,
+        )
+    )
+    assert await p.load_access_token(issued.access_token) is None
+
+
+async def test_refresh_exchange_rotates_tokens(tmp_path: Path) -> None:
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path)
+    issued = p._issue("client-a", ["mcp:tools"])
+    assert issued.refresh_token is not None
+    client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
+    refresh = await p.load_refresh_token(client, issued.refresh_token)
+    assert refresh is not None
+
+    rotated = await p.exchange_refresh_token(client, refresh, ["mcp:tools"])
+    assert rotated.access_token != issued.access_token
+    assert rotated.refresh_token != issued.refresh_token
+    # Old refresh must no longer load.
+    assert await p.load_refresh_token(client, issued.refresh_token) is None
+
+
+async def test_load_refresh_token_mismatched_client_returns_none(tmp_path: Path) -> None:
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path)
+    issued = p._issue("client-a", ["mcp:tools"])
+    other = OAuthClientInformationFull(client_id="client-b", redirect_uris=["https://x/cb"])
+    assert issued.refresh_token is not None
+    assert await p.load_refresh_token(other, issued.refresh_token) is None
+
+
+async def test_exchange_authorization_code_consumes_code(tmp_path: Path) -> None:
+    from mcp.server.auth.provider import AuthorizationCode
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path)
+    client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
+    code = AuthorizationCode(
+        code="dummy-code",
+        scopes=["mcp:tools"],
+        expires_at=2**31,
+        client_id="client-a",
+        code_challenge="",
+        redirect_uri="https://x/cb",  # type: ignore[arg-type]
+        redirect_uri_provided_explicitly=True,
+    )
+    # Seed the store as if ``authorize`` had run.
+    p._codes.save(
+        {
+            code.code: {
+                "code": code.code,
+                "client_id": code.client_id,
+                "scopes": list(code.scopes),
+                "expires_at": int(code.expires_at),
+                "code_challenge": code.code_challenge,
+                "redirect_uri": str(code.redirect_uri),
+                "redirect_uri_provided_explicitly": True,
+            }
+        }
+    )
+    token = await p.exchange_authorization_code(client, code)
+    assert token.access_token
+    # Code must be one-shot.
+    assert await p.load_authorization_code(client, code.code) is None

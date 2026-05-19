@@ -27,25 +27,31 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     # Bearer / token=... / api[_-]?key=...
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]+"),
     re.compile(r"(?i)\b(api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*\S+"),
+    # CLI-style flags: --password value, --token=value, --api-key foo
+    re.compile(
+        r"(?i)(--?(?:password|passwd|pwd|secret|token|api[_-]?key))(?:[=\s]+)\S+",
+    ),
+    # MySQL-style single-letter -psecret (no space). Anchored to a word
+    # boundary so we don't redact "tcp", "lsp", etc.
+    re.compile(r"(?<![A-Za-z0-9])-p[^\s=-]\S*"),
     # Common provider token shapes
     re.compile(r"\bgith(?:ub)?_pat_[A-Za-z0-9_]+"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
     re.compile(r"\bsk-[A-Za-z0-9]{16,}"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
-    # URL embedded credentials user:pass@host
-    re.compile(r"://[^/\s:@]+:[^/\s:@]+@"),
 )
+
+# URL-embedded credentials (``user:pass@host``) need a structure-preserving
+# replacement; everything else collapses to the placeholder.
+_URL_CREDS = re.compile(r"://[^/\s:@]+:[^/\s:@]+@")
 
 
 def redact(text: str) -> str:
     """Replace secret-looking spans in ``text`` with a placeholder."""
-    out = text
+    out = _URL_CREDS.sub("://[REDACTED]@", text)
     for pat in _PATTERNS:
-        if pat.pattern.startswith("://"):
-            out = pat.sub("://[REDACTED]@", out)
-        else:
-            out = pat.sub(_PLACEHOLDER, out)
+        out = pat.sub(_PLACEHOLDER, out)
     return out
 
 

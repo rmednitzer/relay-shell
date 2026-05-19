@@ -34,3 +34,25 @@ def test_redact_args_truncates_and_scrubs() -> None:
 def test_redact_args_nested() -> None:
     out = redact_args({"a": {"b": ["password=topsecret"]}})
     assert "REDACTED" in out["a"]["b"][0]
+
+
+def test_redact_cli_flag_forms() -> None:
+    assert "topsecret" not in redact("--password topsecret extra-arg")
+    assert "topsecret" not in redact("--password=topsecret")
+    assert "MY-TOKEN" not in redact("--token MY-TOKEN")
+    assert "abcd1234" not in redact("--api-key abcd1234 --quiet")
+
+
+def test_redact_mysql_dash_p() -> None:
+    assert "leaked" not in redact("mysql -uroot -pleaked-pw -h db")
+    # Negative: -p as flag with no value (e.g. ``ssh -p 22``) must not bleed.
+    safe = redact("ssh -p 22 user@host")
+    assert "22" in safe and "user" in safe
+
+
+def test_redact_args_preserves_non_strings() -> None:
+    out = redact_args({"n": 5, "b": True, "x": None, "lst": [1, 2]})
+    assert out["n"] == 5
+    assert out["b"] is True
+    assert out["x"] is None
+    assert out["lst"] == [1, 2]

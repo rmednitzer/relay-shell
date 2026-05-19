@@ -56,6 +56,25 @@ def test_build_env_defaults() -> None:
     assert "PATH" in env
 
 
+def test_build_env_overlay_removes_with_null() -> None:
+    env = build_env('{"GIT_TERMINAL_PROMPT": null, "MY_VAR": "ok"}')
+    assert "GIT_TERMINAL_PROMPT" not in env
+    assert env["MY_VAR"] == "ok"
+
+
+def test_build_env_ignores_non_object_overlay() -> None:
+    # Arrays, primitives, and malformed JSON all fall back to the inherited env.
+    for overlay in ("[1, 2]", "true", "42", "not json"):
+        env = build_env(overlay)
+        assert env["DEBIAN_FRONTEND"] == "noninteractive"
+
+
+def test_build_env_overlay_coerces_values_to_strings() -> None:
+    env = build_env('{"PORT": 8080, "FLAG": true}')
+    assert env["PORT"] == "8080"
+    assert env["FLAG"] == "True"
+
+
 def test_spawn_argv() -> None:
     assert spawn_argv("") == ["/bin/bash"]
     assert spawn_argv("python3 -i") == ["python3", "-i"]
