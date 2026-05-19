@@ -119,6 +119,22 @@ async def test_ssh_connection_is_reused(ssh_port: int, tmp_path: Path) -> None:
         await pool.close_all()
 
 
+async def test_ssh_connect_rejects_invalid_known_hosts_mode(tmp_path: Path) -> None:
+    pool = _pool(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="known_hosts must be one of"):
+            await pool.connect(
+                "127.0.0.1",
+                user="tester",
+                port=22,
+                key_path="",
+                known_hosts="invalid-mode",
+                jump="",
+            )
+    finally:
+        await pool.close_all()
+
+
 async def test_sftp_put_and_get(ssh_port: int, tmp_path: Path) -> None:
     pool = _pool(tmp_path)
     local = tmp_path / "local"

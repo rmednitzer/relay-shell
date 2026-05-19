@@ -6,6 +6,7 @@ from relay_shell.policy import Policy, Tier, classify
 def test_classify_read_only() -> None:
     assert classify("server_info") is Tier.READ_ONLY
     assert classify("ssh_hosts") is Tier.READ_ONLY
+    assert classify("ssh_forward_list") is Tier.READ_ONLY
 
 
 def test_classify_tiers() -> None:
