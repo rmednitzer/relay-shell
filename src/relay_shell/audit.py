@@ -45,6 +45,7 @@ class AuditLogger:
         try:
             target = Path(path).expanduser()
             target.parent.mkdir(parents=True, exist_ok=True)
+            # Pre-create with mode 0600 to avoid a permissive first-create window.
             fd = os.open(str(target), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
             os.close(fd)
             sink = WatchedFileHandler(str(target), encoding="utf-8")

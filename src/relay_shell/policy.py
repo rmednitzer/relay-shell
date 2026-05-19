@@ -84,9 +84,9 @@ def classify(tool: str, command: str = "") -> Tier:
     text = command or ""
     if _TIER3.search(text):
         return Tier.IRREVERSIBLE
-    if _TIER2.search(text):
-        return Tier.STATEFUL
     if _PRIV_ESC.search(text):
+        return Tier.STATEFUL
+    if _TIER2.search(text):
         return Tier.STATEFUL
     if tool in _MUTATING_TOOLS:
         return Tier.STATEFUL
