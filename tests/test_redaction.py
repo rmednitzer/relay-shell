@@ -87,6 +87,17 @@ def test_dash_p_scoping_is_per_line() -> None:
     assert "user@host" in out
 
 
+def test_cli_flag_separator_does_not_cross_newline() -> None:
+    # ``--password`` with no value (interactive prompt) followed by a newline
+    # and a separate command must not redact the next line's first token.
+    script = "mysql --password\necho hello-world\n"
+    out = redact(script)
+    assert "echo hello-world" in out
+    # Same for ``--token`` at end of line.
+    out2 = redact("client --token\nls -la\n")
+    assert "ls -la" in out2
+
+
 def test_redact_mysql_dash_p_only_in_db_context() -> None:
     # In MySQL-family context, ``-p<secret>`` is scrubbed in place.
     assert "leaked" not in redact("mysql -uroot -pleaked-pw -h db")

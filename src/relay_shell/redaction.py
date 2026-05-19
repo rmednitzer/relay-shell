@@ -32,11 +32,13 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     # (with negative lookahead on ``-`` so we don't eat the next option),
     # or a fully quoted string - escape-aware - so passphrase secrets with
     # embedded whitespace are scrubbed as a unit instead of leaking the
-    # trailing words.
+    # trailing words. The separator deliberately excludes newlines: an
+    # interactive ``--password`` at end-of-line must not consume the next
+    # line's command in an audited multi-line script.
     re.compile(
         r"""(?ix)
         --?(?:password|passwd|pwd|secret|token|api[_-]?key)
-        [=\s]+
+        [=\ \t]+
         (?:
             "(?:[^"\\]|\\.)*"     # double-quoted, escape-aware
           | '(?:[^'\\]|\\.)*'     # single-quoted, escape-aware
