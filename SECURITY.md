@@ -29,7 +29,14 @@ that a persuaded model still cannot exceed the operator-defined envelope:
   disk (`chattr +a`) and ship it off-host; the bundled logrotate config
   preserves the attribute across rotation.
 - **Secret redaction.** Audited arguments are scrubbed for bearer tokens,
-  API keys, private-key blocks, and `Authorization` headers before logging.
+  API keys, private-key blocks, `Authorization` headers, long-name CLI
+  flags (both `--password` and single-dash `-token=` forms), and
+  URL-embedded credentials before logging. The compact short-form
+  `-p<value>` is intentionally redacted only for MySQL-family commands
+  (`mysql`, `mariadb-dump`, `mycli`, ...) because `-p` is overloaded
+  elsewhere (`ssh -p22`, `nmap -p1-1000`); operators putting passwords
+  inline should use `--password=...` or `~/.my.cnf` instead. See
+  `src/relay_shell/redaction.py` for the full pattern set.
 - **Resource bounds.** Per-call timeout and output caps, a bounded number of
   concurrent sessions, bounded per-session buffers, and idle/lifetime
   reaping. Failure paths return a structured error string; a tool never

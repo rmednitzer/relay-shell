@@ -18,6 +18,33 @@ All notable changes to this project are documented here. The format follows
 
 - `.env.example` and `docs/deployment.md` document the new
   `RELAY_SHELL_EDGE_*` variables and the one-shot install flow.
+- Bumped MCP SDK: `mcp` 1.26.0 → 1.27.1 (tracked by Dependabot, validated
+  by the existing test suite). ADR 0001 and `docs/architecture.md` updated
+  to match the actual pin.
+
+### Fixed
+
+- `shell_exec` no longer permits policy/audit bypass through `stdin` or
+  `env_json`: the policy-text probe now includes both, so a deny pattern
+  that matches a command also matches the same payload smuggled in via
+  stdin or an environment variable.
+- Audit log creation uses `O_APPEND | O_CREAT` so the sink opens
+  successfully on files hardened with `chattr +a`; the pre-create no
+  longer races a stat/chmod path that an append-only attribute would
+  reject.
+- Argument redaction now covers single-dash long-name CLI flags
+  (`-token=val`, `-password val`) and dash-prefixed secret values
+  (`--token -abc123`), with escape-aware quoted-value handling. Compact
+  `-p<value>` is redacted only inside MySQL-family invocations to avoid
+  over-redacting `-p22` (ssh), `-p1-1000` (nmap), and similar overloads.
+- File OAuth provider writes its JSON store with explicit `0o700`
+  directory and `0o600` file modes regardless of the caller's umask.
+
+### Security
+
+- Treat the audit log as evidence only until shipped off-host; the
+  bundled logrotate config drops and restores the append-only attribute
+  across rotation. See `docs/deployment.md` §6.
 
 ## [0.1.0] - 2026-05-19
 

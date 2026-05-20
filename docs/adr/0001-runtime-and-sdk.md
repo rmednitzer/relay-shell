@@ -12,10 +12,10 @@ type safety, and how much transport/auth code we own versus delegate.
 
 ## Decision
 
-- **Python 3.12** and the **official `mcp` SDK (FastMCP)**, pinned to
-  `mcp==1.26.0` (a version proven in production gateways), with the
-  surrounding stack pinned in `requirements.txt`. FastMCP provides the
-  protocol, stdio and streamable-HTTP transports, and an OAuth 2.1 hook.
+- **Python 3.12+** and the **official `mcp` SDK (FastMCP)**, pinned to
+  `mcp==1.27.1` (a Dependabot-tracked version validated by the test suite),
+  with the surrounding stack pinned in `requirements.txt`. FastMCP provides
+  the protocol, stdio and streamable-HTTP transports, and an OAuth 2.1 hook.
 - **`asyncssh`** for all SSH. It is pure-Python, asyncio-native, and covers
   the entire required surface (exec, interactive PTY, SFTP, local/remote/
   dynamic forwarding, agent, `ProxyJump`/tunnels, `known_hosts`, keepalive)

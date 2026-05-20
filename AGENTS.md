@@ -74,14 +74,22 @@ Agents must preserve support for both.
 
 ## 6) Repo-specific technical map
 
+- `src/relay_shell/__main__.py`: entrypoint; stderr-only logging; transport selection
 - `src/relay_shell/server.py`: tool registration + audited execution wrapper
-- `src/relay_shell/policy.py`: tiering + admission control
-- `src/relay_shell/audit.py`: append-only JSONL audit sink
+- `src/relay_shell/config.py`: typed `RELAY_SHELL_*` settings; fail-fast on invalid values
+- `src/relay_shell/policy.py`: Tier 0..3 classification + admission control
+- `src/relay_shell/audit.py`: append-only JSONL audit sink (hash of output, not body)
 - `src/relay_shell/redaction.py`: argument secret scrubbing
+- `src/relay_shell/errors.py`: `RelayError` hierarchy and uniform `[ERROR: ...]` formatter
 - `src/relay_shell/shelltools.py`: one-shot local command/script execution
-- `src/relay_shell/sessions.py`: long-lived PTY session lifecycle
-- `src/relay_shell/sshpool.py`: SSH connection reuse, SFTP, forwarding
-- `tests/`: authoritative behavior contract
+- `src/relay_shell/sessions.py`: local PTY transport + unified session registry
+- `src/relay_shell/inventory.py`: `~/.ssh/config` + JSON inventory parsing and resolution
+- `src/relay_shell/sshpool.py`: asyncssh connection cache, SFTP, port forwarding, PTY adapter
+- `src/relay_shell/auth/oauth.py`: optional file-backed OAuth 2.1 provider (HTTP only)
+- `src/relay_shell/util.py`: time, hashing, clamping, byte-safe truncation, id generation
+- `tests/`: authoritative behavior contract (unit + in-process SSH integration)
+- `deploy/`: systemd unit + hardening drop-in, Caddyfile, logrotate, installers
+- `docs/adr/`: accepted design decisions (runtime/SDK, no-sandbox, tiering, edge TLS)
 
 ## 7) Definition of done
 

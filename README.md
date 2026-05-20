@@ -71,9 +71,11 @@ Full reference: [`docs/tools.md`](docs/tools.md).
 
 ## Quickstart
 
+Requires Python 3.12+ (CPython, tested on Ubuntu 24.04).
+
 ```bash
 git clone https://github.com/rmednitzer/relay-shell.git && cd relay-shell
-python3 -m venv .venv && . .venv/bin/activate
+python3.12 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 
 # stdio transport (local agent / Claude Desktop / MCP Inspector)
@@ -128,10 +130,10 @@ administrative hosts with strict network controls and full audit shipping.
 ## Layout
 
 ```
-src/relay_shell/        server, config, audit, policy, redaction, sessions, tools, auth
-deploy/          systemd unit + hardening drop-in, Caddyfile, logrotate, install.sh
-docs/            architecture, tool reference, deployment, ADRs
-tests/           unit + integration (in-process SSH server, no network)
+src/relay_shell/   server, config, audit, policy, redaction, sessions, tools, auth
+deploy/            systemd unit + hardening drop-in, Caddyfile, logrotate, installers
+docs/              architecture, tool reference, deployment, ADRs
+tests/             unit + integration (in-process SSH server, no network)
 ```
 
 ## Development
