@@ -22,20 +22,31 @@ __all__ = ["build_env", "run_command", "run_script", "spawn_argv"]
 
 
 def build_env(overlay_json: str = "") -> dict[str, str]:
-    """Inherited environment plus deterministic defaults and an optional overlay."""
+    """Inherited environment plus deterministic defaults and an optional overlay.
+
+    ``overlay_json`` may be empty or a JSON object. Keys map to string values;
+    a ``null`` value removes the variable from the environment. Non-object JSON
+    and malformed input are ignored - tools must not crash on a bad overlay.
+    """
     env = dict(os.environ)
     env.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-    env["LANG"] = env.get("LANG", "C.UTF-8")
+    env.setdefault("LANG", "C.UTF-8")
     env["DEBIAN_FRONTEND"] = "noninteractive"
     env["GIT_TERMINAL_PROMPT"] = "0"
-    if overlay_json.strip():
-        try:
-            extra = json.loads(overlay_json)
-            if isinstance(extra, dict):
-                for key, val in extra.items():
-                    env[str(key)] = str(val)
-        except json.JSONDecodeError:
-            pass
+    if not overlay_json.strip():
+        return env
+    try:
+        extra = json.loads(overlay_json)
+    except json.JSONDecodeError:
+        return env
+    if not isinstance(extra, dict):
+        return env
+    for key, val in extra.items():
+        name = str(key)
+        if val is None:
+            env.pop(name, None)
+        else:
+            env[name] = str(val)
     return env
 
 

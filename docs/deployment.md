@@ -27,7 +27,7 @@ that host as a high-trust control plane.
 ```bash
 sudo -u relay-shell python3 -m venv /var/lib/relay-shell/venv
 sudo -u relay-shell /var/lib/relay-shell/venv/bin/pip install --upgrade pip
-sudo -u relay-shell /var/lib/relay-shell/venv/bin/pip install /path/to/mcp   # or: pip install relay-shell
+sudo -u relay-shell /var/lib/relay-shell/venv/bin/pip install /path/to/relay-shell   # or: pip install relay-shell
 ```
 
 `deploy/install.sh` does this idempotently. It deliberately does **not**

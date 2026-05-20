@@ -15,7 +15,7 @@ Environment=RELAY_SHELL_TRANSPORT=http
 Environment=RELAY_SHELL_HTTP_HOST=127.0.0.1
 Environment=RELAY_SHELL_HTTP_PORT=8080
 Environment=RELAY_SHELL_AUDIT_PATH=/var/log/relay-shell/audit.jsonl
-ExecStart=/var/lib/relay-shell/venv/bin/python -m relay-shell
+ExecStart=/var/lib/relay-shell/venv/bin/relay-shell
 Restart=on-failure
 RestartSec=5
 StartLimitBurst=5

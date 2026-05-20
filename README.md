@@ -124,7 +124,7 @@ administrative hosts with strict network controls and full audit shipping.
 ## Layout
 
 ```
-src/relay-shell/        server, config, audit, policy, redaction, sessions, tools, auth
+src/relay_shell/        server, config, audit, policy, redaction, sessions, tools, auth
 deploy/          systemd unit + hardening drop-in, Caddyfile, logrotate, install.sh
 docs/            architecture, tool reference, deployment, ADRs
 tests/           unit + integration (in-process SSH server, no network)
