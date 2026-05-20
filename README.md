@@ -130,7 +130,8 @@ administrative hosts with strict network controls and full audit shipping.
 ## Layout
 
 ```
-src/relay_shell/   server, config, audit, policy, redaction, sessions, tools, auth
+src/relay_shell/   server, config, audit, policy, redaction, sessions,
+                   shelltools, sshpool, inventory, errors, util, auth
 deploy/            systemd unit + hardening drop-in, Caddyfile, logrotate, installers
 docs/              architecture, tool reference, deployment, ADRs
 tests/             unit + integration (in-process SSH server, no network)

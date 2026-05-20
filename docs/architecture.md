@@ -1,10 +1,11 @@
 # Architecture
 
-`relay-shell` is a single Python process exposing shell and SSH operations as MCP
-tools. It is intentionally thin: the MCP SDK (FastMCP) owns the protocol and
-(optional) OAuth edge; `asyncssh` owns SSH; the operating system owns
-execution. `relay-shell` owns the parts that make that combination *safe to operate*:
-classification, bounding, auditing, and session lifecycle.
+`relay-shell` is a single Python 3.12+ process exposing shell and SSH
+operations as MCP tools. It is intentionally thin: the MCP SDK (FastMCP)
+owns the protocol and (optional) OAuth edge; `asyncssh` owns SSH; the
+operating system owns execution. `relay-shell` owns the parts that make
+that combination *safe to operate*: classification, bounding, auditing,
+and session lifecycle.
 
 ```
 MCP client (Claude / Inspector / SDK)

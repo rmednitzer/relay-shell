@@ -12,12 +12,13 @@ long-name CLI flags - matching either a double dash (``--password=...``,
 tools use (``-token=foo``, ``-password VALUE``), including quoted values
 and escape-aware backslash-space - URL-embedded credentials, and a handful
 of provider token shapes. Short-form single-letter flags like ``-p<value>``
-(e.g. ``mysql -psecret``) are intentionally **not** redacted: ``-p`` is
-overloaded across SSH/nmap/generic flags so any regex-based attempt at it
-either over-redacts unrelated arguments or under-redacts wrapped multi-line
-invocations. Operators putting DB passwords on the command line should use
-``--password=...``, the interactive ``-p`` (no value), or ``~/.my.cnf``
-instead.
+are redacted **only** when a MySQL-family CLI (``mysql``, ``mariadb-*``,
+``mycli``) appears in the same argument string: ``-p`` is overloaded
+across SSH (``-p22``), nmap (``-p1-1000``), and other tools, so the
+MySQL-family gate avoids over-redacting unrelated arguments while still
+covering the common ``mysql -psecret`` shape. Operators putting DB
+passwords on the command line should still prefer ``--password=...``,
+the interactive ``-p`` (no value), or ``~/.my.cnf`` instead.
 """
 
 from __future__ import annotations
