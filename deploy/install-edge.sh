@@ -120,7 +120,7 @@ fi
 
 if [ "${RELAY_SHELL_EDGE_DRY_RUN:-0}" = "1" ]; then
     log "Dry run - printing the parameterized Caddyfile template below."
-    log "Caddy substitutes \${RELAY_SHELL_EDGE_*} at service start using the values logged above."
+    log "Caddy substitutes {\$RELAY_SHELL_EDGE_*} at service start using the values logged above."
     cat "$CADDYFILE_SRC"
     exit 0
 fi
@@ -148,6 +148,17 @@ REPO
     apt-get install -y -qq caddy
 else
     log "Caddy already installed: $(caddy version 2>/dev/null | head -1)"
+fi
+
+# The rest of the installer assumes a systemd-managed caddy.service (the
+# official apt package ships one). A binary installed by hand may not. Bail
+# out early with an actionable message instead of failing inside `systemctl`.
+if ! systemctl list-unit-files caddy.service >/dev/null 2>&1 \
+        || ! systemctl list-unit-files caddy.service 2>/dev/null | grep -q '^caddy\.service'; then
+    die "caddy binary is present but no caddy.service systemd unit was found.
+       Install the official apt package (this script does that automatically
+       when caddy is missing) or provide your own caddy.service unit before
+       re-running. See https://caddyserver.com/docs/install."
 fi
 
 install -d -m 0755 /etc/caddy
@@ -182,23 +193,44 @@ chmod 0644 "$CADDYFILE_DST.tmp"
 mv "$CADDYFILE_DST.tmp" "$CADDYFILE_DST"
 
 # Write a dedicated systemd EnvironmentFile rather than inlining values into
-# the drop-in. systemd parses KEY=VALUE to end-of-line, so spaces and most
-# punctuation are safe without quoting; this also keeps the drop-in static
-# (no per-run regeneration of unit syntax) and avoids `%`-specifier
-# expansion that systemd applies inside Environment= assignments.
+# the drop-in. Keeps the drop-in static and avoids `%`-specifier expansion
+# that systemd applies inside Environment= assignments.
+#
+# Note on quoting: systemd's EnvironmentFile parser treats whitespace inside
+# an unquoted value as a separator for additional KEY=VALUE pairs on the
+# same line, which would silently truncate RELAY_SHELL_EDGE_CLIENT_CIDRS to
+# the first CIDR. Emit every value double-quoted, with embedded double
+# quotes escaped, so multi-token values survive intact.
+emit_env() {
+    local key="$1" val="$2"
+    # Escape backslashes first, then double quotes.
+    val="${val//\\/\\\\}"
+    val="${val//\"/\\\"}"
+    printf '%s="%s"\n' "$key" "$val"
+}
+
 log "Installing edge env file at $EDGE_ENV_FILE"
 install -d -m 0755 /etc/relay-shell
 umask 077
 {
     echo "# Managed by relay-shell deploy/install-edge.sh - do not hand-edit."
     echo "# Update $OPERATOR_ENV_FILE and re-run the installer instead."
-    printf 'RELAY_SHELL_EDGE_DOMAIN=%s\n'        "$RELAY_SHELL_EDGE_DOMAIN"
-    printf 'RELAY_SHELL_EDGE_ACME_EMAIL=%s\n'    "$RELAY_SHELL_EDGE_ACME_EMAIL"
-    printf 'RELAY_SHELL_EDGE_ACME_CA=%s\n'       "$RELAY_SHELL_EDGE_ACME_CA"
-    printf 'RELAY_SHELL_EDGE_UPSTREAM=%s\n'      "$RELAY_SHELL_EDGE_UPSTREAM"
-    printf 'RELAY_SHELL_EDGE_CLIENT_CIDRS=%s\n'  "$RELAY_SHELL_EDGE_CLIENT_CIDRS"
+    emit_env RELAY_SHELL_EDGE_DOMAIN       "$RELAY_SHELL_EDGE_DOMAIN"
+    emit_env RELAY_SHELL_EDGE_ACME_EMAIL   "$RELAY_SHELL_EDGE_ACME_EMAIL"
+    emit_env RELAY_SHELL_EDGE_ACME_CA      "$RELAY_SHELL_EDGE_ACME_CA"
+    emit_env RELAY_SHELL_EDGE_UPSTREAM     "$RELAY_SHELL_EDGE_UPSTREAM"
+    emit_env RELAY_SHELL_EDGE_CLIENT_CIDRS "$RELAY_SHELL_EDGE_CLIENT_CIDRS"
 } > "$EDGE_ENV_FILE"
-chmod 0644 "$EDGE_ENV_FILE"
+# Not secret, but still security-relevant edge configuration: keep it
+# root-owned and group-readable by caddy (which needs to read it for the
+# drop-in's EnvironmentFile=), not world-readable.
+if getent group caddy >/dev/null 2>&1; then
+    chown root:caddy "$EDGE_ENV_FILE"
+    chmod 0640 "$EDGE_ENV_FILE"
+else
+    chmod 0600 "$EDGE_ENV_FILE"
+    warn "no 'caddy' group found; $EDGE_ENV_FILE is root-only - caddy may fail to read it"
+fi
 umask 022
 
 log "Installing systemd environment drop-in at $ENV_DROPIN"
