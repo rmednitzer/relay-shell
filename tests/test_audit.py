@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from relay_shell.audit import AuditLogger
@@ -47,3 +48,20 @@ def test_audit_records_denied_flag(tmp_path: Path) -> None:
     rec = json.loads(path.read_text().strip())
     assert rec["denied"] is True
     assert rec["tier"] == 3
+
+
+def test_audit_precreate_uses_o_append(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "audit.jsonl"
+    real_open = os.open
+    seen_append = False
+
+    def wrapped_open(file: str, flags: int, mode: int = 0o777) -> int:
+        nonlocal seen_append
+        if file == str(path) and (flags & os.O_CREAT):
+            seen_append = bool(flags & os.O_APPEND)
+        return real_open(file, flags, mode)
+
+    monkeypatch.setattr("relay_shell.audit.os.open", wrapped_open)
+    log = AuditLogger(str(path))
+    assert log.degraded is False
+    assert seen_append is True
