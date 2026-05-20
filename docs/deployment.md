@@ -55,9 +55,10 @@ sudo systemctl enable --now relay-shell
 ## 4. Network edge (HTTP transport)
 
 The HTTP transport binds `127.0.0.1` by design. Terminate TLS and restrict by
-source IP at a reverse proxy. `deploy/Caddyfile` is a reference:
+source IP at a reverse proxy. `deploy/Caddyfile` is shipped parameterized
+through environment variables and provides:
 
-- automatic TLS (ACME),
+- automatic TLS via ACME (Let's Encrypt by default, ZeroSSL fallback),
 - an `@blocked` matcher that 403s any source outside the allowlisted CIDRs,
 - HSTS / `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy`,
 - `reverse_proxy` to the loopback MCP port.
@@ -68,6 +69,48 @@ flow; tool traffic and `/token` are CIDR-restricted.
 
 Defense in depth: a host firewall (only 80/443 inbound), the proxy CIDR
 matcher, OAuth 2.1, then the policy/audit layer.
+
+### 4a. Automated TLS (Caddy + Let's Encrypt)
+
+`deploy/install-edge.sh` is the supported turnkey path. It installs Caddy
+from the official apt repository (if missing), drops the parameterized
+Caddyfile in place, writes a systemd environment drop-in, validates the
+config, and starts the service. Renewal is driven by Caddy's built-in ACME
+scheduler - **no cron, no certbot**.
+
+Prerequisites: a public DNS A/AAAA record for the chosen hostname pointing
+at this host, and TCP/80 + TCP/443 reachable from the internet (port 80 is
+required for the HTTP-01 challenge).
+
+```bash
+# Edit /etc/relay-shell/relay-shell.env (or export inline) and set at minimum:
+#   RELAY_SHELL_EDGE_DOMAIN=relay-shell.example.org
+#   RELAY_SHELL_EDGE_ACME_EMAIL=admin@example.org
+#   RELAY_SHELL_EDGE_CLIENT_CIDRS="203.0.113.0/24 198.51.100.0/24"
+sudo deploy/install-edge.sh
+```
+
+| Variable | Purpose |
+|---|---|
+| `RELAY_SHELL_EDGE_DOMAIN` | Public hostname presented in the TLS certificate. |
+| `RELAY_SHELL_EDGE_ACME_EMAIL` | Contact email for the ACME account. |
+| `RELAY_SHELL_EDGE_CLIENT_CIDRS` | Space-separated source CIDR allowlist (defaults to loopback only - remote clients get 403 until you set this). |
+| `RELAY_SHELL_EDGE_UPSTREAM` | Loopback target (default `127.0.0.1:8080`). |
+| `RELAY_SHELL_EDGE_ACME_CA` | ACME directory override; set to `https://acme-staging-v02.api.letsencrypt.org/directory` for dry runs against LE staging. |
+| `RELAY_SHELL_EDGE_OPEN_FIREWALL` | Set to `1` to `ufw allow 80,443/tcp` if `ufw` is present. |
+| `RELAY_SHELL_EDGE_DRY_RUN` | Set to `1` to print the rendered Caddyfile and exit without installing. |
+
+The installer is idempotent: re-run it after editing the env file to push
+changes. The drop-in lives at
+`/etc/systemd/system/caddy.service.d/relay-shell-edge.conf`. Cert state
+persists under Caddy's data directory across restarts. See
+[`docs/adr/0004-edge-tls-automation.md`](adr/0004-edge-tls-automation.md)
+for the design rationale and rejected alternatives.
+
+Operators running a non-Caddy edge (nginx, HAProxy, an upstream LB with
+its own ACME integration) can still use the relay-shell service; the
+loopback-bind contract and CIDR/header expectations described above are
+all that matter.
 
 ## 5. OAuth 2.1 (optional)
 

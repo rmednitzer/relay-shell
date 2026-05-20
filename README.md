@@ -109,8 +109,10 @@ Safety is achieved with **compensating controls**, not by crippling the tool:
   and buffers; idle/lifetime reaping.
 - **Optional OAuth 2.1** - DCR with single-client lockdown, PKCE, file-backed
   rotating tokens, lazy expiry (HTTP transport).
-- **Edge** - a reference Caddy config restricts the endpoint to known CIDRs
-  with TLS and security headers; systemd unit applies resource caps.
+- **Edge** - parameterized Caddy config restricts the endpoint to known
+  CIDRs with security headers and automated TLS (ACME / Let's Encrypt)
+  installed via `deploy/install-edge.sh`; systemd unit applies resource
+  caps.
 
 This server grants real administrative power. Run it only as a scoped service
 account, only on hosts you are authorized to administer, behind the network

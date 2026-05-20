@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Automated TLS at the edge: `deploy/Caddyfile` is now parameterized via
+  env variables and `deploy/install-edge.sh` provisions Caddy with ACME
+  (Let's Encrypt by default) for hands-off issuance and renewal.
+- ADR 0004 documenting the edge-TLS automation choice and rejected
+  alternatives (certbot + cron, native TLS in the Python service).
+
+### Changed
+
+- `.env.example` and `docs/deployment.md` document the new
+  `RELAY_SHELL_EDGE_*` variables and the one-shot install flow.
+
 ## [0.1.0] - 2026-05-19
 
 ### Added

@@ -1,40 +1,62 @@
-# Reference Caddyfile for the relay-shell HTTP transport.
+# Caddyfile for the relay-shell HTTP transport.
 #
-# relay-shell binds 127.0.0.1:8080 by design. Caddy terminates TLS, restricts the
-# source to an explicit CIDR allowlist, sets security headers, and reverse
-# proxies to the loopback MCP port. Replace the domain and the CIDRs.
+# relay-shell binds 127.0.0.1:8080 by design. Caddy terminates TLS via ACME
+# (Let's Encrypt by default, ZeroSSL fallback), restricts the source to an
+# explicit CIDR allowlist, sets security headers, and reverse proxies to the
+# loopback MCP port.
+#
+# Automated provisioning and renewal are handled by Caddy's built-in ACME
+# client; no cron, no certbot. Certificates persist under Caddy's data
+# directory (default `/var/lib/caddy/.local/share/caddy/certificates`) and
+# renew in the background well before expiry.
+#
+# This file is parameterized through environment variables so it can be
+# installed unmodified by `deploy/install-edge.sh`:
+#
+#   RELAY_SHELL_EDGE_DOMAIN        Public hostname presented in the TLS cert
+#                                  (must have a DNS A/AAAA record pointing here)
+#   RELAY_SHELL_EDGE_ACME_EMAIL    Contact email for ACME registration
+#   RELAY_SHELL_EDGE_CLIENT_CIDRS  Space-separated allowlist for tool traffic
+#                                  and /token (defaults to loopback only)
+#   RELAY_SHELL_EDGE_UPSTREAM      Loopback upstream (default 127.0.0.1:8080)
+#   RELAY_SHELL_EDGE_ACME_CA       Optional ACME directory override
+#                                  (e.g. Let's Encrypt staging for dry runs)
+#
+# To stage against the Let's Encrypt staging CA before going live, set
+# RELAY_SHELL_EDGE_ACME_CA=https://acme-staging-v02.api.letsencrypt.org/directory.
 
 {
-	email admin@example.org
+	email {$RELAY_SHELL_EDGE_ACME_EMAIL}
+	acme_ca {$RELAY_SHELL_EDGE_ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
 }
 
-relay-shell.example.org {
+{$RELAY_SHELL_EDGE_DOMAIN} {
 	# OAuth browser/redirect + discovery must be reachable for the auth
 	# flow; they still require a registered client and PKCE.
 	handle /authorize {
-		reverse_proxy localhost:8080 {
+		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
 			header_up Host {upstream_hostport}
 		}
 	}
 	handle /.well-known/oauth-authorization-server {
-		reverse_proxy localhost:8080 {
+		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
 			header_up Host {upstream_hostport}
 		}
 	}
 	handle /.well-known/oauth-protected-resource* {
-		reverse_proxy localhost:8080 {
+		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
 			header_up Host {upstream_hostport}
 		}
 	}
 
-	# Everything else (tool traffic, /token) is CIDR-restricted. Set these
-	# to the source ranges of your MCP client ONLY.
-	@blocked not remote_ip 203.0.113.0/24 198.51.100.0/24 127.0.0.1/8 ::1
+	# Everything else (tool traffic, /token) is CIDR-restricted. Override
+	# RELAY_SHELL_EDGE_CLIENT_CIDRS to the source ranges of your MCP client.
+	@blocked not remote_ip {$RELAY_SHELL_EDGE_CLIENT_CIDRS:127.0.0.1/8 ::1}
 	handle @blocked {
 		respond "Forbidden" 403
 	}
 
-	reverse_proxy localhost:8080 {
+	reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
 		header_up Host {upstream_hostport}
 	}
 
