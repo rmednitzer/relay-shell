@@ -62,6 +62,17 @@ def test_redact_cli_flag_does_not_eat_next_flag() -> None:
     assert "--quiet" in out2
 
 
+def test_redact_cli_flag_redacts_single_dash_prefixed_values() -> None:
+    # Some CLIs accept dash-prefixed values for required arguments, and those
+    # values must still be scrubbed when passed as the next argv token.
+    out = redact("client --token -abc123DashSecret --quiet")
+    assert "-abc123DashSecret" not in out
+    assert "--quiet" in out
+    out2 = redact("mysql --password -secret123 --host db")
+    assert "-secret123" not in out2
+    assert "--host" in out2 and "db" in out2
+
+
 def test_redact_cli_flag_handles_quoted_value() -> None:
     # Quoted passphrase-style secrets must be scrubbed as a unit, not just
     # up to the first whitespace.

@@ -63,7 +63,10 @@ _PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             (?:
                 "(?:[^"\\]|\\.)*"        # double-quoted, escape-aware
               | '(?:[^'\\]|\\.)*'        # single-quoted, escape-aware
-              | (?!-)(?:\\.|\S)+         # bare value, treating \\<char> as one unit
+              | (?:-(?!-)|(?!--))(?:\\.|\S)+
+                                        # bare value, treating \\<char> as one unit;
+                                        # allow single-dash-prefixed secrets (-abc)
+                                        # but still reject next long option (--host)
             )
             """,
         ),
