@@ -77,7 +77,8 @@ async def test_revoke_access_token_removes_only_access(tmp_path: Path) -> None:
     """Revoking an access token must not cascade to its paired refresh token.
 
     RFC 7009 leaves that direction unspecified and the provider opts out;
-    cascade in the other direction (refresh -> access) is exercised below.
+    the symmetric no-cascade in the other direction (refresh -> access) is
+    asserted in ``test_revoke_refresh_token_removes_refresh`` below.
     """
     from mcp.server.auth.provider import AccessToken
     from mcp.shared.auth import OAuthClientInformationFull
@@ -118,6 +119,10 @@ async def test_revoke_refresh_token_removes_refresh(tmp_path: Path) -> None:
         )
     )
     assert await p.load_refresh_token(client, issued.refresh_token) is None
+    # Symmetric to the access-token case: revoking a refresh token must not
+    # invalidate the paired access token. The provider opts out of cascading
+    # revocation in either direction.
+    assert await p.load_access_token(issued.access_token) is not None
 
 
 async def test_refresh_exchange_rotates_tokens(tmp_path: Path) -> None:

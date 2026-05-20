@@ -43,6 +43,14 @@ def test_redact_cli_flag_forms() -> None:
     assert "abcd1234" not in redact("--api-key abcd1234 --quiet")
 
 
+def test_redact_cli_flag_single_dash_long_name() -> None:
+    # Go-flavored tools (and a few legacy CLIs) use a single dash for long-name
+    # flags: ``-token=foo``, ``-password value``. The redactor catches these to
+    # avoid leaking secrets just because the tool dropped a dash.
+    assert "go-secret" not in redact("mytool -token=go-secret -verbose")
+    assert "another-secret" not in redact("mytool -password another-secret --quiet")
+
+
 def test_redact_cli_flag_does_not_eat_next_flag() -> None:
     # ``--password`` with no value (interactive prompt) followed by another
     # flag must not cause ``--host`` to be redacted as if it were the secret.

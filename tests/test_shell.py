@@ -63,10 +63,13 @@ def test_build_env_overlay_removes_with_null() -> None:
 
 
 def test_build_env_ignores_non_object_overlay() -> None:
-    # Arrays, primitives, and malformed JSON all fall back to the inherited env.
+    # Arrays, primitives, and malformed JSON are dropped without raising; the
+    # deterministic defaults (DEBIAN_FRONTEND, GIT_TERMINAL_PROMPT, ...) still
+    # apply on top of the inherited environment.
     for overlay in ("[1, 2]", "true", "42", "not json"):
         env = build_env(overlay)
         assert env["DEBIAN_FRONTEND"] == "noninteractive"
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
 
 
 def test_build_env_overlay_coerces_values_to_strings() -> None:

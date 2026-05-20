@@ -6,15 +6,18 @@ output *body* is never logged at all (only its hash); this module covers the
 *argument* surface, where a caller might pass a token or key inline.
 
 Scope is deliberately bounded. The patterns target well-defined syntaxes:
-PEM blocks, ``Authorization`` headers, ``Bearer``/``key=value`` pairs, long
-CLI flags (``--password=...``, ``--token VALUE``, including quoted values
-and escape-aware backslash-space), URL-embedded credentials, and a handful
-of provider token shapes. Short-form ``-p<value>`` (e.g. ``mysql -psecret``)
-is intentionally **not** redacted: ``-p`` is overloaded across SSH/nmap/
-generic flags so any regex-based attempt at it either over-redacts unrelated
-arguments or under-redacts wrapped multi-line invocations. Operators putting
-DB passwords on the command line should use ``--password=...``, the
-interactive ``-p`` (no value), or ``~/.my.cnf`` instead.
+PEM blocks, ``Authorization`` headers, ``Bearer``/``key=value`` pairs,
+long-name CLI flags - matching either a double dash (``--password=...``,
+``--token VALUE``) or the single-dash long-name style some Go-flavored
+tools use (``-token=foo``, ``-password VALUE``), including quoted values
+and escape-aware backslash-space - URL-embedded credentials, and a handful
+of provider token shapes. Short-form single-letter flags like ``-p<value>``
+(e.g. ``mysql -psecret``) are intentionally **not** redacted: ``-p`` is
+overloaded across SSH/nmap/generic flags so any regex-based attempt at it
+either over-redacts unrelated arguments or under-redacts wrapped multi-line
+invocations. Operators putting DB passwords on the command line should use
+``--password=...``, the interactive ``-p`` (no value), or ``~/.my.cnf``
+instead.
 """
 
 from __future__ import annotations
