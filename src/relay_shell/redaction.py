@@ -92,6 +92,11 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
 # replacement; everything else collapses to the placeholder.
 _URL_CREDS = re.compile(r"://[^/\s:@]+:[^/\s:@]+@")
 
+# Short-form ``-p<value>`` is overloaded across many CLIs, so redact it only
+# when a MySQL-family command appears in the same argument string.
+_MYSQL_FAMILY_CLI = re.compile(r"\b(?:mysql\w*|mariadb\w*|mycli)\b", re.IGNORECASE)
+_MYSQL_COMPACT_PASSWORD = re.compile(r"(?<![A-Za-z0-9-])(-p)[^\s=-]\S*")
+
 
 def redact(text: str) -> str:
     """Replace secret-looking spans in ``text`` with a placeholder."""
@@ -100,6 +105,8 @@ def redact(text: str) -> str:
         out = pat.sub(repl, out)
     for pat in _PATTERNS:
         out = pat.sub(_PLACEHOLDER, out)
+    if _MYSQL_FAMILY_CLI.search(out):
+        out = _MYSQL_COMPACT_PASSWORD.sub(lambda m: f"{m.group(1)}{_PLACEHOLDER}", out)
     return out
 
 
