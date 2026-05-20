@@ -187,11 +187,19 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         ``use_shell=false`` to exec an argv without a shell.
         """
         t = app.clamp_timeout(timeout)
+        policy_text = "\n".join(part for part in (command, stdin, env_json) if part)
         return await app.run(
             tool="shell_exec",
             ctx=ctx,
-            audit_args={"command": command, "timeout": t, "cwd": cwd, "use_shell": use_shell},
-            policy_text=command,
+            audit_args={
+                "command": command,
+                "timeout": t,
+                "cwd": cwd,
+                "use_shell": use_shell,
+                "stdin": stdin,
+                "env_json": env_json,
+            },
+            policy_text=policy_text,
             max_output=max_output,
             work=lambda: run_command(
                 command,
