@@ -70,21 +70,12 @@ def test_redact_cli_flag_handles_quoted_value() -> None:
     assert "--next" in out3
 
 
-def test_dash_p_does_not_match_long_option_value() -> None:
-    # ``--protocol`` starts with two dashes; the ``-p`` regex must not start
-    # at the second dash and rewrite the option name.
-    out = redact("mysql --protocol=tcp -uroot mydb")
-    assert "--protocol=tcp" in out
-
-
-def test_dash_p_scoping_is_per_line() -> None:
-    # In a multi-line script, a ``mysql`` line must not enable ``-p`` scrub
-    # on unrelated lines (e.g. an ``ssh -p22 host`` later in the script).
-    script = "mysql -puploaded-secret -h db\nssh -p22 user@host\n"
-    out = redact(script)
-    assert "uploaded-secret" not in out
-    assert "-p22" in out
-    assert "user@host" in out
+def test_redact_cli_flag_handles_backslash_escaped_space() -> None:
+    # Shell-style ``--password top\ secret`` must scrub the whole value, not
+    # just up to the unescaped space. Common when avoiding quotes.
+    out = redact(r"--password top\ secret --host db")
+    assert "secret" not in out
+    assert "--host" in out and "db" in out
 
 
 def test_cli_flag_separator_does_not_cross_newline() -> None:
@@ -98,21 +89,19 @@ def test_cli_flag_separator_does_not_cross_newline() -> None:
     assert "ls -la" in out2
 
 
-def test_redact_mysql_dash_p_only_in_db_context() -> None:
-    # In MySQL-family context, ``-p<secret>`` is scrubbed in place.
-    assert "leaked" not in redact("mysql -uroot -pleaked-pw -h db")
-    assert "leaked" not in redact("mysqldump -pleaked-pw mydb > dump.sql")
-    assert "leaked" not in redact("mariadb -pleaked-pw -e 'show databases'")
-    # Outside that context, ``-p`` is overloaded and must be left intact:
-    # SSH port, nmap port range, and generic flags like ``-proxy``.
-    safe = redact("ssh -p 22 user@host")
-    assert "22" in safe and "user" in safe
-    compact = redact("ssh -p22 user@host")
-    assert "-p22" in compact and "user@host" in compact
-    nmap = redact("nmap -p1-1000 host.example")
-    assert "-p1-1000" in nmap
-    proxy = redact("java -proxy host:8080 -jar app.jar")
-    assert "-proxy" in proxy
+def test_short_dash_p_is_intentionally_not_redacted() -> None:
+    # ``-p`` is overloaded across tools (mysql password, ssh/nmap port,
+    # ``-proxy``, ...) and we deliberately do not try to scrub the short
+    # form. Operators must use the long form (``--password=...``) or
+    # interactive ``-p`` / ``~/.my.cnf`` instead. Audit fidelity for
+    # unrelated ``-p`` flags wins over a brittle MySQL heuristic.
+    assert "leaked-pw" in redact("mysql -uroot -pleaked-pw -h db")
+    # And the negatives (overloaded ``-p`` uses) keep their audit text.
+    assert "-p22" in redact("ssh -p22 user@host")
+    assert "-p1-1000" in redact("nmap -p1-1000 host.example")
+    assert "-proxy" in redact("java -proxy host:8080 -jar app.jar")
+    # ``--protocol`` (long option starting with ``--p...``) is untouched.
+    assert "--protocol=tcp" in redact("mysql --protocol=tcp -uroot mydb")
 
 
 def test_redact_args_preserves_non_strings() -> None:

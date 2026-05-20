@@ -4,6 +4,17 @@ Audited arguments are scrubbed before they are written so that the audit log
 (which is meant to be shipped off-host) never becomes a secret store. The
 output *body* is never logged at all (only its hash); this module covers the
 *argument* surface, where a caller might pass a token or key inline.
+
+Scope is deliberately bounded. The patterns target well-defined syntaxes:
+PEM blocks, ``Authorization`` headers, ``Bearer``/``key=value`` pairs, long
+CLI flags (``--password=...``, ``--token VALUE``, including quoted values
+and escape-aware backslash-space), URL-embedded credentials, and a handful
+of provider token shapes. Short-form ``-p<value>`` (e.g. ``mysql -psecret``)
+is intentionally **not** redacted: ``-p`` is overloaded across SSH/nmap/
+generic flags so any regex-based attempt at it either over-redacts unrelated
+arguments or under-redacts wrapped multi-line invocations. Operators putting
+DB passwords on the command line should use ``--password=...``, the
+interactive ``-p`` (no value), or ``~/.my.cnf`` instead.
 """
 
 from __future__ import annotations
@@ -28,21 +39,23 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]+"),
     re.compile(r"(?i)\b(api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*\S+"),
     # CLI-style flags: ``--password value``, ``--token=value``,
-    # ``--api-key "two words"``. The value is either a single bare token
-    # (with negative lookahead on ``-`` so we don't eat the next option),
-    # or a fully quoted string - escape-aware - so passphrase secrets with
-    # embedded whitespace are scrubbed as a unit instead of leaking the
-    # trailing words. The separator deliberately excludes newlines: an
-    # interactive ``--password`` at end-of-line must not consume the next
-    # line's command in an audited multi-line script.
+    # ``--api-key "two words"``, ``--password top\ secret``. The value is
+    # either a quoted string (escape-aware) so passphrase secrets with
+    # embedded whitespace stay together, or a bare run of characters that
+    # treats ``\\<char>`` as a single unit (so a shell-escaped space inside
+    # the secret is not treated as the end of the value). The negative
+    # lookahead on ``-`` prevents consuming the next option token (an
+    # interactive ``--password`` followed by ``--host`` must not redact
+    # ``--host``). The separator deliberately excludes newlines so an
+    # interactive flag at end-of-line cannot reach into the next command.
     re.compile(
         r"""(?ix)
         --?(?:password|passwd|pwd|secret|token|api[_-]?key)
         [=\ \t]+
         (?:
-            "(?:[^"\\]|\\.)*"     # double-quoted, escape-aware
-          | '(?:[^'\\]|\\.)*'     # single-quoted, escape-aware
-          | (?!-)\S+              # bare value not starting with a dash
+            "(?:[^"\\]|\\.)*"        # double-quoted, escape-aware
+          | '(?:[^'\\]|\\.)*'        # single-quoted, escape-aware
+          | (?!-)(?:\\.|\S)+         # bare value, treating \\<char> as one unit
         )
         """,
     ),
@@ -58,33 +71,12 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
 # replacement; everything else collapses to the placeholder.
 _URL_CREDS = re.compile(r"://[^/\s:@]+:[^/\s:@]+@")
 
-# Short-form ``-p<value>`` is dangerously overloaded: mysql password vs
-# ssh/nmap port spec vs generic ``-proxy`` and long options like
-# ``--protocol``. Two narrowings stack:
-#   * the lookbehind excludes a leading ``-`` so we never start matching at
-#     the second dash of a long option (``--protocol`` -> no match);
-#   * application is per-line and gated on the same line containing a
-#     mysql-family token, so a multi-line script with both ``mysql -psecret``
-#     and a later ``ssh -p22`` only redacts the mysql line.
-_DB_CLI = re.compile(r"\b(?:mysql|mariadb|mysqldump|mysqladmin|mycli)\b")
-_DB_PASSWORD_FLAG = re.compile(r"(?<![A-Za-z0-9-])(-p)[^\s=-]\S*")
-
-
-def _scrub_db_password_in_line(line: str) -> str:
-    if not _DB_CLI.search(line):
-        return line
-    return _DB_PASSWORD_FLAG.sub(lambda m: f"{m.group(1)}{_PLACEHOLDER}", line)
-
 
 def redact(text: str) -> str:
     """Replace secret-looking spans in ``text`` with a placeholder."""
     out = _URL_CREDS.sub("://[REDACTED]@", text)
     for pat in _PATTERNS:
         out = pat.sub(_PLACEHOLDER, out)
-    if _DB_CLI.search(out):
-        # Per-line scoping: only lines that themselves carry a mysql-family
-        # token are eligible for the overloaded ``-p<value>`` substitution.
-        out = "\n".join(_scrub_db_password_in_line(line) for line in out.split("\n"))
     return out
 
 
