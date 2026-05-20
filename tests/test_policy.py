@@ -41,3 +41,17 @@ def test_guarded_mode_requires_allow() -> None:
     assert p.check("shell_exec", "systemctl restart nginx").allowed is True
     assert p.check("shell_exec", "systemctl restart postgres").allowed is False
     assert p.check("shell_exec", "ls -la").allowed is True  # Tier 1 ok
+
+
+def test_policy_checks_shell_exec_stdin_payload() -> None:
+    p = Policy("open", deny=r"rm\s+-rf")
+    d = p.check("shell_exec", "bash\nrm -rf /tmp/victim")
+    assert d.allowed is False
+    assert d.tier is Tier.IRREVERSIBLE
+
+
+def test_policy_checks_shell_exec_env_payload() -> None:
+    p = Policy("open", deny=r"rm\s+-rf")
+    d = p.check("shell_exec", 'bash -c "$PAYLOAD"\n{"PAYLOAD":"rm -rf /tmp/victim"}')
+    assert d.allowed is False
+    assert d.tier is Tier.IRREVERSIBLE
