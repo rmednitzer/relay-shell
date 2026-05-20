@@ -26,38 +26,53 @@ __all__ = ["redact", "redact_args"]
 
 _PLACEHOLDER = "[REDACTED]"
 
-# Ordered, conservative patterns. Each replaces the secret-bearing span only.
+# Ordered, conservative patterns. Prefer structure-preserving replacements (keep
+# the non-secret prefix) when feasible; otherwise collapse the matched region to
+# the placeholder.
+_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # Authorization / Proxy-Authorization header value
+    (
+        re.compile(r"(?i)\b(?P<prefix>(?:proxy-)?authorization\s*[:=]\s*)\S+"),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # Bearer <token>
+    (
+        re.compile(r"(?i)\b(?P<prefix>bearer\s+)[A-Za-z0-9._\-]+"),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # token=... / api[_-]?key=... / password: ...
+    (
+        re.compile(
+            r"(?i)\b(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*)\S+"
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # CLI-style flags: ``--password value``, ``--token=value``,
+    # ``--api-key "two words"``, ``--password top\ secret``. See the module
+    # docstring for scope and the reasoning around interactive flags.
+    (
+        re.compile(
+            r"""(?ix)
+            (?P<prefix>
+                --?(?:password|passwd|pwd|secret|token|api[_-]?key)
+                [=\ \t]+
+            )
+            (?:
+                "(?:[^"\\]|\\.)*"        # double-quoted, escape-aware
+              | '(?:[^'\\]|\\.)*'        # single-quoted, escape-aware
+              | (?!-)(?:\\.|\S)+         # bare value, treating \\<char> as one unit
+            )
+            """,
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+)
+
 _PATTERNS: tuple[re.Pattern[str], ...] = (
     # PEM / OpenSSH private key blocks
     re.compile(
         r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
         re.DOTALL,
-    ),
-    # Authorization / Proxy-Authorization header value
-    re.compile(r"(?i)\b(proxy-)?authorization\s*[:=]\s*\S+"),
-    # Bearer / token=... / api[_-]?key=...
-    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]+"),
-    re.compile(r"(?i)\b(api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*\S+"),
-    # CLI-style flags: ``--password value``, ``--token=value``,
-    # ``--api-key "two words"``, ``--password top\ secret``. The value is
-    # either a quoted string (escape-aware) so passphrase secrets with
-    # embedded whitespace stay together, or a bare run of characters that
-    # treats ``\\<char>`` as a single unit (so a shell-escaped space inside
-    # the secret is not treated as the end of the value). The negative
-    # lookahead on ``-`` prevents consuming the next option token (an
-    # interactive ``--password`` followed by ``--host`` must not redact
-    # ``--host``). The separator deliberately excludes newlines so an
-    # interactive flag at end-of-line cannot reach into the next command.
-    re.compile(
-        r"""(?ix)
-        --?(?:password|passwd|pwd|secret|token|api[_-]?key)
-        [=\ \t]+
-        (?:
-            "(?:[^"\\]|\\.)*"        # double-quoted, escape-aware
-          | '(?:[^'\\]|\\.)*'        # single-quoted, escape-aware
-          | (?!-)(?:\\.|\S)+         # bare value, treating \\<char> as one unit
-        )
-        """,
     ),
     # Common provider token shapes
     re.compile(r"\bgith(?:ub)?_pat_[A-Za-z0-9_]+"),
@@ -75,6 +90,8 @@ _URL_CREDS = re.compile(r"://[^/\s:@]+:[^/\s:@]+@")
 def redact(text: str) -> str:
     """Replace secret-looking spans in ``text`` with a placeholder."""
     out = _URL_CREDS.sub("://[REDACTED]@", text)
+    for pat, repl in _PREFIX_PATTERNS:
+        out = pat.sub(repl, out)
     for pat in _PATTERNS:
         out = pat.sub(_PLACEHOLDER, out)
     return out
