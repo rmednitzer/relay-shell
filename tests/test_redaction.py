@@ -97,13 +97,12 @@ def test_cli_flag_separator_does_not_cross_newline() -> None:
     assert "ls -la" in out2
 
 
-def test_short_dash_p_is_intentionally_not_redacted() -> None:
-    # ``-p`` is overloaded across tools (mysql password, ssh/nmap port,
-    # ``-proxy``, ...) and we deliberately do not try to scrub the short
-    # form. Operators must use the long form (``--password=...``) or
-    # interactive ``-p`` / ``~/.my.cnf`` instead. Audit fidelity for
-    # unrelated ``-p`` flags wins over a brittle MySQL heuristic.
-    assert "leaked-pw" in redact("mysql -uroot -pleaked-pw -h db")
+def test_short_dash_p_is_redacted_for_db_cli_only() -> None:
+    # MySQL-family short ``-p<value>`` is scrubbed when paired with a known DB
+    # CLI token, while unrelated ``-p`` uses keep audit fidelity.
+    out = redact("mysql -uroot -pleaked-pw -h db")
+    assert "leaked-pw" not in out
+    assert "-p[REDACTED]" in out
     # And the negatives (overloaded ``-p`` uses) keep their audit text.
     assert "-p22" in redact("ssh -p22 user@host")
     assert "-p1-1000" in redact("nmap -p1-1000 host.example")

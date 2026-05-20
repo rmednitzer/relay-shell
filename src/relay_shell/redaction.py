@@ -10,14 +10,12 @@ PEM blocks, ``Authorization`` headers, ``Bearer``/``key=value`` pairs,
 long-name CLI flags - matching either a double dash (``--password=...``,
 ``--token VALUE``) or the single-dash long-name style some Go-flavored
 tools use (``-token=foo``, ``-password VALUE``), including quoted values
-and escape-aware backslash-space - URL-embedded credentials, and a handful
-of provider token shapes. Short-form single-letter flags like ``-p<value>``
-(e.g. ``mysql -psecret``) are intentionally **not** redacted: ``-p`` is
-overloaded across SSH/nmap/generic flags so any regex-based attempt at it
-either over-redacts unrelated arguments or under-redacts wrapped multi-line
-invocations. Operators putting DB passwords on the command line should use
-``--password=...``, the interactive ``-p`` (no value), or ``~/.my.cnf``
-instead.
+and escape-aware backslash-space - URL-embedded credentials, a handful
+of provider token shapes, and MySQL-family short-form ``-p<value>`` when used
+with known DB CLI commands (for example, ``mysql -psecret``). To avoid
+over-redacting unrelated ``-p`` usage (SSH ports, nmap ranges, ``-proxy``),
+short ``-p`` scrubbing is limited to lines that include a known MySQL-family
+command token.
 """
 
 from __future__ import annotations
@@ -90,6 +88,20 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
 _URL_CREDS = re.compile(r"://[^/\s:@]+:[^/\s:@]+@")
 
 
+
+_DB_CLI = re.compile(r"(?i)\b(?:mysql|mariadb|mysqldump|mysqladmin)\b")
+_DB_PASSWORD_FLAG = re.compile(r"(?<!\S)-p(?P<secret>[^\s'\"]+)")
+
+
+def _redact_db_dash_p(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines(keepends=True):
+        if _DB_CLI.search(line):
+            line = _DB_PASSWORD_FLAG.sub("-p[REDACTED]", line)
+        lines.append(line)
+    return "".join(lines)
+
+
 def redact(text: str) -> str:
     """Replace secret-looking spans in ``text`` with a placeholder."""
     out = _URL_CREDS.sub("://[REDACTED]@", text)
@@ -97,7 +109,7 @@ def redact(text: str) -> str:
         out = pat.sub(repl, out)
     for pat in _PATTERNS:
         out = pat.sub(_PLACEHOLDER, out)
-    return out
+    return _redact_db_dash_p(out)
 
 
 def _scrub(value: Any, max_len: int) -> Any:
