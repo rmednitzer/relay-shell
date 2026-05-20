@@ -1,4 +1,6 @@
-# relay-shell
+# Relay Shell
+
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/rmednitzer/relay-shell)
 
 A highly reliable, maximally capable [Model Context Protocol](https://modelcontextprotocol.io)
 server for **complete shell and SSH mastery**.
