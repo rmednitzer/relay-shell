@@ -12,7 +12,9 @@ as a crashed transport, so reconstruction is defensive.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import secrets
 import time
 from pathlib import Path
@@ -44,12 +46,30 @@ def _now() -> int:
     return int(time.time())
 
 
+_DIR_MODE = 0o700
+_FILE_MODE = 0o600
+
+
 class _Store:
-    """Tiny JSON file store. Each call reads/writes the whole file."""
+    """Tiny JSON file store. Each call reads/writes the whole file.
+
+    Directory and file permissions are set explicitly so the security
+    expectation does not depend on the caller's umask. systemd's
+    ``UMask=0077`` in the hardening drop-in matches this, but an operator
+    running the HTTP transport ad-hoc (tests, dev shells) gets the same
+    private permissions for free.
+    """
 
     def __init__(self, path: Path) -> None:
         self._path = path
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        parent = self._path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        # mkdir(mode=...) only applies when the directory is freshly
+        # created and never to existing parents; chmod is idempotent and
+        # covers both. Best-effort: a parent we cannot chmod (e.g. owned
+        # by another user) is the operator's responsibility, not fatal.
+        with contextlib.suppress(OSError):
+            parent.chmod(_DIR_MODE)
 
     def load(self) -> dict[str, Any]:
         try:
@@ -60,7 +80,12 @@ class _Store:
 
     def save(self, data: dict[str, Any]) -> None:
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+        payload = json.dumps(data, indent=2, default=str)
+        # Race-free: create the temp file with 0o600 atomically rather than
+        # writing first and chmod'ing after.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _FILE_MODE)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
         tmp.replace(self._path)
 
 

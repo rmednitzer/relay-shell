@@ -5,6 +5,8 @@ These run fully offline against the installed mcp SDK models.
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -150,6 +152,27 @@ async def test_load_refresh_token_mismatched_client_returns_none(tmp_path: Path)
     other = OAuthClientInformationFull(client_id="client-b", redirect_uris=["https://x/cb"])
     assert issued.refresh_token is not None
     assert await p.load_refresh_token(other, issued.refresh_token) is None
+
+
+def test_state_dir_and_files_are_private(tmp_path: Path) -> None:
+    """Permissions on the state dir and JSON files must not depend on umask.
+
+    Run with a deliberately wide umask to prove the explicit chmod / open
+    mode are in effect: the directory must be 0o700 and saved files 0o600
+    regardless of how the surrounding process was launched.
+    """
+    old = os.umask(0o000)
+    try:
+        p = _provider(tmp_path)
+        p._issue("client-a", ["mcp:tools"])  # triggers a save()
+    finally:
+        os.umask(old)
+
+    state_dir = tmp_path / "oauth"
+    assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
+    tokens = state_dir / "tokens.json"
+    assert tokens.is_file()
+    assert stat.S_IMODE(tokens.stat().st_mode) == 0o600
 
 
 async def test_exchange_authorization_code_consumes_code(tmp_path: Path) -> None:
