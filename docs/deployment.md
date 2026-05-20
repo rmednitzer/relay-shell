@@ -98,11 +98,14 @@ sudo deploy/install-edge.sh
 | `RELAY_SHELL_EDGE_UPSTREAM` | Loopback target (default `127.0.0.1:8080`). |
 | `RELAY_SHELL_EDGE_ACME_CA` | ACME directory override; set to `https://acme-staging-v02.api.letsencrypt.org/directory` for dry runs against LE staging. |
 | `RELAY_SHELL_EDGE_OPEN_FIREWALL` | Set to `1` to `ufw allow 80,443/tcp` if `ufw` is present. |
-| `RELAY_SHELL_EDGE_DRY_RUN` | Set to `1` to print the rendered Caddyfile and exit without installing. |
+| `RELAY_SHELL_EDGE_DRY_RUN` | Set to `1` to log the resolved values and print the parameterized Caddyfile template, then exit without installing. Caddy substitutes the `{$RELAY_SHELL_EDGE_*}` placeholders at service start. |
+| `RELAY_SHELL_EDGE_FORCE` | Set to `1` to overwrite an existing `/etc/caddy/Caddyfile` that this installer did not write. Without it, the installer refuses to clobber a Caddyfile that may serve other sites on the host. |
 
 The installer is idempotent: re-run it after editing the env file to push
-changes. The drop-in lives at
-`/etc/systemd/system/caddy.service.d/relay-shell-edge.conf`. Cert state
+changes. The drop-in at
+`/etc/systemd/system/caddy.service.d/relay-shell-edge.conf` is static and
+references a managed `EnvironmentFile=/etc/relay-shell/relay-shell-edge.env`,
+so user-supplied values never land inside systemd unit syntax. Cert state
 persists under Caddy's data directory across restarts. See
 [`docs/adr/0004-edge-tls-automation.md`](adr/0004-edge-tls-automation.md)
 for the design rationale and rejected alternatives.

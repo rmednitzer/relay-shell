@@ -21,7 +21,11 @@ set -euo pipefail
 #   RELAY_SHELL_EDGE_UPSTREAM      loopback upstream (default 127.0.0.1:8080)
 #   RELAY_SHELL_EDGE_ACME_CA       ACME directory override (e.g. LE staging)
 #   RELAY_SHELL_EDGE_OPEN_FIREWALL set to 1 to open 80/443 via ufw if present
-#   RELAY_SHELL_EDGE_DRY_RUN       set to 1 to render the Caddyfile and exit
+#   RELAY_SHELL_EDGE_DRY_RUN       set to 1 to print the parameterized
+#                                  Caddyfile template and exit
+#   RELAY_SHELL_EDGE_FORCE         set to 1 to overwrite an existing
+#                                  /etc/caddy/Caddyfile that this installer
+#                                  did not place (back it up first!)
 #
 # Location: deploy/install-edge.sh  Run as: root (sudo)
 
@@ -31,6 +35,8 @@ CADDYFILE_SRC="$SRC_DIR/Caddyfile"
 CADDYFILE_DST="/etc/caddy/Caddyfile"
 ENV_DROPIN_DIR="/etc/systemd/system/caddy.service.d"
 ENV_DROPIN="$ENV_DROPIN_DIR/relay-shell-edge.conf"
+EDGE_ENV_FILE="/etc/relay-shell/relay-shell-edge.env"
+OPERATOR_ENV_FILE="/etc/relay-shell/relay-shell.env"
 
 log()  { echo "[$(date -Iseconds)] [$SCRIPT_NAME] $*"; }
 warn() { log "WARN: $*" >&2; }
@@ -39,16 +45,47 @@ die()  { log "FATAL: $*" >&2; exit 1; }
 require_var() {
     local name="$1"
     local val="${!name:-}"
-    [ -n "$val" ] || die "$name is required (export it before running, or set it in /etc/relay-shell/relay-shell.env)"
+    [ -n "$val" ] || die "$name is required (export it before running, or set it in $OPERATOR_ENV_FILE)"
 }
 
-# Load env so this installer can be re-run after editing the config file.
-# shellcheck source=/dev/null
-if [ -r /etc/relay-shell/relay-shell.env ]; then
-    set -a
-    . /etc/relay-shell/relay-shell.env
-    set +a
-fi
+# Parse a systemd-style EnvironmentFile safely. Unlike `source`, this does
+# not execute the file, so values containing spaces, shell metacharacters,
+# or unbalanced quotes cannot crash or hijack the installer. Only keys
+# matching RELAY_SHELL_EDGE_* are exported.
+load_edge_env() {
+    local file="$1" line key val
+    [ -r "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            ''|\#*) continue ;;
+        esac
+        line="${line#export }"
+        case "$line" in
+            *=*) ;;
+            *) continue ;;
+        esac
+        key="${line%%=*}"
+        val="${line#*=}"
+        case "$key" in
+            RELAY_SHELL_EDGE_*) ;;
+            *) continue ;;
+        esac
+        # Strip a single pair of surrounding double or single quotes if
+        # present (systemd permits, but does not require, them).
+        case "$val" in
+            \"*\") val="${val#\"}"; val="${val%\"}" ;;
+            \'*\') val="${val#\'}"; val="${val%\'}" ;;
+        esac
+        # Reject control characters and embedded newlines (the latter cannot
+        # appear in a single read line, but be explicit).
+        case "$val" in
+            *[$'\n\r']*) die "value for $key in $file contains a newline" ;;
+        esac
+        export "$key=$val"
+    done < "$file"
+}
+
+load_edge_env "$OPERATOR_ENV_FILE"
 
 [ "$(id -u)" -eq 0 ] || die "must run as root"
 [ -r "$CADDYFILE_SRC" ] || die "Caddyfile template not found at $CADDYFILE_SRC"
@@ -59,6 +96,17 @@ require_var RELAY_SHELL_EDGE_ACME_EMAIL
 : "${RELAY_SHELL_EDGE_UPSTREAM:=127.0.0.1:8080}"
 : "${RELAY_SHELL_EDGE_CLIENT_CIDRS:=127.0.0.1/8 ::1}"
 : "${RELAY_SHELL_EDGE_ACME_CA:=https://acme-v02.api.letsencrypt.org/directory}"
+
+# Reject any value containing characters that would corrupt the systemd
+# EnvironmentFile we write below (newlines were caught above; reject NULs
+# and stray quotes that would unbalance the file).
+for var in RELAY_SHELL_EDGE_DOMAIN RELAY_SHELL_EDGE_ACME_EMAIL \
+           RELAY_SHELL_EDGE_ACME_CA RELAY_SHELL_EDGE_UPSTREAM \
+           RELAY_SHELL_EDGE_CLIENT_CIDRS; do
+    case "${!var}" in
+        *[$'\n\r\0']*) die "$var contains a control character" ;;
+    esac
+done
 
 log "Edge domain : $RELAY_SHELL_EDGE_DOMAIN"
 log "ACME email  : $RELAY_SHELL_EDGE_ACME_EMAIL"
@@ -71,7 +119,8 @@ if [ "${RELAY_SHELL_EDGE_CLIENT_CIDRS}" = "127.0.0.1/8 ::1" ]; then
 fi
 
 if [ "${RELAY_SHELL_EDGE_DRY_RUN:-0}" = "1" ]; then
-    log "Dry run - rendering Caddyfile to stdout (Caddy will substitute env vars at start)"
+    log "Dry run - printing the parameterized Caddyfile template below."
+    log "Caddy substitutes \${RELAY_SHELL_EDGE_*} at service start using the values logged above."
     cat "$CADDYFILE_SRC"
     exit 0
 fi
@@ -104,27 +153,66 @@ fi
 install -d -m 0755 /etc/caddy
 install -d -m 0750 -o caddy -g caddy /var/log/caddy 2>/dev/null || install -d -m 0755 /var/log/caddy
 
+# A magic marker on the first non-comment line lets us recognize a Caddyfile
+# this installer owns vs. one a human (or another tool) has placed there for
+# unrelated sites. Refusing to clobber the latter prevents an outage when
+# this is run on a host that already serves other vhosts via Caddy.
+MANAGED_MARKER="# relay-shell:install-edge:managed"
+RELAY_SHELL_EDGE_FORCE="${RELAY_SHELL_EDGE_FORCE:-0}"
+
+if [ -e "$CADDYFILE_DST" ] && [ "$RELAY_SHELL_EDGE_FORCE" != "1" ]; then
+    if ! head -n 5 "$CADDYFILE_DST" | grep -qF "$MANAGED_MARKER"; then
+        die "$CADDYFILE_DST exists and was not written by this installer.
+       Refusing to overwrite a Caddyfile that may serve other sites.
+       Options:
+         - merge the contents of $CADDYFILE_SRC into $CADDYFILE_DST by hand
+           (it is a single site block scoped to \$RELAY_SHELL_EDGE_DOMAIN), or
+         - back up the existing file and re-run with RELAY_SHELL_EDGE_FORCE=1
+           to replace it."
+    fi
+fi
+
 log "Installing $CADDYFILE_DST"
-install -m 0644 "$CADDYFILE_SRC" "$CADDYFILE_DST"
+# Prepend the ownership marker so a future run recognizes its own file.
+{
+    echo "$MANAGED_MARKER"
+    cat "$CADDYFILE_SRC"
+} > "$CADDYFILE_DST.tmp"
+chmod 0644 "$CADDYFILE_DST.tmp"
+mv "$CADDYFILE_DST.tmp" "$CADDYFILE_DST"
+
+# Write a dedicated systemd EnvironmentFile rather than inlining values into
+# the drop-in. systemd parses KEY=VALUE to end-of-line, so spaces and most
+# punctuation are safe without quoting; this also keeps the drop-in static
+# (no per-run regeneration of unit syntax) and avoids `%`-specifier
+# expansion that systemd applies inside Environment= assignments.
+log "Installing edge env file at $EDGE_ENV_FILE"
+install -d -m 0755 /etc/relay-shell
+umask 077
+{
+    echo "# Managed by relay-shell deploy/install-edge.sh - do not hand-edit."
+    echo "# Update $OPERATOR_ENV_FILE and re-run the installer instead."
+    printf 'RELAY_SHELL_EDGE_DOMAIN=%s\n'        "$RELAY_SHELL_EDGE_DOMAIN"
+    printf 'RELAY_SHELL_EDGE_ACME_EMAIL=%s\n'    "$RELAY_SHELL_EDGE_ACME_EMAIL"
+    printf 'RELAY_SHELL_EDGE_ACME_CA=%s\n'       "$RELAY_SHELL_EDGE_ACME_CA"
+    printf 'RELAY_SHELL_EDGE_UPSTREAM=%s\n'      "$RELAY_SHELL_EDGE_UPSTREAM"
+    printf 'RELAY_SHELL_EDGE_CLIENT_CIDRS=%s\n'  "$RELAY_SHELL_EDGE_CLIENT_CIDRS"
+} > "$EDGE_ENV_FILE"
+chmod 0644 "$EDGE_ENV_FILE"
+umask 022
 
 log "Installing systemd environment drop-in at $ENV_DROPIN"
 install -d -m 0755 "$ENV_DROPIN_DIR"
-umask 077
 cat >"$ENV_DROPIN" <<EOF
 # Managed by relay-shell deploy/install-edge.sh.
-# These are read by Caddy at service start and substituted into the Caddyfile.
+# Values live in $EDGE_ENV_FILE so unit syntax is not affected by user input.
 [Service]
-Environment=RELAY_SHELL_EDGE_DOMAIN=${RELAY_SHELL_EDGE_DOMAIN}
-Environment=RELAY_SHELL_EDGE_ACME_EMAIL=${RELAY_SHELL_EDGE_ACME_EMAIL}
-Environment=RELAY_SHELL_EDGE_ACME_CA=${RELAY_SHELL_EDGE_ACME_CA}
-Environment=RELAY_SHELL_EDGE_UPSTREAM=${RELAY_SHELL_EDGE_UPSTREAM}
-Environment="RELAY_SHELL_EDGE_CLIENT_CIDRS=${RELAY_SHELL_EDGE_CLIENT_CIDRS}"
+EnvironmentFile=$EDGE_ENV_FILE
 EOF
 chmod 0644 "$ENV_DROPIN"
-umask 022
 
 log "Validating Caddyfile syntax"
-# `caddy validate` reads the same env we just dropped in, so export them here.
+# `caddy validate` reads the same env Caddy will see at start, so export here.
 export RELAY_SHELL_EDGE_DOMAIN RELAY_SHELL_EDGE_ACME_EMAIL RELAY_SHELL_EDGE_ACME_CA \
        RELAY_SHELL_EDGE_UPSTREAM RELAY_SHELL_EDGE_CLIENT_CIDRS
 caddy validate --config "$CADDYFILE_DST" --adapter caddyfile
