@@ -635,10 +635,6 @@ commitment.
 
 ### 7.3 Operations + observability
 
-- **B-012 (P2)** Expose Prometheus-format counters at
-  `/metrics` (HTTP transport only): tool calls by name + tier + denied,
-  audit-degraded gauge, active sessions, active forwards. The audit log
-  is the source of truth; metrics are for dashboards, not evidence.
 - **B-014 (P3)** Add an `RELAY_SHELL_AUDIT_FORMAT=jsonl|cef|leef` knob for
   operators whose SIEMs only accept CEF/LEEF. Default stays JSONL.
 

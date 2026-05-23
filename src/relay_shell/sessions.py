@@ -354,6 +354,10 @@ class SessionRegistry:
         async with self._lock:
             return [self.snapshot(sid, s) for sid, s in self._sessions.items()]
 
+    def count(self) -> int:
+        """Synchronous count of currently-tracked sessions, for /metrics."""
+        return len(self._sessions)
+
     async def _sweep(self) -> None:
         now = time.monotonic()
         doomed: list[Session] = []

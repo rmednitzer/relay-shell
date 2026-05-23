@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `GET /metrics` endpoint on the HTTP transport, in Prometheus text
+  exposition format. Five metric names:
+  `relay_shell_tool_calls_total{tool,tier,mode,outcome}` (counter),
+  `relay_shell_active_sessions`, `relay_shell_active_forwards`,
+  `relay_shell_audit_degraded` (gauges, read live at scrape time).
+  Gauges close over the underlying registries (`SessionRegistry.count()`,
+  `SshPool.forward_count()`, `AuditLogger.degraded`) so the metric never
+  disagrees with the source. Hand-rolled exposition (no
+  `prometheus_client` dep) - the format is small enough that a runtime
+  dependency for five metric names is poor cost-vs-value. The route is
+  registered via `FastMCP.custom_route`, bypasses OAuth by design (same
+  posture as health checks), and is gated on
+  `RELAY_SHELL_TRANSPORT=http` - stdio servers do not mount it. The
+  audit log remains the source of truth; metrics are for dashboards and
+  reset on restart. Documented in `docs/deployment.md` §9a. Closes B-012.
+
 ### Changed
 
 - CI coverage floor raised from 75% to 85%. The new

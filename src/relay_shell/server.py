@@ -33,6 +33,7 @@ from .audit import AuditLogger
 from .config import Settings, get_settings
 from .errors import RelayError, fmt_exc
 from .inventory import Inventory
+from .metrics import ACTIVE_FORWARDS, ACTIVE_SESSIONS, AUDIT_DEGRADED, Metrics
 from .policy import Policy
 from .redaction import redact_args
 from .sessions import LocalPtyTransport, SessionRegistry
@@ -108,6 +109,12 @@ class Relay:
         )
         self.ssh = SshPool(settings=settings, inventory=self.inventory)
         self.sudo_binary = _find_sudo_binary()
+        self.metrics = Metrics()
+        # Gauges read live at scrape time: this guarantees /metrics never
+        # disagrees with the underlying registries.
+        self.metrics.register_gauge(ACTIVE_SESSIONS, lambda: float(self.sessions.count()))
+        self.metrics.register_gauge(ACTIVE_FORWARDS, lambda: float(self.ssh.forward_count()))
+        self.metrics.register_gauge(AUDIT_DEGRADED, lambda: 1.0 if self.audit.degraded else 0.0)
 
     def clamp_timeout(self, timeout: int) -> int:
         return clamp(timeout, 1, self.settings.max_timeout)
@@ -128,6 +135,7 @@ class Relay:
         request_id, client_id = _ctx_ids(ctx)
         decision = self.policy.check(tool, policy_text)
         red = redact_args(audit_args)
+        mode = self.settings.policy_mode
         if not decision.allowed:
             body = f"[DENIED tier {int(decision.tier)} ({decision.tier.name}): {decision.reason}]"
             self.audit.record(
@@ -140,14 +148,20 @@ class Relay:
                 client_id=client_id,
                 denied=True,
             )
+            self.metrics.inc_tool_call(
+                tool=tool, tier=int(decision.tier), mode=mode, outcome="denied"
+            )
             return body
 
+        errored = False
         try:
             body, exit_code = await work()
         except RelayError as exc:
             body, exit_code = fmt_exc(exc), None
+            errored = True
         except Exception as exc:  # noqa: BLE001
             body, exit_code = fmt_exc(exc), None
+            errored = True
 
         body = truncate(body, self.clamp_output(max_output))
         final = f"[exit {exit_code}]\n{body}" if exit_code is not None else body
@@ -160,6 +174,8 @@ class Relay:
             request_id=request_id,
             client_id=client_id,
         )
+        outcome = "error" if errored else "ok"
+        self.metrics.inc_tool_call(tool=tool, tier=int(decision.tier), mode=mode, outcome=outcome)
         return final
 
     def connect_kwargs(
@@ -973,6 +989,24 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             max_output=app.clamp_output(cfg.max_output),
             work=_work,
         )
+
+    # --- /metrics (HTTP transport only) -------------------------------------
+    #
+    # FastMCP.custom_route bypasses the OAuth layer by design (the upstream
+    # docstring says health-check style endpoints are intended). The audit
+    # log is the source of truth; /metrics is for dashboards only and is
+    # firewalled by the Caddy edge in the supported deployment.
+    if cfg.transport == "http":
+        from starlette.requests import Request
+        from starlette.responses import Response
+
+        @mcp.custom_route("/metrics", methods=["GET"], include_in_schema=False)
+        async def _metrics(_request: Request) -> Response:
+            body = app.metrics.render()
+            return Response(
+                content=body,
+                media_type="text/plain; version=0.0.4; charset=utf-8",
+            )
 
     return mcp
 

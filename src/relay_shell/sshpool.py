@@ -271,6 +271,10 @@ class SshPool:
             for h in self._forwards.values()
         ]
 
+    def forward_count(self) -> int:
+        """Number of currently-tracked SSH port forwards, for /metrics."""
+        return len(self._forwards)
+
     async def close_forward(self, fid: str) -> str:
         async with self._lock:
             handle = self._forwards.pop(fid, None)
