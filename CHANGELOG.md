@@ -16,21 +16,19 @@ All notable changes to this project are documented here. The format follows
   **publish** uses `pypa/gh-action-pypi-publish` for OIDC trusted
   publishing (no long-lived `PYPI_TOKEN` secret) in the `pypi` GitHub
   environment, so a required-reviewer approval gates the actual upload.
-  PyPI trusted-publishing form configured ahead of time at
-  `https://pypi.org/manage/account/publishing/`. The per-release
-  procedure (version bump + sign-tag + push) is documented in
-  `docs/runbook.md` 6.4. A `workflow_dispatch` input lets an operator
-  re-run an existing tag if PyPI was briefly down; the publish step
-  passes `skip-existing: true` so the re-run is idempotent. Closes B-005.
+  A `workflow_dispatch` input lets an operator re-run an existing tag
+  if PyPI was briefly down; the publish step passes `skip-existing:
+  true` so the re-run is idempotent. The per-release procedure
+  (version bump + sign-tag + push) is documented in
+  `docs/runbook.md` §6.4. Closes B-005.
 - Property-based fuzz suite for `redact` and `classify` (the audit /
-  policy primitives). 13 hypothesis-driven invariants:
-  `redact` is idempotent, never raises, preserves text without secret
-  shape, kills Bearer / URL-creds / CLI-flag / `key=value` markers;
-  `classify` is total, escalates to IRREVERSIBLE on any tier-3
-  substring, keeps the read-only tools at tier 0 under any command,
-  and stays at REVERSIBLE on tag-free random text. Lives behind the
-  `fuzz` pytest marker so the default `pytest` run skips it
-  (`addopts = "-q -m 'not fuzz'"`); a new
+  policy primitives). 13 hypothesis-driven invariants: `redact` is
+  idempotent, never raises, preserves text without secret shape, kills
+  Bearer / URL-creds / CLI-flag / `key=value` markers; `classify` is
+  total, escalates to IRREVERSIBLE on any tier-3 substring, keeps the
+  read-only tools at tier 0 under any command, and stays at REVERSIBLE
+  on tag-free random text. Lives behind the `fuzz` pytest marker so the
+  default `pytest` run skips it (`addopts = "-q -m 'not fuzz'"`); a new
   `.github/workflows/nightly-fuzz.yml` runs the suite daily with
   `HYPOTHESIS_PROFILE=ci` (5000 examples per property, ~55s wall) so
   the security-sensitive primitives keep finding latent counterexamples
@@ -59,28 +57,12 @@ All notable changes to this project are documented here. The format follows
   Gauges close over the underlying registries (`SessionRegistry.count()`,
   `SshPool.forward_count()`, `AuditLogger.degraded`) so the metric never
   disagrees with the source. Hand-rolled exposition (no
-  `prometheus_client` dep) - the format is small enough that a runtime
-  dependency for five metric names is poor cost-vs-value. The route is
-  registered via `FastMCP.custom_route`, bypasses OAuth by design (same
-  posture as health checks), and is gated on
-  `RELAY_SHELL_TRANSPORT=http` - stdio servers do not mount it. The
-  audit log remains the source of truth; metrics are for dashboards and
-  reset on restart. Documented in `docs/deployment.md` §9a. Closes B-012.
-
-### Changed
-
-- CI coverage floor raised from 75% to 85%. The new
-  `tests/test_tool_wrappers.py` module calls every `@mcp.tool()` wrapper
-  in `server.py` through `mcp.call_tool()` with arguments that produce
-  either valid output or a structured error string - either way exercises
-  the wrapper body, the audit path, the policy probe, and the truncate
-  path for every tool. `server.py` coverage lifted from ~65% to ~95% and
-  overall coverage to ~88%. Closes B-022 (partial; the remaining gap is
-  concentrated in `sshpool.py` at ~68% and tracked as a follow-up in
-  `docs/runbook.md` §7.2).
-
-### Added
-
+  `prometheus_client` dep). The route is registered via
+  `FastMCP.custom_route`, bypasses OAuth by design (same posture as
+  health checks), and is gated on `RELAY_SHELL_TRANSPORT=http` - stdio
+  servers do not mount it. The audit log remains the source of truth;
+  metrics are for dashboards and reset on restart. Documented in
+  `docs/deployment.md` §9a. Closes B-012.
 - `relay-shell --verify-deploy` CLI subcommand. Compares each shipped
   deploy template (systemd unit + drop-in, logrotate, Caddyfile) against
   the file the installer placed on the host (`/etc/systemd/system/...`,
@@ -95,53 +77,38 @@ All notable changes to this project are documented here. The format follows
   inside the wheel via a `[tool.hatch.build.targets.wheel.force-include]`
   mapping (`deploy/` → `relay_shell/_deploy`), with an editable-install
   fallback that walks up from the package file. Closes B-020.
-
-### Changed
-
-- CI coverage floor raised from 75% to 85%. The new
-  `tests/test_tool_wrappers.py` module calls every `@mcp.tool()` wrapper
-  in `server.py` through `mcp.call_tool()` with arguments that produce
-  either valid output or a structured error string - either way exercises
-  the wrapper body, the audit path, the policy probe, and the truncate
-  path for every tool. `server.py` coverage lifted from ~65% to ~95% and
-  overall coverage to ~88%. Closes B-022 (partial; the remaining gap is
-  concentrated in `sshpool.py` at ~68% and tracked as a follow-up in
-  `docs/runbook.md` §7.2).
-
-### Added
-
 - `ssh_fanout` MCP tool. Runs a command in parallel across hosts (or
   the whole inventory) with bounded concurrency (default 8, clamped
   to `[1, 32]`) and returns one JSON object with per-host `exit_code`
   and truncated `output`. The host list is capped at 100 per call to
   bound the outbound SSH burst. Tier classification reads `command`
   via `policy_text` like a regular `ssh_exec`, so the deny list and
-  `guarded`/`readonly` modes see the same probe text - `ssh_fanout
-  rm -rf /` is still Tier 3 and still refused. Closes B-002.
+  `guarded`/`readonly` modes see the same probe text - `ssh_fanout rm
+  -rf /` is still Tier 3 and still refused. Closes B-002.
 - `ssh_keyscan` MCP tool (Tier 1, REVERSIBLE). Shells out to
   `ssh-keyscan` to fetch each host's public key in known_hosts line
   format - useful for pre-populating `~/.ssh/known_hosts` so a service
-  account can run `strict` without a manual `accept-new` seeding
-  pass. Inputs are validated at the boundary (hostnames against
+  account can run `strict` without a manual `accept-new` seeding pass.
+  Inputs are validated at the boundary (hostnames against
   `[A-Za-z0-9._\-\[\]:]+`, port in 1..65535, key types from the OpenSSH
   set, host count capped at 32 per call to bound the outbound TCP
   burst); every interpolated token is also `shlex.quote`d and a `--`
   separator precedes the host list. Documented in `docs/tools.md` and
-  the README capability table.
-- `audit_tail` MCP tool (Tier 0, read-only). Returns the last N
-  records from the audit log as JSONL, oldest first. `lines` defaults
-  to 50 and is clamped to `[1, 1000]`. Opens a fresh read-only fd so
-  the writer's append-only handle is untouched. Lets an operator MCP
-  client debug a session without shelling into the host. The audit
-  log's "output body never written" invariant is preserved end-to-end
-  (regression test in `tests/test_audit_tail_tool.py`).
-- CI now runs the full check matrix on Python **3.12, 3.13, and
-  3.14** instead of 3.12 alone. The package floor stays `>=3.12`
-  (declared in `pyproject.toml`); the matrix surfaces interpreter-
-  specific regressions early. `fail-fast: false` keeps every entry's
-  result visible so a single 3.14 wheel gap does not mask a 3.13
-  regression. Classifiers in `pyproject.toml` updated to advertise
-  the three supported versions on PyPI.
+  the README capability table. Closes B-001.
+- `audit_tail` MCP tool (Tier 0, read-only). Returns the last N records
+  from the audit log as JSONL, oldest first. `lines` defaults to 50 and
+  is clamped to `[1, 1000]`. Opens a fresh read-only fd so the writer's
+  append-only handle is untouched. Lets an operator MCP client debug a
+  session without shelling into the host. The audit log's "output body
+  never written" invariant is preserved end-to-end (regression test in
+  `tests/test_audit_tail_tool.py`). Closes B-003.
+- CI now runs the full check matrix on Python **3.12, 3.13, and 3.14**
+  instead of 3.12 alone. The package floor stays `>=3.12` (declared in
+  `pyproject.toml`); the matrix surfaces interpreter-specific
+  regressions early. `fail-fast: false` keeps every entry's result
+  visible so a single 3.14 wheel gap does not mask a 3.13 regression.
+  Classifiers in `pyproject.toml` updated to advertise the three
+  supported versions on PyPI. Closes B-009.
 - `relay-shell --check-config` CLI flag. Loads `RELAY_SHELL_*` settings,
   constructs the server (audit sink, policy, inventory, OAuth if
   enabled) without starting a transport, and exits 0 on success or 2
@@ -151,13 +118,13 @@ All notable changes to this project are documented here. The format follows
   Documented in `README.md` (Quickstart) and `docs/deployment.md` §2.
   Four `subprocess.run`-based tests in `tests/test_main.py` exercise
   the new flag and close T-001 (the previously-untested
-  print-and-return-2 path in `__main__.main()`).
-- `CODE_OF_CONDUCT.md` adopting the Contributor Covenant 2.1. The
-  file is a thin pointer to the canonical upstream URL so wording
-  changes track automatically; it documents scope, the
-  enforcement-reporting channel (private GitHub security advisory,
-  same as vulnerability reports), and the Community Impact Guidelines
-  link. Cross-linked from `README.md` and `CONTRIBUTING.md`.
+  print-and-return-2 path in `__main__.main()`). Closes B-013.
+- `CODE_OF_CONDUCT.md` adopting the Contributor Covenant 2.1. The file
+  is a thin pointer to the canonical upstream URL so wording changes
+  track automatically; it documents scope, the enforcement-reporting
+  channel (private GitHub security advisory, same as vulnerability
+  reports), and the Community Impact Guidelines link. Cross-linked
+  from `README.md` and `CONTRIBUTING.md`.
 - `docs/adr/README.md` indexing every ADR (number, title, status, date,
   one-line subject) and documenting when a new ADR is required, the
   filename convention, and the next free number. Cross-linked from
@@ -166,66 +133,32 @@ All notable changes to this project are documented here. The format follows
   `ruff format`, `mypy --strict` (local hook against the project's
   venv), plus standard hygiene hooks. A new banned-imports rule under
   `[tool.ruff.lint.flake8-tidy-imports.banned-api]` refuses to let
-  `requests` or `urllib3` enter the codebase synchronously - they
-  would block the event loop. `pre-commit` is in the dev extras;
+  `requests` or `urllib3` enter the codebase synchronously - they would
+  block the event loop. `pre-commit` is in the dev extras;
   `CONTRIBUTING.md` documents the one-shot install.
-
-### Fixed
-
-- `Authorization:` redaction no longer leaks the bearer / Basic /
-  Signature value. The pattern previously consumed only the first
-  whitespace-delimited token after `:`/`=`, so
-  `Authorization: Bearer <token>` collapsed to
-  `Authorization: [REDACTED] <token>` and the value survived in the
-  audit log. The widened pattern handles three input shapes uniformly:
-  the bare HTTP header form (value runs to end-of-line), the quoted
-  CLI flag form `-H "Authorization: ..."` (value stops at the
-  surrounding closing quote), and the JSON dict literal form
-  `{"Authorization": "..."}` (value stops at its own closing quote).
-  The value class consumes past commas so AWS Signature v4 and Digest
-  challenge-response schemes do not strand the trailing
-  `Signature=<hex>` / `response="<hash>"` fields. `PATTERNS_VERSION`
-  bumped to `"2"`. Regression tests in `tests/test_patterns.py`
-  cover Bearer, Basic, SigV4, Proxy-Authorization, single-quoted CLI,
-  JSON-dict, and multi-header inputs.
-
-### Changed
-
-- Redaction and tier-classification regex tables moved into a dedicated
-  `src/relay_shell/patterns.py` module. `redaction.py` and `policy.py`
-  now consume the published `REDACTION_*` / `TIER*_PATTERN` /
-  `PRIV_ESC_PATTERN` names; the executor bodies are unchanged.
-  `PATTERNS_VERSION` is a monotonic counter that audit consumers can
-  read to detect a pattern-set upgrade. `tests/test_patterns.py`
-  anchors compile-time shape and provides paired over-scrub /
-  under-scrub cases per family. No behavior change.
-
-### Added
-
 - `.github/workflows/sbom.yml` generates a CycloneDX SBOM (JSON + XML,
   CDX spec 1.5) of the resolved Python environment on every `v*` tag
-  push and attaches both files to the GitHub release. Cheap
-  supply-chain signal; no runtime change. A `workflow_dispatch` input
-  lets the workflow attach an SBOM to an existing tag after the fact.
+  push and attaches both files to the GitHub release. Cheap supply-
+  chain signal; no runtime change. A `workflow_dispatch` input lets the
+  workflow attach an SBOM to an existing tag after the fact. Closes B-006.
 - `docs/audit-shipper.md` with one worked example each for Vector,
   Fluent Bit, and `journalctl` → `systemd-journal-remote`. Cross-linked
   from `SECURITY.md` and `docs/deployment.md` §6 so the "ship the log
   off-host" instruction now points at concrete configs that preserve
-  the append-only posture and rotation behavior.
-- Coverage measurement in CI with a 75% floor. Configuration lives in
-  `pyproject.toml` and enables subprocess collection so the stdio e2e
-  contributes; the CI workflow drops a small `coverage_subprocess.pth`
-  during install. Current measured baseline is ~78%; `coverage report`
-  fails the CI step below 75. See `docs/runbook.md` §4.3 for the local
-  recipe and §7.2 B-022 for the path to raising the floor to 85%.
+  the append-only posture and rotation behavior. Closes B-011.
+- Coverage measurement in CI with subprocess collection enabled (the
+  stdio e2e contributes). Configuration lives in `pyproject.toml`; the
+  CI workflow drops a small `coverage_subprocess.pth` during install.
+  See `docs/runbook.md` §4.3 for the local recipe. Closes B-007.
 - `CONTRIBUTING.md` covering scope, branch naming, the local-loop
   recipe, the documentation-moves-with-code requirement, and the
   security-sensitive-PR review path. The runbook remains the canonical
   procedure; `CONTRIBUTING.md` is the entry point that links into it.
+  Closes B-015.
 - GitHub PR template and bug / feature / security issue templates under
   `.github/`. The PR template encodes the runbook §3.1 cross-reference
   checklist and the §3.3 security-sensitive-diff confirmations so they
-  travel with every PR.
+  travel with every PR. Closes B-016.
 - Maintenance runbook at `docs/runbook.md` covering audit, review,
   validate, enhance, and extend procedures, a prioritized backlog
   (capability, quality, ops, docs, security hardening), and a per-file
@@ -238,14 +171,47 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- CI coverage floor raised to 85% (from the initial 75%). The new
+  `tests/test_tool_wrappers.py` module calls every `@mcp.tool()` wrapper
+  in `server.py` through `mcp.call_tool()` with arguments that produce
+  either valid output or a structured error string - either way
+  exercises the wrapper body, the audit path, the policy probe, and the
+  truncate path for every tool. `server.py` coverage lifted from ~65%
+  to ~95% and overall coverage to ~88%. Closes B-022 (partial; the
+  remaining gap is concentrated in `sshpool.py` at ~68% and tracked as
+  a follow-up in `docs/runbook.md` §7.2).
+- Redaction and tier-classification regex tables moved into a dedicated
+  `src/relay_shell/patterns.py` module. `redaction.py` and `policy.py`
+  now consume the published `REDACTION_*` / `TIER*_PATTERN` /
+  `PRIV_ESC_PATTERN` names; the executor bodies are unchanged.
+  `PATTERNS_VERSION` is a monotonic counter that audit consumers can
+  read to detect a pattern-set upgrade. `tests/test_patterns.py`
+  anchors compile-time shape and provides paired over-scrub / under-
+  scrub cases per family. No behavior change. Closes B-019.
 - `.env.example` and `docs/deployment.md` document the new
   `RELAY_SHELL_EDGE_*` variables and the one-shot install flow.
 - Bumped MCP SDK: `mcp` 1.26.0 → 1.27.1 (tracked by Dependabot, validated
-  by the existing test suite). ADR 0001 and `docs/architecture.md` updated
-  to match the actual pin.
+  by the existing test suite). ADR 0001 and `docs/architecture.md`
+  updated to match the actual pin.
 
 ### Fixed
 
+- `Authorization:` redaction no longer leaks the bearer / Basic /
+  Signature value. The pattern previously consumed only the first
+  whitespace-delimited token after `:`/`=`, so
+  `Authorization: Bearer <token>` collapsed to
+  `Authorization: [REDACTED] <token>` and the value survived in the
+  audit log. The widened pattern handles three input shapes uniformly:
+  the bare HTTP header form (value runs to end-of-line), the quoted CLI
+  flag form `-H "Authorization: ..."` (value stops at the surrounding
+  closing quote), and the JSON dict literal form
+  `{"Authorization": "..."}` (value stops at its own closing quote).
+  The value class consumes past commas so AWS Signature v4 and Digest
+  challenge-response schemes do not strand the trailing
+  `Signature=<hex>` / `response="<hash>"` fields. `PATTERNS_VERSION`
+  bumped to `"2"`. Regression tests in `tests/test_patterns.py` cover
+  Bearer, Basic, SigV4, Proxy-Authorization, single-quoted CLI, JSON-
+  dict, and multi-header inputs. Closes B-023.
 - `shell_exec` no longer permits policy/audit bypass through `stdin` or
   `env_json`: the policy-text probe now includes both, so a deny pattern
   that matches a command also matches the same payload smuggled in via
