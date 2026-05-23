@@ -86,22 +86,26 @@ indicator that someone added a tool without finishing the loop.
 ### 2.3 Audit-the-audit
 
 The audit guarantee is "every tool call appended as one JSON line with hash
-+ length, never body". Confirm it empirically against the e2e test output:
++ length, never body". Confirm it empirically by driving one real tool
+through the audited runner and inspecting the resulting record:
 
 ```bash
 AUDIT=/tmp/audit-check.jsonl
-RELAY_SHELL_AUDIT_PATH=$AUDIT \
-RELAY_SHELL_SSH_CONFIG=/tmp/no-cfg \
-python -m relay_shell &
-SERVER_PID=$!
-sleep 1; kill $SERVER_PID 2>/dev/null
-# (or use tests/test_stdio_e2e.py output)
+rm -f "$AUDIT"
+python -c "
+import asyncio
+from relay_shell.config import Settings
+from relay_shell.server import build_server
+mcp = build_server(Settings(audit_path='$AUDIT'))
+asyncio.run(mcp.call_tool('server_info', {}))
+"
 jq -c 'keys' "$AUDIT" | sort -u
 ```
 
 Every record must contain `ts, tool, tier, denied, args, output_sha256,
-output_len, exit_code` at minimum. `request_id` / `client_id` are
-context-dependent. Absence of any other field is an audit regression.
+output_len, exit_code` at minimum. `request_id` and `client_id` are
+context-dependent and may be absent. Absence of any of the required
+fields above is an audit regression.
 
 Grep for the canonical "must never appear" markers:
 
@@ -128,9 +132,10 @@ for cmd in ['ls', 'rm -rf /tmp/x', 'systemctl restart nginx',
 "
 ```
 
-Sanity-check that every Tier 3 example is denied under `guarded` (unless
-allowlisted), that `readonly` permits only Tier 0, and that the deny list
-fires in `open`.
+Sanity-check that every Tier 2+ example is denied under `guarded` (unless
+allowlisted - `guarded` refuses both `STATEFUL` (2) and `IRREVERSIBLE`
+(3)), that `readonly` permits only Tier 0, and that the deny list fires
+in `open`.
 
 ### 2.5 Secret redaction
 
@@ -166,11 +171,16 @@ RELAY_SHELL_MAX_TIMEOUT=900 \
 RELAY_SHELL_MAX_OUTPUT_HARD=1048576 \
 RELAY_SHELL_MAX_SESSIONS=64 \
 python -c "
-import asyncio, json
+import asyncio
 from relay_shell.config import Settings
 from relay_shell.server import build_server
-m = build_server(Settings(audit_path='/tmp/a.jsonl'))
-# server_info inspects the live Relay instance, not just settings.
+mcp = build_server(Settings(audit_path='/tmp/a.jsonl'))
+# Call the live server_info tool and print its JSON response so the
+# bounds reported here include any runtime overrides, not just Settings.
+content, _ = asyncio.run(mcp.call_tool('server_info', {}))
+for block in content:
+    if getattr(block, 'type', '') == 'text':
+        print(block.text)
 "
 ```
 
@@ -269,8 +279,24 @@ Trigger an extra review pass if the diff touches:
 - `deploy/install*.sh` (anything that writes a systemd unit / EnvironmentFile)
 - `deploy/Caddyfile` (CIDR matcher or header changes)
 
-Run the security skill: `/security-review`. It is scoped to the current
-diff and is the lowest-friction way to surface common findings.
+If you are reviewing through Claude Code, the bundled `/security-review`
+skill scans the current diff and surfaces common findings in one pass;
+that is the lowest-friction option. Without it, walk the diff against
+this manual checklist:
+
+- audit-record fields unchanged (`ts, tool, tier, denied, args,
+  output_sha256, output_len, exit_code`), output body still hashed only;
+- `policy_text` passed to `Relay.run()` covers every byte the executor
+  will see (command + stdin + env_json + script body);
+- redaction patterns have paired over-scrub / under-scrub tests;
+- `O_APPEND | O_CREAT` preserved in `audit.AuditLogger.__init__`;
+- OAuth store files still written with `0o600` and the state dir with
+  `0o700` regardless of umask;
+- `deploy/install-edge.sh` still refuses to clobber an unmanaged
+  `/etc/caddy/Caddyfile` without `RELAY_SHELL_EDGE_FORCE=1`;
+- `deploy/Caddyfile` security headers (HSTS, X-Content-Type-Options,
+  X-Frame-Options, Referrer-Policy) and the CIDR `@blocked` matcher
+  still present.
 
 ### 3.4 Common review failures (seen in past PRs)
 
@@ -676,7 +702,8 @@ by the same checklist.
   - A line in section 5 pointing at `docs/runbook.md` as the executable
     procedure for sections 1, 4, and 6.
   - A line in section 6 noting that the canonical tool list lives in
-    `tests/test_server.py::_EXPECTED` (until B-005 generates it).
+    `tests/test_server.py::_EXPECTED` (until C-002 collapses the four
+    duplicated sources into one).
 - Remove: nothing.
 
 ### 8.5 `CLAUDE.md`
