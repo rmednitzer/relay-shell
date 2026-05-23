@@ -38,16 +38,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      tag: ${{ steps.resolve.outputs.tag }}
-      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Resolve tag + assert version match
-        id: resolve
+      - name: Resolve tag from trigger
+        id: tag
         env:
           REF: ${{ github.ref }}
           INPUT_TAG: ${{ inputs.tag }}
@@ -62,20 +57,39 @@ jobs:
             echo "ERROR: $tag does not match the v<MAJOR>.<MINOR>.<PATCH> pattern" >&2
             exit 1
           fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # Check out the RESOLVED tag, not the default branch. On a
+      # `workflow_dispatch` re-run for an older tag, the default branch may
+      # have moved past it - reading `pyproject.toml` from the working tree
+      # without this `ref` would compare the tag against whatever version
+      # currently sits on the default branch and falsely reject a valid
+      # signed tag.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Assert tag matches pyproject version (at the tagged commit)
+        id: version
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
           version=$(grep -m1 '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-          if [ "$tag" != "v$version" ]; then
-            echo "ERROR: tag $tag does not match pyproject version v$version" >&2
+          if [ "$TAG" != "v$version" ]; then
+            echo "ERROR: tag $TAG does not match pyproject version v$version (read from the tagged commit)" >&2
             exit 1
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "OK: tag $tag matches pyproject version $version"
+          echo "OK: tag $TAG matches pyproject version $version"
 
       - name: Verify tag signature via GitHub API
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          TAG: ${{ steps.resolve.outputs.tag }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
           ref=$(curl -fsS -H "Authorization: token $GH_TOKEN" \
@@ -144,7 +158,14 @@ jobs:
       name: pypi
       url: https://pypi.org/p/relay-shell
     permissions:
+      # Job-level `permissions:` REPLACES the workflow-level block. OIDC
+      # for trusted publishing needs id-token; `actions/download-artifact`
+      # needs `actions: read` to fetch the artifact uploaded by the
+      # previous job; `contents: read` is the minimum for the repo
+      # context the action expects.
       id-token: write
+      actions: read
+      contents: read
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -153,3 +174,9 @@ jobs:
 
       - name: Publish via PyPI trusted publishing
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Make a workflow re-run after a successful upload idempotent
+          # instead of failing on "file already exists" - the runbook
+          # documents `workflow_dispatch` as the recovery path when PyPI
+          # was flaky mid-publish.
+          skip-existing: true

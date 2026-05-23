@@ -644,9 +644,13 @@ git push origin v0.1.1
 ```
 
 If the workflow fails mid-flight (e.g. PyPI is briefly down), re-run
-it from the Actions UI via `workflow_dispatch` with the same tag - the
-verify + build jobs are idempotent and OIDC publishing is a no-op when
-the same dist already exists.
+it from the Actions UI via `workflow_dispatch` with the same tag. The
+verify + build jobs are idempotent; the publish step passes
+`skip-existing: true` to `pypa/gh-action-pypi-publish`, so any file
+that already landed on PyPI from a previous attempt is silently
+skipped instead of producing a "file already exists" failure. PyPI
+itself enforces version immutability - this flag is the documented
+way to make the re-run path safe.
 
 If you need to yank a release, do it from the PyPI project page; this
 project does not maintain a yank automation because yanks are rare and
