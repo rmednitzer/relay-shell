@@ -8,6 +8,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Property-based fuzz suite for `redact` and `classify` (the audit /
+  policy primitives). 13 hypothesis-driven invariants:
+  `redact` is idempotent, never raises, preserves text without secret
+  shape, kills Bearer / URL-creds / CLI-flag / `key=value` markers;
+  `classify` is total, escalates to IRREVERSIBLE on any tier-3
+  substring, keeps the read-only tools at tier 0 under any command,
+  and stays at REVERSIBLE on tag-free random text. Lives behind the
+  `fuzz` pytest marker so the default `pytest` run skips it
+  (`addopts = "-q -m 'not fuzz'"`); a new
+  `.github/workflows/nightly-fuzz.yml` runs the suite daily with
+  `HYPOTHESIS_PROFILE=ci` (5000 examples per property, ~55s wall) so
+  the security-sensitive primitives keep finding latent counterexamples
+  without slowing PR CI. `hypothesis` added to dev extras. Closes B-010.
 - Three MCP **resources** so clients that prefer resources to tools can
   list hosts the protocol-native way:
   `relay-shell://inventory` (flat host list, JSON),
