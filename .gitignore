@@ -11,6 +11,7 @@ venv/
 .ruff_cache/
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 
 # Runtime state / secrets (NEVER commit)
