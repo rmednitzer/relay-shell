@@ -8,6 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `CODE_OF_CONDUCT.md` adopting the Contributor Covenant 2.1. The
+  file is a thin pointer to the canonical upstream URL so wording
+  changes track automatically; it documents scope, the
+  enforcement-reporting channel (private GitHub security advisory,
+  same as vulnerability reports), and the Community Impact Guidelines
+  link. Cross-linked from `README.md` and `CONTRIBUTING.md`.
 - `docs/adr/README.md` indexing every ADR (number, title, status, date,
   one-line subject) and documenting when a new ADR is required, the
   filename convention, and the next free number. Cross-linked from

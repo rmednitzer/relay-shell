@@ -663,7 +663,8 @@ commitment.
 
 ### 7.4 Docs and contribution
 
-- **B-017 (P2)** Add `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
+(Items in this category are tracked here as they land; the queue is
+currently empty.)
 
 ### 7.5 Security hardening (incremental, no posture change)
 
@@ -820,10 +821,9 @@ by the same checklist.
 
 ### 8.14 New `.md` files to create (tracked by the backlog)
 
-- `CODE_OF_CONDUCT.md` (B-017)
-
-These are queued in the backlog, not created in the same PR as this
-runbook, so the runbook does not block on them.
+(The queue is currently empty. New entries are added here when a
+backlog item references a not-yet-created file so the maintenance
+plan lands in the same PR.)
 
 ### 8.15 `CONTRIBUTING.md`
 
@@ -876,6 +876,21 @@ runbook, so the runbook does not block on them.
 - Cross-checks: the index must list every file in `docs/adr/000*.md`;
   any superseded ADR must carry a `Superseded by` line in its own
   header so the chain is navigable from either direction.
+
+### 8.19 `CODE_OF_CONDUCT.md`
+
+- Keep: the upstream pointer to the canonical Contributor Covenant 2.1
+  URL (so wording changes track upstream automatically), the scope
+  paragraph, the enforcement-reporting channel (private GitHub
+  security advisory, same as vulnerability reports), and the
+  Community Impact Guidelines link.
+- Add: nothing. If the project ever moves to a different code-of-
+  conduct framework, replace the upstream pointer; do not maintain a
+  fork of the Contributor Covenant text in-tree.
+- Cross-checks: `README.md` and `CONTRIBUTING.md` both link to this
+  file; if its path changes, update both. The enforcement-reporting
+  channel must match `SECURITY.md`'s reporting channel so reporters
+  have a single trust path to remember.
 
 ---
 
