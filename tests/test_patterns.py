@@ -103,13 +103,12 @@ def test_authorization_header_redacts_whole_bearer_value() -> None:
 
 def test_authorization_header_value_stops_at_quote() -> None:
     # Quoted-CLI form: the redactor must stop at the closing quote so it
-    # does not eat the next argv token. The bearer value inside is gone;
-    # the URL after the quote is preserved.
-    out = redaction.redact('curl -H "Authorization: Bearer abc.def-ghi" https://api.example')
-    assert "abc.def-ghi" not in out
-    assert "abc.def" not in out
-    assert "Bearer" not in out
-    assert "https://api.example" in out
+    # does not eat the next argv token. Assert the exact output shape so
+    # the position of the redacted span and the position of the trailing
+    # argv token are both unambiguous (substring-style assertions can
+    # mask off-by-one bleed into the next token).
+    out = redaction.redact('curl -H "Authorization: Bearer abc.def-ghi" trailing-arg')
+    assert out == 'curl -H "Authorization: [REDACTED]" trailing-arg'
 
 
 def test_authorization_header_handles_basic_auth() -> None:
@@ -174,10 +173,10 @@ def test_authorization_single_quoted_cli_form() -> None:
     # Some operators use single quotes in their shell:
     #   curl -H 'Authorization: Bearer X'
     # The value must stop at the closing single quote, not eat past it.
-    out = redaction.redact("curl -H 'Authorization: Bearer abc' https://api.example")
-    assert "Bearer" not in out
-    assert "abc" not in out
-    assert "https://api.example" in out
+    # Equality assertion (rather than substring) so the position of the
+    # trailing argv token is unambiguous.
+    out = redaction.redact("curl -H 'Authorization: Bearer abc' trailing-arg")
+    assert out == "curl -H 'Authorization: [REDACTED]' trailing-arg"
 
 
 def test_bearer_positive_and_negative() -> None:
