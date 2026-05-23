@@ -44,8 +44,12 @@ __all__ = [
 ]
 
 # Bump on any semantic change to a pattern (added / widened / narrowed /
-# removed). Initial extraction from redaction.py + policy.py is version 1.
-PATTERNS_VERSION = "1"
+# removed). v1: initial extraction from redaction.py + policy.py.
+# v2: Authorization-header value widened to handle three shapes (bare
+#     HTTP, quoted CLI flag, JSON dict literal) and to consume past the
+#     first comma so AWS SigV4 / Digest challenge-response schemes do
+#     not leak the trailing Signature/response field.
+PATTERNS_VERSION = "2"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -53,9 +57,27 @@ REDACTION_PLACEHOLDER = "[REDACTED]"
 # --- Redaction: structure-preserving (keep the prefix, replace the value) ---
 
 REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    # Authorization / Proxy-Authorization header value
+    # Authorization / Proxy-Authorization header value. Handles three
+    # input shapes the relay actually sees:
+    #
+    #   1. Bare HTTP header  ->  `Authorization: Bearer X`
+    #      Value runs to end-of-line.
+    #   2. Quoted CLI flag    ->  `-H "Authorization: Bearer X"`
+    #      Value stops at the surrounding closing quote.
+    #   3. JSON dict literal  ->  `{"Authorization": "Bearer X"}`
+    #      Key and value are each independently quoted; the optional
+    #      `["']?` in the prefix lets us match the quote-colon-quote
+    #      transition and the value runs to the closing inner quote.
+    #
+    # The terminator set deliberately excludes `,`: AWS Signature v4
+    # (`Credential=..., SignedHeaders=..., Signature=<hex>`) and other
+    # comma-separated challenge-response schemes put the actual secret
+    # (the Signature) AFTER a comma. Stopping at the first comma would
+    # leak it. The trade-off is that an inline `Authorization: ...,
+    # otherfield=val` will over-scrub `otherfield=val` - that case is
+    # uncommon and the over-scrub is audit-fidelity loss, not a leak.
     (
-        re.compile(r"(?i)\b(?P<prefix>(?:proxy-)?authorization\s*[:=]\s*)\S+"),
+        re.compile(r"(?i)\b(?P<prefix>(?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?)[^\r\n\"']+"),
         r"\g<prefix>[REDACTED]",
     ),
     # Bearer <token>
