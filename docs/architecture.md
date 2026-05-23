@@ -89,6 +89,6 @@ out, or be denied, but it always returns a single bounded, audited string.
 
 ## Security model
 
-See `SECURITY.md` and the ADRs. In short: the executor is deliberately
-unsandboxed (that is the capability); safety is compensating controls plus
-deployment discipline.
+See `SECURITY.md` and the ADRs ([index](adr/README.md)). In short: the
+executor is deliberately unsandboxed (that is the capability); safety is
+compensating controls plus deployment discipline.

@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `docs/adr/README.md` indexing every ADR (number, title, status, date,
+  one-line subject) and documenting when a new ADR is required, the
+  filename convention, and the next free number. Cross-linked from
+  `docs/architecture.md` and `docs/runbook.md` §6.
 - `.pre-commit-config.yaml` mirroring the CI quality loop: `ruff`,
   `ruff format`, `mypy --strict` (local hook against the project's
   venv), plus standard hygiene hooks. A new banned-imports rule under
