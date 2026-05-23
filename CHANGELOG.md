@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- CI now runs the full check matrix on Python **3.12, 3.13, and
+  3.14** instead of 3.12 alone. The package floor stays `>=3.12`
+  (declared in `pyproject.toml`); the matrix surfaces interpreter-
+  specific regressions early. `fail-fast: false` keeps every entry's
+  result visible so a single 3.14 wheel gap does not mask a 3.13
+  regression. Classifiers in `pyproject.toml` updated to advertise
+  the three supported versions on PyPI.
 - `relay-shell --check-config` CLI flag. Loads `RELAY_SHELL_*` settings,
   constructs the server (audit sink, policy, inventory, OAuth if
   enabled) without starting a transport, and exits 0 on success or 2
