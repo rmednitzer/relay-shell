@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Maintenance runbook at `docs/runbook.md` covering audit, review,
+  validate, enhance, and extend procedures, a prioritized backlog
+  (capability, quality, ops, docs, security hardening), and a per-file
+  `.md` update plan.
 - Automated TLS at the edge: `deploy/Caddyfile` is now parameterized via
   env variables and `deploy/install-edge.sh` provisions Caddy with ACME
   (Let's Encrypt by default) for hands-off issuance and renewal.
