@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `Authorization:` redaction no longer leaks the bearer / Basic /
+  Signature value. The pattern previously consumed only the first
+  whitespace-delimited token after `:`/`=`, so
+  `Authorization: Bearer <token>` collapsed to
+  `Authorization: [REDACTED] <token>` and the value survived in the
+  audit log. The widened pattern handles three input shapes uniformly:
+  the bare HTTP header form (value runs to end-of-line), the quoted
+  CLI flag form `-H "Authorization: ..."` (value stops at the
+  surrounding closing quote), and the JSON dict literal form
+  `{"Authorization": "..."}` (value stops at its own closing quote).
+  The value class consumes past commas so AWS Signature v4 and Digest
+  challenge-response schemes do not strand the trailing
+  `Signature=<hex>` / `response="<hash>"` fields. `PATTERNS_VERSION`
+  bumped to `"2"`. Regression tests in `tests/test_patterns.py`
+  cover Bearer, Basic, SigV4, Proxy-Authorization, single-quoted CLI,
+  JSON-dict, and multi-header inputs.
+
 ### Changed
 
 - Redaction and tier-classification regex tables moved into a dedicated

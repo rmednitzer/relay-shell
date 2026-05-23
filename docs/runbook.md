@@ -673,15 +673,6 @@ commitment.
 - **B-021 (P3)** Investigate `seccomp-bpf` notification mode (not
   enforcement) for the local executor: not a sandbox, but an additional
   audit channel covering syscalls. ADR-worthy before any code lands.
-- **B-023 (P2)** Tighten the `Authorization:` redaction. Today the
-  pattern consumes only the first whitespace-delimited token after
-  `:`/`=`, so `Authorization: Bearer <token>` collapses to
-  `Authorization: [REDACTED] <token>` and the token leaks into the
-  audit args. The Bearer pattern that runs next does not catch it
-  because the prefix is now `[REDACTED]`. Fix: either consume to end
-  of line / quote / argv terminator, or chain the Authorization match
-  to also redact the next token. Add the explicit `Authorization:
-  Bearer X` regression test alongside.
 
 ---
 

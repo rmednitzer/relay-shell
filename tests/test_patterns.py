@@ -89,6 +89,97 @@ def test_authorization_header_positive_and_negative() -> None:
     assert "the authorization to act" in redaction.redact("he had the authorization to act")
 
 
+def test_authorization_header_redacts_whole_bearer_value() -> None:
+    # B-023 regression. The previous Authorization regex consumed only the
+    # first whitespace-delimited token after `:`, so `Authorization: Bearer
+    # <token>` collapsed to `Authorization: [REDACTED] <token>` and the
+    # bearer value leaked into the audit log. The widened pattern must
+    # consume the whole header value.
+    out = redaction.redact("Authorization: Bearer abcdef123456")
+    assert "abcdef123456" not in out
+    assert "Bearer" not in out
+    assert "Authorization:" in out
+
+
+def test_authorization_header_value_stops_at_quote() -> None:
+    # Quoted-CLI form: the redactor must stop at the closing quote so it
+    # does not eat the next argv token. The bearer value inside is gone;
+    # the URL after the quote is preserved.
+    out = redaction.redact('curl -H "Authorization: Bearer abc.def-ghi" https://api.example')
+    assert "abc.def-ghi" not in out
+    assert "abc.def" not in out
+    assert "Bearer" not in out
+    assert "https://api.example" in out
+
+
+def test_authorization_header_handles_basic_auth() -> None:
+    # Non-Bearer Authorization schemes (Basic, Digest, ...) must also be
+    # redacted as a whole value, not just the first token.
+    out = redaction.redact("Authorization: Basic dXNlcjpwYXNzd29yZA==")
+    assert "dXNlcjpwYXNzd29yZA" not in out
+    assert "Basic" not in out
+    assert "Authorization:" in out
+
+
+def test_authorization_header_value_stops_at_newline() -> None:
+    # Multi-header input on consecutive lines: redacting the auth header
+    # must not bleed into the next header.
+    out = redaction.redact("Authorization: Bearer abc\nHost: example.org")
+    assert "abc" not in out
+    assert "Host: example.org" in out
+
+
+def test_authorization_header_json_dict_form() -> None:
+    # JSON shape (e.g. a Python `headers={"Authorization": "Bearer X"}`
+    # passed verbatim through to the audit args). The prefix's optional
+    # quote-around-key + quote-around-value lets the pattern reach the
+    # value's closing quote without leaking.
+    out = redaction.redact('{"Authorization": "Bearer abc.def-ghi"}')
+    assert "Bearer" not in out
+    assert "abc.def" not in out
+    # Basic-auth variant: a base64 user:pass blob must not survive.
+    out2 = redaction.redact('{"Authorization": "Basic dXNlcjpwYXNzd29yZA=="}')
+    assert "dXNlcjpwYXNzd29yZA" not in out2
+    assert "Basic" not in out2
+
+
+def test_authorization_header_aws_sigv4() -> None:
+    # AWS Signature v4 splits its value across commas:
+    #   Authorization: AWS4-HMAC-SHA256 Credential=AKI..., SignedHeaders=..., Signature=<hex>
+    # The Signature is the request-binding HMAC and IS a secret. Stopping
+    # the redaction at the first comma would strand it. Pattern must
+    # consume through commas to the end-of-line / closing quote.
+    sigv4 = (
+        "Authorization: AWS4-HMAC-SHA256 "
+        "Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, "
+        "SignedHeaders=host;x-amz-date, "
+        "Signature=fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024"
+    )
+    out = redaction.redact(sigv4)
+    assert "AKIAIOSFODNN7EXAMPLE" not in out
+    assert "fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024" not in out
+    assert "SignedHeaders" not in out  # whole value collapsed
+
+
+def test_proxy_authorization_pinned() -> None:
+    # The pattern explicitly covers `Proxy-Authorization`; pin it with a
+    # test so a future narrowing of the prefix does not silently drop
+    # this variant.
+    out = redaction.redact("Proxy-Authorization: Bearer proxysecret123")
+    assert "proxysecret123" not in out
+    assert "Proxy-Authorization:" in out
+
+
+def test_authorization_single_quoted_cli_form() -> None:
+    # Some operators use single quotes in their shell:
+    #   curl -H 'Authorization: Bearer X'
+    # The value must stop at the closing single quote, not eat past it.
+    out = redaction.redact("curl -H 'Authorization: Bearer abc' https://api.example")
+    assert "Bearer" not in out
+    assert "abc" not in out
+    assert "https://api.example" in out
+
+
 def test_bearer_positive_and_negative() -> None:
     # Positive: the entire token (including the hyphenated suffix) must be
     # scrubbed; assert against the full token, not just an interior
