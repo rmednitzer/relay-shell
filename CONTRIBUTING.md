@@ -31,9 +31,9 @@ weaken the deny list, or introduce an internal sandbox (see
 Before opening a non-trivial PR, check whether the change is already in
 the backlog at [`docs/runbook.md`](docs/runbook.md) §7. If it is, the
 PR description should reference the backlog item (e.g. "Closes B-007").
-If not, consider opening an issue first; the
-[`.github/ISSUE_TEMPLATE/feature.md`](.github/ISSUE_TEMPLATE/feature.md)
-template lists the questions a feature proposal should answer.
+If not, consider opening an issue first. The repository ships a
+feature-request issue template (under `.github/ISSUE_TEMPLATE/`) that
+lists the questions a feature proposal should answer.
 
 ## Branch naming
 
@@ -45,10 +45,10 @@ template lists the questions a feature proposal should answer.
 
 ## Local loop
 
-The canonical sequence runs in seconds:
+The canonical sequence runs in seconds (matches `docs/runbook.md` §4.1):
 
 ```bash
-python3.12 -m venv .venv && . .venv/bin/activate
+python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 
 ruff check .
@@ -56,6 +56,8 @@ ruff format --check .
 mypy
 pytest -q
 ```
+
+Requires CPython 3.12+.
 
 A green local loop is the bar before pushing. If something fails in CI
 but not locally, that is a CI-config bug; fix that, not the test. The
@@ -99,9 +101,9 @@ worth calling out explicitly:
 
 A PR is security-sensitive if it touches any of: `audit.py`,
 `redaction.py`, `policy.py`, the `Relay.run()` body in `server.py`,
-`auth/oauth.py`, `deploy/install*.sh`, or `deploy/Caddyfile`. The PR
-template has a section for these; tick it and walk the runbook §3.3
-checklist before requesting review.
+`auth/oauth.py`, `deploy/install*.sh`, or `deploy/Caddyfile`. The
+PR-template checklist (under `.github/`) has a section for these;
+tick it and walk the runbook §3.3 checklist before requesting review.
 
 For PRs that touch the audit-record shape, the policy admission path,
 or anything that writes systemd units / EnvironmentFiles, expect a
@@ -109,9 +111,11 @@ second reviewer and a slower merge cadence. That is the trade-off for
 running unsandboxed by design.
 
 For suspected vulnerabilities, **do not open a public issue with a
-working exploit**. Use the GitHub private advisory channel or the
-[security issue template](.github/ISSUE_TEMPLATE/security.md). See
-[`SECURITY.md`](SECURITY.md) for the disclosure process.
+working exploit**. Open a private security advisory on the repository
+(`Security` tab → `Report a vulnerability`) or open an issue without
+exploit detail and request a private channel. The disclosure process,
+scope, and indicative response targets live in
+[`SECURITY.md`](SECURITY.md).
 
 ## Architecturally significant changes
 
