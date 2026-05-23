@@ -507,10 +507,6 @@ and clearer code, not to land a refactor for its own sake.
   fixture variant that closes the SSH server mid-forward.
 - **T-005** No property-based test for `truncate` (UTF-8 boundary safety
   on arbitrary input). One `hypothesis` strategy would harden it.
-- **T-006** `redaction.redact` has no fuzz harness. A small
-  `hypothesis` test that constructs random argv strings around known
-  secret patterns would catch the over-scrub / under-scrub failure mode
-  that keeps appearing in PR review.
 
 ---
 
@@ -622,8 +618,6 @@ currently empty.)
 - **B-005 (P1)** Add a `release.yml` workflow that on a `v*` tag builds
   the wheel/sdist, runs the full test suite, and publishes to PyPI via
   trusted publishing (OIDC, no long-lived token). Gate on tag signature.
-- **B-010 (P3)** Add a `hypothesis`-based fuzz suite for `redact` and
-  `classify`; run nightly only (separate workflow with `schedule:`).
 - **B-022 (P3)** Raise the CI coverage floor from 85% (current) to 90%.
   After `tests/test_tool_wrappers.py` lifted `server.py` to 95% and
   overall to ~88%, the remaining gap is `sshpool.py` (~68%; SSH

@@ -1,0 +1,41 @@
+name: nightly-fuzz
+
+# Hypothesis-driven property-based fuzz tests for `redact` and `classify`.
+# These live behind the `fuzz` pytest marker and are deselected from the
+# default `pytest` run via `pyproject.toml`'s `addopts`. This workflow
+# opts back in and runs them with an amplified example budget
+# (HYPOTHESIS_PROFILE=ci) once a day so the security-sensitive
+# primitives keep finding latent counterexamples.
+
+on:
+  schedule:
+    # 04:17 UTC daily. The odd minute avoids the on-the-hour spike that
+    # the GitHub Actions scheduler is known to delay under load.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run fuzz suite (HYPOTHESIS_PROFILE=ci)
+        env:
+          HYPOTHESIS_PROFILE: ci
+        # Opt back in to the `fuzz` marker (default addopts deselects it).
+        run: pytest -m fuzz -v
