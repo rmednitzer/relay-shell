@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `relay-shell --check-config` CLI flag. Loads `RELAY_SHELL_*` settings,
+  constructs the server (audit sink, policy, inventory, OAuth if
+  enabled) without starting a transport, and exits 0 on success or 2
+  on any initialization failure - including a degraded audit sink.
+  Intended for CI pipelines that bake an image so a misconfiguration
+  fails the build rather than crashes the running service at start.
+  Documented in `README.md` (Quickstart) and `docs/deployment.md` §2.
+  Four `subprocess.run`-based tests in `tests/test_main.py` exercise
+  the new flag and close T-001 (the previously-untested
+  print-and-return-2 path in `__main__.main()`).
 - `CODE_OF_CONDUCT.md` adopting the Contributor Covenant 2.1. The
   file is a thin pointer to the canonical upstream URL so wording
   changes track automatically; it documents scope, the

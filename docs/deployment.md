@@ -33,6 +33,22 @@ sudo -u relay-shell /var/lib/relay-shell/venv/bin/pip install /path/to/relay-she
 `deploy/install.sh` does this idempotently. It deliberately does **not**
 auto-start the service; review the unit and configuration first.
 
+Validate the resolved configuration against the service account's
+environment before enabling the unit:
+
+```bash
+sudo -u relay-shell \
+  --preserve-env=RELAY_SHELL_AUDIT_PATH,RELAY_SHELL_TRANSPORT,RELAY_SHELL_POLICY_MODE \
+  /var/lib/relay-shell/venv/bin/relay-shell --check-config
+```
+
+`--check-config` loads the settings, builds the server (audit sink open,
+ssh_config + inventory parse, OAuth state dir creation if `auth_enabled=true`)
+without starting a transport, and exits 0 on success or 2 on any
+initialization failure - including a degraded audit sink, which is the
+single most common production misconfiguration. Wire this into the
+image-bake step of your CI pipeline.
+
 ## 3. systemd
 
 `deploy/systemd/relay-shell.service` plus the `relay-shell.service.d/hardening.conf`
