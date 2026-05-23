@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `ssh_keyscan` MCP tool (Tier 1, REVERSIBLE). Shells out to
+  `ssh-keyscan` to fetch each host's public key in known_hosts line
+  format - useful for pre-populating `~/.ssh/known_hosts` so a service
+  account can run `strict` without a manual `accept-new` seeding
+  pass. Inputs are validated at the boundary (hostnames against
+  `[A-Za-z0-9._\-\[\]:]+`, port in 1..65535, key types from the OpenSSH
+  set, host count capped at 32 per call to bound the outbound TCP
+  burst); every interpolated token is also `shlex.quote`d and a `--`
+  separator precedes the host list. Documented in `docs/tools.md` and
+  the README capability table.
 - `audit_tail` MCP tool (Tier 0, read-only). Returns the last N
   records from the audit log as JSONL, oldest first. `lines` defaults
   to 50 and is clamped to `[1, 1000]`. Opens a fresh read-only fd so

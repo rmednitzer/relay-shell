@@ -74,6 +74,24 @@ List active forwards / close one by id. Tier 1.
 Probe connectivity. `hosts` is a comma/space list, or empty for the whole
 inventory. Returns `host: ok | UNREACHABLE` per host. Tier 0.
 
+### `ssh_keyscan`
+Shell out to `ssh-keyscan` to fetch each host's public key in
+known_hosts line format. `hosts` is a comma/space list (required;
+capped at 32 per call to bound the outbound TCP burst); `port`
+defaults to 22; `key_types` is a comma list from
+`{rsa, ecdsa, ed25519, dsa}` (default `rsa,ecdsa,ed25519`); `timeout`
+is the per-host inner ssh-keyscan timeout (clamped to `[1, 60]`).
+Hosts must match `[A-Za-z0-9._\-\[\]:]+` (rejecting shell
+metacharacters at the boundary); every interpolated token is also
+`shlex.quote`d for defence in depth, and a `--` separator is placed
+before the host list so a leading-dash hostname cannot become a
+getopt-style flag. Useful for pre-populating `~/.ssh/known_hosts` so
+a service account can run `strict` without a manual `accept-new`
+seeding pass. **Tier 1** (REVERSIBLE): it does not mutate the relay
+but it opens caller-chosen outbound TCP connections, which puts it
+outside the "observation-only" contract of `readonly` mode. Permitted
+in `open` and `guarded`; rejected in `readonly`.
+
 ### `ssh_hosts`
 Resolved inventory (`ssh_config` + JSON inventory). Tier 0.
 
