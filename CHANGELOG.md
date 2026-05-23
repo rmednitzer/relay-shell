@@ -14,6 +14,14 @@ All notable changes to this project are documented here. The format follows
   during install. Current measured baseline is ~78%; `coverage report`
   fails the CI step below 75. See `docs/runbook.md` §4.3 for the local
   recipe and §7.2 B-022 for the path to raising the floor to 85%.
+- `CONTRIBUTING.md` covering scope, branch naming, the local-loop
+  recipe, the documentation-moves-with-code requirement, and the
+  security-sensitive-PR review path. The runbook remains the canonical
+  procedure; `CONTRIBUTING.md` is the entry point that links into it.
+- GitHub PR template and bug / feature / security issue templates under
+  `.github/`. The PR template encodes the runbook §3.1 cross-reference
+  checklist and the §3.3 security-sensitive-diff confirmations so they
+  travel with every PR.
 - Maintenance runbook at `docs/runbook.md` covering audit, review,
   validate, enhance, and extend procedures, a prioritized backlog
   (capability, quality, ops, docs, security hardening), and a per-file
