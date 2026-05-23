@@ -75,6 +75,20 @@ tool-call counter by `tool` / `tier` / `mode` / `outcome`, plus
 `active_sessions`, `active_forwards`, and `audit_degraded` gauges. See
 [`docs/deployment.md`](docs/deployment.md) §9a.
 
+### Resources
+
+Three MCP resources let clients read inventory and `ssh_config` views
+the protocol-native way (no tool call needed):
+
+| URI                                  | meaning                              |
+|--------------------------------------|--------------------------------------|
+| `relay-shell://inventory`            | Flat list of all known hosts (JSON). |
+| `relay-shell://inventory/{host}`     | One host's resolved spec (JSON).     |
+| `relay-shell://ssh-config`           | ssh_config path + aliases (JSON).    |
+
+Resource reads are audited (tier 0). See
+[`docs/tools.md`](docs/tools.md) for the full reference.
+
 Full reference: [`docs/tools.md`](docs/tools.md).
 
 ## Quickstart

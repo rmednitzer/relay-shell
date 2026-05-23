@@ -1008,6 +1008,75 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                 media_type="text/plain; version=0.0.4; charset=utf-8",
             )
 
+    # --- MCP resources ------------------------------------------------------
+    #
+    # Resources are read-only context the client can list and pull on its
+    # own initiative - they do NOT go through Relay.run because there is no
+    # work to admit / tier / time out. Each read is still audited (tier 0,
+    # tool name prefixed with "resource:") so the operator sees what context
+    # the model is pulling in.
+
+    def _audit_resource_read(name: str, body: str) -> None:
+        app.audit.record(
+            tool=f"resource:{name}",
+            args={},
+            output=body,
+            exit_code=None,
+            tier=0,
+        )
+
+    @mcp.resource(
+        "relay-shell://inventory",
+        name="inventory",
+        title="Host inventory",
+        description=(
+            "Flat list of all hosts resolved from ~/.ssh/config and the optional "
+            "RELAY_SHELL_INVENTORY file, as a JSON array of host specs. Same "
+            "data shape as the ssh_hosts tool."
+        ),
+        mime_type="application/json",
+    )
+    def _resource_inventory() -> str:
+        body = json.dumps([h.as_dict() for h in app.inventory.hosts()], default=str)
+        _audit_resource_read("inventory", body)
+        return body
+
+    @mcp.resource(
+        "relay-shell://inventory/{host}",
+        name="inventory_host",
+        title="Single host spec",
+        description=(
+            "Resolved spec for one inventory entry (or a passthrough spec the "
+            "ssh layer would accept) as JSON."
+        ),
+        mime_type="application/json",
+    )
+    def _resource_inventory_host(host: str) -> str:
+        spec = app.inventory.resolve(host).as_dict()
+        body = json.dumps(spec, default=str)
+        _audit_resource_read(f"inventory/{host}", body)
+        return body
+
+    @mcp.resource(
+        "relay-shell://ssh-config",
+        name="ssh_config",
+        title="SSH config metadata",
+        description=(
+            "Path to the active ssh_config and the sorted list of non-wildcard "
+            "Host aliases parsed from it, as JSON. Lets a client see what "
+            "ssh_config the server is consulting without reading the file."
+        ),
+        mime_type="application/json",
+    )
+    def _resource_ssh_config() -> str:
+        payload = {
+            "path": app.inventory.ssh_config_file,
+            "aliases": sorted(h.name for h in app.inventory.hosts() if h.source == "ssh_config"),
+        }
+        body = json.dumps(payload, default=str)
+        _audit_resource_read("ssh-config", body)
+        return body
+
     return mcp
 
 

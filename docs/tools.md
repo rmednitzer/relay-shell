@@ -134,6 +134,24 @@ fresh fd so the writer's append-only handle is untouched. Useful for an
 operator MCP client debugging a session without shelling into the host.
 Tier 0.
 
+## Resources
+
+Resources are read-only context the client can list and pull on its own
+initiative (the protocol-native counterpart to tools). Each read is
+audited as tier 0 with `tool="resource:<name>"` so the operator sees what
+context the model is pulling in even though resource reads do not go
+through `Relay.run`.
+
+| URI                                     | mime               | meaning                                                       |
+|-----------------------------------------|--------------------|---------------------------------------------------------------|
+| `relay-shell://inventory`               | `application/json` | Flat JSON list of every host in the merged inventory.         |
+| `relay-shell://inventory/{host}`        | `application/json` | One host's resolved spec (passthrough spec for unknown alias).|
+| `relay-shell://ssh-config`              | `application/json` | `{"path": "...", "aliases": [...]}` for the active ssh_config.|
+
+A client that prefers resources to tools can list hosts the protocol-native
+way without invoking `ssh_hosts`. The data shape matches the `ssh_hosts`
+tool output so client code can share a renderer.
+
 ## Interactive pattern
 
 ```text

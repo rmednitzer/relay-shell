@@ -8,6 +8,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Three MCP **resources** so clients that prefer resources to tools can
+  list hosts the protocol-native way:
+  `relay-shell://inventory` (flat host list, JSON),
+  `relay-shell://inventory/{host}` (one host's resolved spec, JSON), and
+  `relay-shell://ssh-config` (`{"path": "...", "aliases": [...]}` for the
+  active ssh_config file). The data shape matches the `ssh_hosts` tool
+  output so client renderers can be shared. Each read is audited as
+  tier 0 with `tool="resource:<name>"` so the operator still sees what
+  context the model pulled in (resource reads bypass `Relay.run` because
+  there is no work to admit / time out). Documented in `docs/tools.md`
+  and the README capability table. Closes B-004.
 - `GET /metrics` endpoint on the HTTP transport, in Prometheus text
   exposition format. Five metric names:
   `relay_shell_tool_calls_total{tool,tier,mode,outcome}` (counter),

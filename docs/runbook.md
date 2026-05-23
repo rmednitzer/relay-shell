@@ -614,9 +614,8 @@ commitment.
 
 ### 7.1 Capability
 
-- **B-004 (P3)** Expose MCP **resources** (not just tools) for
-  `~/.ssh/config` and inventory views, so clients that prefer resources
-  to tools can list hosts the protocol-native way.
+(Items in this category are tracked here as they land; the queue is
+currently empty.)
 
 ### 7.2 Quality + automation
 
