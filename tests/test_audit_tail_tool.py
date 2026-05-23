@@ -37,9 +37,11 @@ async def test_audit_tail_returns_existing_records(settings: Settings) -> None:
         assert set(rec) >= {"ts", "tool", "tier", "denied", "args", "output_sha256"}
 
 
-async def test_audit_tail_classified_tier_zero() -> None:
+def test_audit_tail_classified_tier_zero() -> None:
     # Belt-and-braces: even if the wrapper omits classification, the
     # tool registration must classify the tool as read-only.
+    # Synchronous on purpose: no await is needed and ruff's RUF029
+    # would otherwise flag an async-with-no-await function.
     assert classify("audit_tail") is Tier.READ_ONLY
 
 

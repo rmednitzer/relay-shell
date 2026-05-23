@@ -735,8 +735,8 @@ SSH:   ssh_exec, ssh_spawn, ssh_upload/ssh_download, ssh_forward(/list/close),
        ssh_check, ssh_hosts.
 PTY sessions (local or ssh) are driven by session_send / session_recv /
 session_resize / session_kill / session_list.
-Diagnostics: server_info for limits and policy mode, audit_tail for the
-last N audit records.
+Diagnostics: server_info reports limits and policy mode; audit_tail
+returns the last N audit records.
 
 Every call is tier-classified, bounded (timeout + output caps), and appended
 to an append-only audit log (output is hashed, never stored). Prefer

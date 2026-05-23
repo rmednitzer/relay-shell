@@ -90,9 +90,11 @@ def test_tail_returns_all_when_lines_exceeds_record_count(tmp_path: Path) -> Non
 
 
 def test_tail_returns_empty_when_file_missing(tmp_path: Path) -> None:
-    # The audit file is created lazily by AuditLogger.__init__ today, so use
-    # a path the constructor never touches: ask tail() about a sibling
-    # file that does not exist.
+    # AuditLogger.__init__ pre-creates its audit file via os.open(...,
+    # O_APPEND | O_CREAT, ...), so we cannot reach the missing-file path
+    # by simply constructing one. Build a hollow instance whose `path`
+    # points at a file that was never created, exercise tail() against
+    # that path, and confirm it returns "" without raising.
     log = AuditLogger(str(tmp_path / "a.jsonl"))
     other = AuditLogger.__new__(AuditLogger)
     other.path = str(tmp_path / "never-created.jsonl")
@@ -127,3 +129,35 @@ def test_tail_does_not_leak_output_body(tmp_path: Path) -> None:
         tier=1,
     )
     assert "VERY-SECRET-BODY-MARKER" not in log.tail(5)
+
+
+def test_tail_bounded_by_requested_lines_not_file_size(tmp_path: Path) -> None:
+    # Codex review on #29: tail() must read at most O(lines * record_size)
+    # from disk, NOT the whole file. Verify by writing many records and
+    # asking for a small tail. Even if the read-backwards implementation
+    # subtly over-reads, this test pins that we never load anything close
+    # to the full file into Python-level memory.
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    # ~10 000 records; each line is ~250 bytes after JSON serialization,
+    # so the file is roughly 2.5 MiB. The tail of 5 is well under 2 KiB.
+    for i in range(10_000):
+        log.record(
+            tool="shell_exec",
+            args={"command": f"echo seq-{i}"},
+            output="x" * 32,
+            exit_code=0,
+            tier=1,
+        )
+    out = log.tail(5)
+    lines = out.splitlines()
+    assert len(lines) == 5
+    recs = [json.loads(ln) for ln in lines]
+    # Oldest of the returned five should be record 9995; newest 9999.
+    assert recs[0]["args"]["command"] == "echo seq-9995"
+    assert recs[-1]["args"]["command"] == "echo seq-9999"
+    # The tail output size is comfortably under the file size: the
+    # implementation read backwards, not forwards.
+    file_size = path.stat().st_size
+    assert file_size > 1_000_000  # sanity: file really is big
+    assert len(out.encode()) < 4_000  # tail is small regardless

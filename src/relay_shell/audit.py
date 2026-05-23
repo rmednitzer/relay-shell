@@ -109,21 +109,44 @@ class AuditLogger:
         untouched so this is safe to call concurrently with normal tool
         execution. ``WatchedFileHandler`` line-buffers each emit, so any
         record returned here is structurally complete.
+
+        Implementation reads backward from end-of-file in 8 KiB chunks
+        and stops as soon as it has ``lines + 1`` newlines (the +1
+        catches a partial leading line). Worst-case memory is bounded
+        by ``lines * record_size + chunk_size``, not by file size, so
+        the bounded-execution invariant holds even when the audit log
+        has not rotated in a long time.
         """
         if lines <= 0:
             return ""
-        path = Path(self.path).expanduser()
+        # Outer `except Exception` keeps the contract literal: even an
+        # exotic OSError subclass, a ValueError from a path with an
+        # embedded NUL, or an unexpected decoding failure must collapse
+        # to "" rather than propagate to the diagnostic tool's caller.
         try:
-            with path.open("r", encoding="utf-8", errors="replace") as fh:
-                # readlines() is fine for daily-rotated logs (bundled
-                # logrotate config rotates at 1 day). For larger files a
-                # seek-from-end implementation would be more efficient;
-                # tracked as a follow-up if it becomes a real cost.
-                all_lines = fh.readlines()
-        except OSError:
+            path = Path(self.path).expanduser()
+            with path.open("rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                if size == 0:
+                    return ""
+
+                chunk_size = 8192
+                data = b""
+                offset = size
+                # Read backward until we have at least one more newline
+                # than requested, or we hit the start of the file.
+                while offset > 0 and data.count(b"\n") <= lines:
+                    read = min(chunk_size, offset)
+                    offset -= read
+                    fh.seek(offset)
+                    data = fh.read(read) + data
+
+            text = data.decode("utf-8", errors="replace")
+            # Drop blank trailing lines (logger does not write them, but
+            # a caller might tail a partial write window) and strip the
+            # line terminator on each record for consistent JSONL output.
+            records = [ln for ln in text.splitlines() if ln.strip()]
+            return "\n".join(records[-lines:])
+        except Exception:  # noqa: BLE001 - contract is "never raise"
             return ""
-        # Drop blank trailing lines (logger does not write them, but a
-        # caller might tail a partial write window) and strip the line
-        # terminator on each record for consistent JSONL output.
-        records = [ln.rstrip("\n") for ln in all_lines if ln.strip()]
-        return "\n".join(records[-lines:])
