@@ -8,6 +8,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `.github/workflows/release.yml` cuts a PyPI release on a signed `v*`
+  tag push. Three gated jobs: **verify** (annotated + GPG/SSH-signed
+  tag, verified by GitHub; tag matches `[project] version` in
+  `pyproject.toml`); **build** (dev install, full test suite,
+  `python -m build` + `twine check`); **publish** (`pypa/gh-action-pypi-
+  publish` via OIDC trusted publishing - no long-lived `PYPI_TOKEN`
+  secret - in the `pypi` GitHub environment so a required-reviewer
+  approval gates the actual upload). PyPI trusted-publishing form
+  configured ahead of time at
+  `https://pypi.org/manage/account/publishing/`. The per-release
+  procedure (version bump + sign-tag + push) is documented in
+  `docs/runbook.md` 6.4. A `workflow_dispatch` input lets an operator
+  re-run an existing tag if PyPI was briefly down. Closes B-005.
 - Property-based fuzz suite for `redact` and `classify` (the audit /
   policy primitives). 13 hypothesis-driven invariants:
   `redact` is idempotent, never raises, preserves text without secret

@@ -600,6 +600,58 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
    level scenarios). The `test_redact_cli_flag_does_not_eat_next_flag`
    family is the model.
 
+### 6.4 Cut a release (PyPI via OIDC trusted publishing)
+
+The release path is driven by `.github/workflows/release.yml`. It runs
+on any `v*` tag push (and on `workflow_dispatch` with an existing tag
+as input). The workflow has three gated jobs:
+
+  1. **verify** - the tag is annotated, GPG/SSH-signed and verified by
+     GitHub, and matches the `[project] version` in `pyproject.toml`.
+     A lightweight tag or an unsigned annotated tag fails here, before
+     anything is built.
+  2. **build** - dev install on Python 3.12, full test suite, then
+     `python -m build` + `twine check` against the produced
+     wheel + sdist.
+  3. **publish** - runs in the `pypi` GitHub environment; uses OIDC
+     (`pypa/gh-action-pypi-publish`) to upload to PyPI. No long-lived
+     token. The environment is configured with a required reviewer so
+     a human approval clicks between tag push and PyPI publish.
+
+Pre-conditions (one-time setup, already done):
+
+- PyPI trusted-publishing form configured at
+  https://pypi.org/manage/account/publishing/ with
+  `project=relay-shell`, `owner=rmednitzer`, `repository=relay-shell`,
+  `workflow=release.yml`, `environment=pypi`.
+- GitHub repo Settings -> Environments -> `pypi` exists with a required
+  reviewer rule (so an unauthorized push of a malicious commit followed
+  by a signed tag still needs a human click).
+
+Per-release procedure:
+
+```bash
+# 1. Bump pyproject.toml version (e.g. 0.1.0 -> 0.1.1).
+# 2. Update CHANGELOG.md: rename `[Unreleased]` to `[0.1.1] - YYYY-MM-DD`
+#    and start a fresh empty `[Unreleased]` block above it.
+# 3. Commit + open PR + land it via the normal review path.
+# 4. After the bump is on main, sign-tag from main:
+git tag -s v0.1.1 -m "Release v0.1.1"
+git push origin v0.1.1
+# 5. The release workflow starts. Approve the `pypi` environment when
+#    GitHub asks. Watch the run; when publish turns green the wheel
+#    + sdist appear at https://pypi.org/project/relay-shell/.
+```
+
+If the workflow fails mid-flight (e.g. PyPI is briefly down), re-run
+it from the Actions UI via `workflow_dispatch` with the same tag - the
+verify + build jobs are idempotent and OIDC publishing is a no-op when
+the same dist already exists.
+
+If you need to yank a release, do it from the PyPI project page; this
+project does not maintain a yank automation because yanks are rare and
+the manual click is the appropriate friction.
+
 ---
 
 ## 7. Backlog
@@ -615,9 +667,6 @@ currently empty.)
 
 ### 7.2 Quality + automation
 
-- **B-005 (P1)** Add a `release.yml` workflow that on a `v*` tag builds
-  the wheel/sdist, runs the full test suite, and publishes to PyPI via
-  trusted publishing (OIDC, no long-lived token). Gate on tag signature.
 - **B-022 (P3)** Raise the CI coverage floor from 85% (current) to 90%.
   After `tests/test_tool_wrappers.py` lifted `server.py` to 95% and
   overall to ~88%, the remaining gap is `sshpool.py` (~68%; SSH
