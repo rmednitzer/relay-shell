@@ -8,11 +8,14 @@ stdout/stdin for JSON-RPC, so a stray stdout write would corrupt the stream.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
+from pathlib import Path
 
 from .config import get_settings
 from .server import Relay, build_server
+from .verifier import Status, verify_deploy
 
 
 def _configure_logging() -> None:
@@ -44,6 +47,43 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "invalid configuration or a degraded audit sink. Intended "
             "for CI pipelines that bake an image."
         ),
+    )
+    parser.add_argument(
+        "--verify-deploy",
+        action="store_true",
+        help=(
+            "Compare each shipped deploy template (systemd unit + "
+            "drop-in, logrotate, Caddyfile) against the file the "
+            "installer is expected to have laid down on this host. "
+            "Exits 0 if every entry matches, 2 if any DRIFT / MISSING / "
+            "ABSENT_TEMPLATE is found. Intended for production drift "
+            "detection and image-bake validation."
+        ),
+    )
+    parser.add_argument(
+        "--templates-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Override the shipped-templates lookup. Default: the wheel's "
+            "packaged copy, falling back to deploy/ next to this file."
+        ),
+    )
+    parser.add_argument(
+        "--install-prefix",
+        type=Path,
+        default=None,
+        help=(
+            "Treat this directory as a chroot-style root: each absolute "
+            "install path is rebased under it. Used by tests and "
+            "image-bake validation."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_out",
+        help=("Emit machine-readable output for --verify-deploy (ignored for other subcommands)."),
     )
     return parser
 
@@ -92,12 +132,68 @@ def _check_config() -> int:
     return 0
 
 
+def _verify_deploy(
+    templates_dir: Path | None,
+    install_prefix: Path | None,
+    json_out: bool,
+) -> int:
+    """Run drift detection and print a report.
+
+    Returns 0 if every finding is OK, 2 otherwise. Errors never escape as
+    tracebacks: ``verify_deploy()`` itself folds template-resolution failures
+    into structured ``ABSENT_TEMPLATE`` findings.
+    """
+    report = verify_deploy(templates_dir=templates_dir, install_prefix=install_prefix)
+
+    if json_out:
+        payload = {
+            "ok": report.ok,
+            "findings": [
+                {
+                    "name": f.name,
+                    "template": f.template,
+                    "install_path": f.install_path,
+                    "status": f.status.value,
+                    "detail": f.detail,
+                }
+                for f in report.findings
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+    else:
+        # Column widths chosen so the longest name + status + path stays
+        # under 100 cols for typical install paths.
+        name_w = max((len(f.name) for f in report.findings), default=0)
+        status_w = max((len(f.status.value) for f in report.findings), default=0)
+        for f in report.findings:
+            line = f"{f.name:<{name_w}}  {f.status.value:<{status_w}}  {f.install_path}"
+            if f.detail and f.status is not Status.OK:
+                line += f"  ({f.detail})"
+            print(line)
+        if report.ok:
+            print("relay-shell: verify-deploy OK", file=sys.stderr)
+        else:
+            drift = len(report.by_status(Status.DRIFT))
+            missing = len(report.by_status(Status.MISSING))
+            absent = len(report.by_status(Status.ABSENT_TEMPLATE))
+            print(
+                f"relay-shell: verify-deploy FAILED "
+                f"(drift={drift}, missing={missing}, absent_template={absent})",
+                file=sys.stderr,
+            )
+
+    return 0 if report.ok else 2
+
+
 def main(argv: list[str] | None = None) -> int:
     """Build and run the server. Returns a process exit code."""
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 
     _configure_logging()
+
+    if args.verify_deploy:
+        return _verify_deploy(args.templates_dir, args.install_prefix, args.json_out)
 
     if args.check_config:
         return _check_config()

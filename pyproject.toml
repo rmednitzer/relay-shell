@@ -56,6 +56,13 @@ Issues = "https://github.com/rmednitzer/relay-shell/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/relay_shell"]
 
+# Ship the deploy templates inside the wheel so `relay-shell verify-deploy`
+# can locate them via `importlib.resources` regardless of whether the
+# operator installed from a wheel, a sdist, or the source tree. The
+# source-tree (editable) fallback in `verifier.py` covers `pip install -e .`.
+[tool.hatch.build.targets.wheel.force-include]
+"deploy" = "relay_shell/_deploy"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

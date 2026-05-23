@@ -189,6 +189,34 @@ prohibitions regardless of posture.
 the supervising client's concern. `server_info` reports effective limits and
 whether the audit sink is degraded (a degraded audit sink is an alert).
 
+## 10. Drift detection
+
+After install, and on a periodic schedule in production, run:
+
+```bash
+/var/lib/relay-shell/venv/bin/relay-shell --verify-deploy
+```
+
+It compares each shipped template against the file the installer placed:
+
+| name              | install path                                             |
+|-------------------|----------------------------------------------------------|
+| systemd-unit      | `/etc/systemd/system/relay-shell.service`                |
+| systemd-hardening | `/etc/systemd/system/relay-shell.service.d/hardening.conf` |
+| logrotate         | `/etc/logrotate.d/relay-shell`                           |
+| caddyfile         | `/etc/caddy/Caddyfile` (marker line is stripped)         |
+
+Exit 0 means every entry matched byte-for-byte; exit 2 means at least one
+`DRIFT`, `MISSING`, or `ABSENT_TEMPLATE` row was reported. Pair with
+`--json` for machine-readable output (Nagios / Prometheus blackbox /
+Ansible drift-detection callouts). A cron line like:
+
+```cron
+17 4 * * * relay-shell /var/lib/relay-shell/venv/bin/relay-shell --verify-deploy --json > /var/log/relay-shell/drift.json
+```
+
+…lets a log shipper trip an alert when `ok: false` lands in the JSON.
+
 ## Emergency
 
 - Disable fast: `sudo systemctl stop relay-shell` (and revoke OAuth tokens by

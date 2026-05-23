@@ -13,5 +13,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        # actions/checkout@v6 ships with persist-credentials default-off;
+        # the dependency-review-action then shells out to `git fetch` for
+        # base/head refs and is prompted for a username (terminal prompts
+        # disabled -> exit 128). Restoring the credential helper here
+        # keeps the workflow byte-cheap and pinned to v6 elsewhere.
+        with:
+          persist-credentials: true
       - name: Dependency review
         uses: actions/dependency-review-action@v5
