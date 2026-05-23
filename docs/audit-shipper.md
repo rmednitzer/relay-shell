@@ -318,10 +318,13 @@ And the parser (`/etc/fluent-bit/parsers.conf`):
 [PARSER]
     Name        relay_shell_audit
     Format      json
-    # The relay writes "ts" as ISO-8601 UTC.
-    Time_Key    ts
-    Time_Format %Y-%m-%dT%H:%M:%S.%LZ
-    Time_Keep   On
+    # Deliberately no Time_Key / Time_Format. The relay emits "ts" as
+    # an ISO-8601 string with a `+00:00` offset (see relay_shell.util
+    # `now_iso()` and tests/test_util.py::test_now_iso_has_offset);
+    # Fluent Bit's strptime varies in colon-offset support across
+    # libc versions. The `ts` field is preserved in the record for
+    # the receiving SIEM to index as the event time; Fluent Bit's
+    # default per-record arrival timestamp covers the agent side.
 ```
 
 ### Run as the relay-shell user
@@ -477,13 +480,29 @@ journalctl -u systemd-journal-upload -n 100 --no-pager | grep -iE 'error|fail' |
 # confirm the matching record appears under SYSLOG_IDENTIFIER=relay-shell-audit.
 ```
 
+### Rotation gap risk
+
+`tail -F` (`--follow=name --retry`) tracks the file by name and
+reopens when `logrotate` lands a new file at the canonical path.
+This is acceptable here because the bundled `deploy/logrotate/
+relay-shell` uses `create` (the new file is in place before
+`prerotate` ever finishes), but it is **not** inode-safe in the
+strict sense Vector and Fluent Bit provide. A small race exists: if
+the relay writes the very last byte to the *old* inode after
+`tail -F` has switched to the *new* path, that byte ships when the
+rotated/compressed old file is ingested by your aggregator (it is
+still on disk under `audit.jsonl-YYYYMMDD[.gz]`), not through this
+forwarder. For an audit pipeline that is the documented price for
+having no third-party agent on the host; if a zero-gap guarantee is
+required, prefer the Vector recipe.
+
 ### Troubleshoot
 
-- **No records in the journal.** `tail -F` follows by name. If
-  `logrotate` rotates without the `create` directive, `tail -F`
-  reattaches to the new file but loses the records buffered in the
-  old one until the FD closes. The bundled logrotate config uses
-  `create` so this stays a non-issue.
+- **No records in the journal.** Confirm the forwarder unit is
+  running and reading the file: `journalctl -u
+  relay-shell-audit-tail -n 5`. With the bundled `logrotate`
+  config (`create 0600 relay-shell relay-shell`) `tail -F` reopens
+  the new file as soon as it appears.
 - **Upload backs off without recovering.** Check the collector cert
   and that `19532/tcp` is reachable; `systemd-journal-upload`'s only
   remediation on connection error is exponential back-off with no
