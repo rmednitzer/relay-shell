@@ -14,6 +14,10 @@ Tiers (see docs/adr/0003-tiered-authority.md):
 * Tier 3  irreversible / high blast   (rollback expensive or impossible)
 
 The deny list is enforced first in *every* mode, including ``open``.
+
+The compiled regex tables (Tier 2 / Tier 3 / privilege escalation) live in
+:mod:`relay_shell.patterns` so a security reviewer can audit "added a
+pattern" as a one-file diff.
 """
 
 from __future__ import annotations
@@ -21,6 +25,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import IntEnum
+
+from . import patterns
 
 __all__ = ["Policy", "PolicyDecision", "Tier", "classify"]
 
@@ -37,38 +43,6 @@ _READ_ONLY_TOOLS = frozenset(
     {"server_info", "ssh_hosts", "ssh_check", "session_list", "session_recv", "ssh_forward_list"}
 )
 
-# Substrings that strongly imply an irreversible / high-blast action.
-_TIER3 = re.compile(
-    r"(?ix)\b("
-    r"rm\s+-[rf]|rm\s+-[a-z]*f|shred|mkfs|fdisk|sgdisk|wipefs|"
-    r"dd\s+[^|]*of=/dev/|>\s*/dev/[sh]d|"
-    r"shutdown|reboot|halt|poweroff|init\s+0|init\s+6|"
-    r"drop\s+database|drop\s+table|truncate\s+table|"
-    r"git\s+push\s+.*--force|git\s+reset\s+--hard|"
-    r"userdel|deluser|gpasswd|passwd\s+|"
-    r"iptables\s+-F|nft\s+flush|ip\s+link\s+.*down|"
-    r":\s*\(\s*\)\s*\{|/dev/sd[a-z]\b"
-    r")"
-)
-
-# Substrings that imply a stateful, visible change.
-_TIER2 = re.compile(
-    r"(?ix)\b("
-    r"systemctl\s+(stop|restart|disable|mask|kill)|service\s+\S+\s+(stop|restart)|"
-    r"apt(-get)?\s+(install|remove|purge|upgrade|dist-upgrade)|"
-    r"yum\s+(install|remove)|dnf\s+(install|remove)|pip\s+install|npm\s+(install|i)\b|"
-    r"docker\s+(run|rm|stop|kill|compose|build)|kubectl\s+(apply|delete|scale|rollout)|"
-    r"chown|chmod\s+-R|chmod\s+[0-7]{3,4}\s+/|"
-    r"crontab|ln\s+-s|mv\s+/|cp\s+-[a-z]*\s+/|sed\s+-i|tee\s+/etc/|"
-    r"git\s+(push|commit|merge|rebase)|"
-    r"ufw\s+(allow|deny|enable|disable)|"
-    r"ssh-copy-id|>\s*/etc/|>>\s*/etc/"
-    r")"
-)
-
-# Privilege escalation wrappers should not be treated as low-risk commands.
-_PRIV_ESC_PATTERN = re.compile(r"(?ix)\b(sudo|doas|pkexec)\b")
-
 # Tools whose primary effect is to change remote/local state.
 _MUTATING_TOOLS = frozenset({"ssh_upload", "ssh_download", "ssh_forward"})
 
@@ -82,11 +56,11 @@ def classify(tool: str, command: str = "") -> Tier:
     if tool in _READ_ONLY_TOOLS:
         return Tier.READ_ONLY
     text = command or ""
-    if _TIER3.search(text):
+    if patterns.TIER3_PATTERN.search(text):
         return Tier.IRREVERSIBLE
-    if _PRIV_ESC_PATTERN.search(text):
+    if patterns.PRIV_ESC_PATTERN.search(text):
         return Tier.STATEFUL
-    if _TIER2.search(text):
+    if patterns.TIER2_PATTERN.search(text):
         return Tier.STATEFUL
     if tool in _MUTATING_TOOLS:
         return Tier.STATEFUL

@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Redaction and tier-classification regex tables moved into a dedicated
+  `src/relay_shell/patterns.py` module. `redaction.py` and `policy.py`
+  now consume the published `REDACTION_*` / `TIER*_PATTERN` /
+  `PRIV_ESC_PATTERN` names; the executor bodies are unchanged.
+  `PATTERNS_VERSION` is a monotonic counter that audit consumers can
+  read to detect a pattern-set upgrade. `tests/test_patterns.py`
+  anchors compile-time shape and provides paired over-scrub /
+  under-scrub cases per family. No behavior change.
+
 ### Added
 
 - `.github/workflows/sbom.yml` generates a CycloneDX SBOM (JSON + XML,
