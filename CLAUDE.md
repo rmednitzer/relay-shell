@@ -17,7 +17,9 @@ operators intentionally choose that posture.
 
 ## Required development loop
 
-1. Inspect relevant source + tests.
+1. Inspect relevant source + tests. For any change touching `policy`,
+   `redaction`, `audit`, `patterns`, or the `Relay.run` body, step 1 is
+   `docs/runbook.md` §2 (Audit) — those modules are the trust boundary.
 2. Run baseline checks (`ruff check .`, `ruff format --check .`, `mypy`, `pytest -q`).
 3. Implement minimal safe improvements.
 4. Add/adjust tests for changed behavior.
@@ -79,4 +81,5 @@ Default to:
 1. preserving current capability,
 2. improving auditability,
 3. tightening explicit safeguards,
-4. adding tests and documentation.
+4. adding tests and documentation,
+5. extending the backlog in `docs/runbook.md` §7 over inventing scope mid-PR.

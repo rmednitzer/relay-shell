@@ -59,14 +59,41 @@ out, or be denied, but it always returns a single bounded, audited string.
 | `redaction` | Scrub secrets from audited arguments (consumes `patterns`). |
 | `audit` | Rotation-safe append-only JSONL; hash, never body. |
 | `policy` | Tier 0..3 classification (consumes `patterns`); `open`/`guarded`/`readonly` admission. |
+| `metrics` | In-memory Prometheus counter + gauge registry rendered at `GET /metrics` (HTTP only). |
 | `errors` | Error types and the uniform `[ERROR: ...]` formatter. |
 | `sessions` | Local PTY transport + transport-agnostic session registry. |
 | `shelltools` | One-shot command/script execution (no PTY). |
 | `inventory` | `~/.ssh/config` + JSON inventory parsing and resolution. |
 | `sshpool` | asyncssh connection cache, exec, SFTP, forwarding, PTY adapter. |
 | `auth/oauth` | Optional file-backed OAuth 2.1 provider (HTTP only). |
-| `server` | FastMCP assembly, the audited runner, all tool definitions. |
-| `__main__` | Entrypoint; stderr-only logging; transport selection. |
+| `verifier` | Drift-detection comparator powering `relay-shell --verify-deploy`. |
+| `server` | FastMCP assembly, the audited runner, all tool + resource definitions. |
+| `__main__` | Entrypoint; stderr-only logging; transport selection; `--check-config` / `--verify-deploy` CLI flags. |
+
+The canonical list of registered tools lives in
+`tests/test_server.py::_EXPECTED`; the MCP resources are registered in
+`server.py` under `@mcp.resource("relay-shell://...")`. See
+[`docs/tools.md`](tools.md) for the per-tool reference and the resources
+section.
+
+### Where the lifecycle maps in code
+
+The five `Relay.run` steps above correspond to specific call sites in
+`src/relay_shell/server.py`:
+
+| Step | Where |
+|------|-------|
+| 1 Identify | `_ctx_ids(ctx)` (best-effort `request_id` / `client_id` from `Context`). |
+| 2 Classify + admit | `self.policy.check(tool, policy_text)` from `policy.Policy.check`. |
+| 3 Execute | `await work()` - the per-tool coroutine captured by the wrapper. |
+| 4 Bound | `truncate(body, self.clamp_output(max_output))` from `util.truncate`. |
+| 5 Audit | `self.audit.record(...)` from `audit.AuditLogger.record`. |
+
+Resource reads (`relay-shell://...`) do not flow through `Relay.run` -
+there is no work to admit, time out, or truncate. They are still
+audited with `tool="resource:<name>"` and `tier=0` so the operator
+sees what context the model is pulling in. The `Relay.run` body and the
+resource handlers are the only places where audit records are produced.
 
 ## Concurrency and resource model
 
@@ -85,10 +112,16 @@ out, or be denied, but it always returns a single bounded, audited string.
   stderr so stdout stays a clean JSON-RPC channel.
 - **streamable-HTTP**: binds loopback by design; terminate TLS and restrict by
   IP at a reverse proxy (see `deployment.md`). OAuth 2.1 is optional and only
-  constructed for this transport.
+  constructed for this transport. The HTTP transport also mounts a
+  `GET /metrics` route (Prometheus text exposition); the route bypasses
+  OAuth by design and is firewalled by the edge CIDR allowlist.
 
 ## Security model
 
 See `SECURITY.md` and the ADRs ([index](adr/README.md)). In short: the
 executor is deliberately unsandboxed (that is the capability); safety is
 compensating controls plus deployment discipline.
+
+For the operator-facing audit of the guarantees described above (deny
+list precedence, audit-record shape, hash-not-body invariant, output
+bounds), see [`runbook.md`](runbook.md) §2.

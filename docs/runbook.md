@@ -250,10 +250,18 @@ Use this for every PR, your own or external.
 - [ ] No new file is undocumented in `docs/architecture.md` module table.
 - [ ] No new tool is missing from `docs/tools.md`,
       `tests/test_server.py::_EXPECTED`, and the README capability tables.
+- [ ] No new MCP resource is missing from `docs/tools.md` §Resources,
+      the README Resources subsection, and the audit-tool-name table in
+      both places (resource reads are audited; the `tool` field must stay
+      stable to keep cardinality bounded and to let redaction run on
+      user-controlled parts).
 - [ ] No new env var is missing from `.env.example`, `Settings`, and
       `docs/deployment.md`.
 - [ ] No new dependency is added without a justification in the PR body and
       a pinned version in `requirements.txt`.
+- [ ] No new metric is undocumented in `docs/deployment.md` §9a and the
+      README diagnostics paragraph (HTTP transport adds metric blocks
+      to the `/metrics` exposition).
 
 ### 3.2 Per-module focus areas
 
@@ -268,15 +276,18 @@ Use this for every PR, your own or external.
 | `sshpool.py`         | `known_hosts` arg is validated. Connection cache keyed by `user@host:port`. Forwards leak-free.   |
 | `auth/oauth.py`      | File modes (0o700 dir / 0o600 files), atomic save, lazy expiry, single-client lockdown intact.    |
 | `shelltools.py`      | `start_new_session=True` preserved (so `killpg` works). Env overlay does not propagate JSON errors. |
-| `inventory.py`       | Wildcard `Host *` patterns are skipped in the flat listing. `resolve()` passthrough behavior holds. |
+| `inventory.py`       | Wildcard `Host *` patterns are skipped in the flat listing. `resolve()` passthrough behavior holds. The raw ssh_config parse is retained so `ssh_config_aliases()` reports aliases that an inventory entry overrides. |
+| `metrics.py`         | Counter / gauge label cardinality stays bounded. The `tool` label on resource reads is the STABLE name, never a user-controlled string. Hand-rolled exposition stays compliant (HELP + TYPE per metric, label escaping). |
+| `verifier.py`        | Template lookup tries packaged `_deploy` first, then source-tree `deploy/`. Each pair in `DEFAULT_PAIRS` has a stable `name`; new pairs must be reflected in `docs/deployment.md` §10. |
 
 ### 3.3 Security-sensitive diffs
 
 Trigger an extra review pass if the diff touches:
 
 - `patterns.py`, `audit.py`, `redaction.py`, `policy.py`
-- The `Relay.run()` body in `server.py`
+- The `Relay.run()` body in `server.py` or any resource handler
 - `auth/oauth.py` (any TTL, store, or token-shape change)
+- `metrics.py` (label-cardinality and label-value-escaping invariants are part of the trust boundary - a model that controls a label could otherwise smuggle data into the exposition)
 - `deploy/install*.sh` (anything that writes a systemd unit / EnvironmentFile)
 - `deploy/Caddyfile` (CIDR matcher or header changes)
 
@@ -497,9 +508,6 @@ and clearer code, not to land a refactor for its own sake.
 
 ### 5.3 Tests to add (gap analysis)
 
-- **T-002** `server_info` is exercised via the stdio e2e test, but not by
-  itself. A direct unit test confirming every documented field is present
-  would catch silent removals.
 - **T-003** No test asserts the `session_recv` "ended" message shape. The
   registry produces `[session ... ended, exit=N]`; a regex test would
   freeze that contract.
@@ -706,15 +714,18 @@ by the same checklist.
 
 ### 8.1 `README.md`
 
-- Keep: title, DeepWiki badge, Why, Capabilities tables, Quickstart,
-  Security posture summary, Layout, Development, License.
-- Add:
+- Keep: title, DeepWiki badge, Why, Capabilities tables (local shell,
+  SSH, sessions, diagnostics, resources), Quickstart, Security posture
+  summary, Layout, Development, AI contributor guidance, License.
+- Add (still open):
   - A short "Status" line under the title: current version, supported
     Python, supported transports.
   - A "Compatibility matrix" block (tested on Ubuntu 24.04 + Python 3.12;
     macOS dev OK but unsupported; Windows out of scope).
-  - A link to the new `docs/runbook.md` under "AI contributor guidance".
-- Remove: nothing.
+- Done (do not re-add):
+  - Runbook link under "AI contributor guidance".
+  - `/metrics` paragraph under Diagnostics.
+  - Resources subsection.
 - Cross-checks: capability tables must match `docs/tools.md` and
   `tests/test_server.py::_EXPECTED`.
 
@@ -733,10 +744,9 @@ by the same checklist.
 ### 8.3 `CHANGELOG.md`
 
 - Keep: Keep-a-Changelog format and the `[Unreleased]` section structure.
-- Add (now, as part of this runbook PR):
-  - An entry under `[Unreleased] / Added`: "Maintenance runbook at
-    `docs/runbook.md` covering audit/review/validate/enhance/extend
-    procedures and the working backlog."
+  Consolidate to one `### Added` / `### Changed` / `### Fixed` /
+  `### Security` block per release - duplicated category headers under
+  the same release confuse readers and break Keep-a-Changelog tooling.
 - Update on every release: cut the `[Unreleased]` block, stamp the
   version + date, link diffs.
 
@@ -744,49 +754,48 @@ by the same checklist.
 
 - Keep: Mission, Non-negotiables, References, Implementation standards,
   Change workflow, Repo map, Definition of done.
-- Add:
-  - A line in section 5 pointing at `docs/runbook.md` as the executable
-    procedure for sections 1, 4, and 6.
-  - A line in section 6 noting that the canonical tool list lives in
-    `tests/test_server.py::_EXPECTED` (until C-002 collapses the four
-    duplicated sources into one).
+- Done (do not re-add):
+  - Section 5 runbook pointer.
+  - Section 6 canonical-tool-list note pointing at
+    `tests/test_server.py::_EXPECTED`.
+  - Section 6 entries for `patterns.py`, `metrics.py`, `verifier.py`.
 - Remove: nothing.
 
 ### 8.5 `CLAUDE.md`
 
 - Keep: Objective, Core behavior expectations, Required development loop,
   Coding guidance, GitHub optimization checklist, Trusted references.
-- Add:
-  - Under "Required development loop", a note: "Step 1 is `docs/runbook.md`
-    section 2 (Audit) for any change touching `policy`, `redaction`,
-    `audit`, or the `Relay.run()` body."
-  - Under "When uncertain", a fifth bullet: "Prefer extending the
-    backlog in `docs/runbook.md` over inventing scope mid-PR."
+- Done (do not re-add):
+  - The runbook §2 note under "Required development loop".
+  - The backlog-preference bullet under "When uncertain".
 - Remove: nothing.
 
 ### 8.6 `docs/architecture.md`
 
-- Keep: the diagram, request-lifecycle prose, module table, concurrency
-  notes, transport notes, security-model link.
-- Add:
-  - A short "Where this maps in code" appendix linking each lifecycle
-    step (1-5 in section "Request lifecycle") to the exact function in
-    `server.py` (`_ctx_ids`, `policy.check`, `redact_args`, `truncate`,
-    `audit.record`).
+- Keep: the diagram, request-lifecycle prose, module table (now
+  including `metrics` and `verifier`), concurrency notes, transport
+  notes (including the `/metrics` route on HTTP), security-model link.
+- Done (do not re-add):
+  - "Where the lifecycle maps in code" appendix linking each step to
+    the exact `server.py` / `audit.py` / `util.py` call site.
+  - `metrics`, `verifier` rows in the module table.
+- Add (still open):
   - A pointer to `docs/runbook.md` section 2 for the operator-facing
     audit of these guarantees.
 - Remove: nothing.
 
 ### 8.7 `docs/tools.md`
 
-- Keep: the per-tool tables, the conventions header, the interactive
-  pattern example, the error grammar.
-- Add:
-  - A note under each tool's row stating which test exercises it (single
-    file path, no line numbers - lines drift). Helps reviewers find the
-    contract.
-  - A "Tier reference" sidebar with the four-line tier definition so the
-    table is self-contained.
+- Keep: the per-tool tables, the conventions header, the Tier reference
+  sidebar (now present at the top), the Resources section, the
+  interactive pattern example, the error grammar.
+- Done (do not re-add):
+  - Tier reference sidebar at the top of the file.
+  - Resources section listing the three `relay-shell://...` URIs and
+    the stable audit `tool` names.
+- Add (still open):
+  - A note under each tool's row stating which test exercises it
+    (single file path, no line numbers - lines drift).
 - Remove: nothing.
 - Cross-checks: the set of tools listed here must equal
   `tests/test_server.py::_EXPECTED`. The default-tier note for each tool

@@ -187,6 +187,7 @@ Participation is governed by the
 
 - [`AGENTS.md`](AGENTS.md) - repository-wide agent operating contract
 - [`CLAUDE.md`](CLAUDE.md) - Claude-focused development and review guidance
+- [`docs/runbook.md`](docs/runbook.md) - executable audit / review / validate / enhance / extend procedures plus the prioritized backlog
 
 ## License
 

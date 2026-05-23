@@ -4,6 +4,19 @@ Every tool returns a single string and is audited. `timeout` and output are
 clamped to the configured limits. Each tool's default tier is shown; the
 effective decision also depends on `RELAY_SHELL_POLICY_MODE` and the deny/allow lists.
 
+**Tier reference** (see [`adr/0003-tiered-authority.md`](adr/0003-tiered-authority.md)):
+
+| Tier | Name          | Meaning                                       |
+|------|---------------|-----------------------------------------------|
+| 0    | `READ_ONLY`   | Observe only; no local or remote state change.|
+| 1    | `REVERSIBLE`  | Low blast radius; trivially undone.           |
+| 2    | `STATEFUL`    | Visible impact a user or dependent notices.   |
+| 3    | `IRREVERSIBLE`| High blast; rollback expensive or impossible. |
+
+Mode semantics: `open` permits all but still classifies; `guarded`
+refuses Tier 2+ unless `RELAY_SHELL_POLICY_ALLOW` matches; `readonly`
+permits only Tier 0. `RELAY_SHELL_POLICY_DENY` is always enforced first.
+
 Conventions:
 
 - `host` is an inventory / `ssh_config` alias or `user@host`.

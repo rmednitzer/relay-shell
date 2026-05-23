@@ -72,24 +72,33 @@ Agents must preserve support for both.
 5. Run security/review validation for PR changes.
 6. Update docs when behavior or operating guidance changes.
 
+`docs/runbook.md` is the executable procedure for sections 1, 4, and 6
+above: §2 (Audit), §3 (Review), §4 (Validate), §5 (Enhance), §6
+(Extend). Prefer extending the backlog in `docs/runbook.md` §7 over
+inventing scope mid-PR.
+
 ## 6) Repo-specific technical map
 
-- `src/relay_shell/__main__.py`: entrypoint; stderr-only logging; transport selection
-- `src/relay_shell/server.py`: tool registration + audited execution wrapper
+- `src/relay_shell/__main__.py`: entrypoint; stderr-only logging; transport selection; `--check-config` / `--verify-deploy` CLI flags
+- `src/relay_shell/server.py`: tool + resource registration; audited execution wrapper; `/metrics` route on HTTP
 - `src/relay_shell/config.py`: typed `RELAY_SHELL_*` settings; fail-fast on invalid values
-- `src/relay_shell/policy.py`: Tier 0..3 classification + admission control
+- `src/relay_shell/policy.py`: Tier 0..3 classification + admission control (consumes `patterns`)
 - `src/relay_shell/audit.py`: append-only JSONL audit sink (hash of output, not body)
-- `src/relay_shell/redaction.py`: argument secret scrubbing
+- `src/relay_shell/redaction.py`: argument secret scrubbing (consumes `patterns`)
+- `src/relay_shell/patterns.py`: version-pinned compiled regex tables for redaction + tier classification (`PATTERNS_VERSION` is a monotonic counter)
+- `src/relay_shell/metrics.py`: in-memory Prometheus counter + gauge registry rendered at `GET /metrics` (HTTP only)
 - `src/relay_shell/errors.py`: `RelayError` hierarchy and uniform `[ERROR: ...]` formatter
 - `src/relay_shell/shelltools.py`: one-shot local command/script execution
 - `src/relay_shell/sessions.py`: local PTY transport + unified session registry
 - `src/relay_shell/inventory.py`: `~/.ssh/config` + JSON inventory parsing and resolution
 - `src/relay_shell/sshpool.py`: asyncssh connection cache, SFTP, port forwarding, PTY adapter
 - `src/relay_shell/auth/oauth.py`: optional file-backed OAuth 2.1 provider (HTTP only)
+- `src/relay_shell/verifier.py`: drift-detection comparator powering `relay-shell --verify-deploy`
 - `src/relay_shell/util.py`: time, hashing, clamping, byte-safe truncation, id generation
-- `tests/`: authoritative behavior contract (unit + in-process SSH integration)
+- `tests/`: authoritative behavior contract (unit + in-process SSH integration). The canonical list of registered MCP tools lives in `tests/test_server.py::_EXPECTED` — treat that constant as source of truth when adding, removing, or renaming a tool.
 - `deploy/`: systemd unit + hardening drop-in, Caddyfile, logrotate, installers
 - `docs/adr/`: accepted design decisions (runtime/SDK, no-sandbox, tiering, edge TLS)
+- `docs/runbook.md`: maintenance procedures (audit / review / validate / enhance / extend) and the prioritized backlog
 
 ## 7) Definition of done
 
