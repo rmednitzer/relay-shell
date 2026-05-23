@@ -649,9 +649,6 @@ currently empty.)
 
 ### 7.5 Security hardening (incremental, no posture change)
 
-- **B-020 (P2)** Add a `relay-shell verify-deploy` CLI subcommand that
-  validates the systemd unit, drop-in, logrotate, and Caddyfile against
-  the shipped templates. Drift detection for production.
 - **B-021 (P3)** Investigate `seccomp-bpf` notification mode (not
   enforcement) for the local executor: not a sandbox, but an additional
   audit channel covering syscalls. ADR-worthy before any code lands.

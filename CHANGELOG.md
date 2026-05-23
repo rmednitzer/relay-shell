@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `relay-shell --verify-deploy` CLI subcommand. Compares each shipped
+  deploy template (systemd unit + drop-in, logrotate, Caddyfile) against
+  the file the installer placed on the host (`/etc/systemd/system/...`,
+  `/etc/logrotate.d/...`, `/etc/caddy/Caddyfile`) and exits 0 if every
+  entry matches byte-for-byte or 2 if any `DRIFT`, `MISSING`, or
+  `ABSENT_TEMPLATE` row is reported. The Caddyfile's
+  `# relay-shell:install-edge:managed` marker line is stripped before
+  comparison so a Caddyfile placed by `install-edge.sh` reads as OK.
+  `--json` switches to machine-readable output for log shippers /
+  cron-driven drift detection; `--templates-dir` and `--install-prefix`
+  let the same logic run inside image-bake CI. Templates are shipped
+  inside the wheel via a `[tool.hatch.build.targets.wheel.force-include]`
+  mapping (`deploy/` → `relay_shell/_deploy`), with an editable-install
+  fallback that walks up from the package file. Closes B-020.
+
 ### Changed
 
 - CI coverage floor raised from 75% to 85%. The new

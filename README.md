@@ -89,6 +89,9 @@ RELAY_SHELL_TRANSPORT=http relay-shell
 
 # Validate config without starting the transport (useful for image bakes)
 relay-shell --check-config
+
+# Drift-detect shipped templates against /etc/... (useful in production cron)
+relay-shell --verify-deploy
 ```
 
 Register with an MCP client (stdio):
