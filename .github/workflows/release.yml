@@ -1,0 +1,182 @@
+name: release
+
+# Build + publish on a signed `v*` tag using PyPI trusted publishing
+# (OIDC, no long-lived token). The flow has three gated jobs:
+#
+#   1. verify     - the tag is annotated, GPG/SSH-signed and verified by
+#                   GitHub, and matches the version declared in pyproject.toml
+#   2. build      - dev install, full test suite on the package floor
+#                   (Python 3.12; per-PR CI already exercises 3.13/3.14),
+#                   then `python -m build` to produce wheel + sdist
+#   3. publish    - downloads the dist artifact and uploads to PyPI via
+#                   OIDC, gated on the `pypi` environment so a human can
+#                   require an approval click before the release goes live
+#
+# The PyPI side is wired through the trusted-publishing form at
+# https://pypi.org/manage/account/publishing/ with:
+#   project = relay-shell     owner = rmednitzer
+#   repository = relay-shell  workflow = release.yml
+#   environment = pypi
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (must already exist and be signed)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify signed tag + version match
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Resolve tag from trigger
+        id: tag
+        env:
+          REF: ${{ github.ref }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="${REF#refs/tags/}"
+          fi
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([+.\-].+)?$'; then
+            echo "ERROR: $tag does not match the v<MAJOR>.<MINOR>.<PATCH> pattern" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # Check out the RESOLVED tag, not the default branch. On a
+      # `workflow_dispatch` re-run for an older tag, the default branch may
+      # have moved past it - reading `pyproject.toml` from the working tree
+      # without this `ref` would compare the tag against whatever version
+      # currently sits on the default branch and falsely reject a valid
+      # signed tag.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Assert tag matches pyproject version (at the tagged commit)
+        id: version
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version=$(grep -m1 '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          if [ "$TAG" != "v$version" ]; then
+            echo "ERROR: tag $TAG does not match pyproject version v$version (read from the tagged commit)" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "OK: tag $TAG matches pyproject version $version"
+
+      - name: Verify tag signature via GitHub API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ref=$(curl -fsS -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/git/ref/tags/$TAG")
+          obj_type=$(printf '%s' "$ref" | jq -r '.object.type')
+          if [ "$obj_type" != "tag" ]; then
+            echo "ERROR: $TAG is a lightweight tag; release tags MUST be annotated and signed" >&2
+            exit 1
+          fi
+          obj_sha=$(printf '%s' "$ref" | jq -r '.object.sha')
+          ver=$(curl -fsS -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/git/tags/$obj_sha" | jq -r '.verification')
+          verified=$(printf '%s' "$ver" | jq -r '.verified')
+          reason=$(printf '%s' "$ver" | jq -r '.reason')
+          if [ "$verified" != "true" ]; then
+            echo "ERROR: $TAG signature not verified by GitHub (reason: $reason)" >&2
+            exit 1
+          fi
+          echo "OK: $TAG is a signed annotated tag, verified ($reason)"
+
+  build:
+    name: Build wheel + sdist
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install package + build backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install build
+
+      - name: Run full test suite
+        run: pytest -q
+
+      - name: Build wheel + sdist
+        run: python -m build
+
+      - name: Check distributions
+        run: |
+          pip install twine
+          twine check dist/*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ needs.verify.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI (OIDC)
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/relay-shell
+    permissions:
+      # Job-level `permissions:` REPLACES the workflow-level block. OIDC
+      # for trusted publishing needs id-token; `actions/download-artifact`
+      # needs `actions: read` to fetch the artifact uploaded by the
+      # previous job; `contents: read` is the minimum for the repo
+      # context the action expects.
+      id-token: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ needs.verify.outputs.version }}
+          path: dist/
+
+      - name: Publish via PyPI trusted publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Make a workflow re-run after a successful upload idempotent
+          # instead of failing on "file already exists" - the runbook
+          # documents `workflow_dispatch` as the recovery path when PyPI
+          # was flaky mid-publish.
+          skip-existing: true
