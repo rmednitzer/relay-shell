@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- CI now runs the full check matrix on Python **3.12, 3.13, and
+  3.14** instead of 3.12 alone. The package floor stays `>=3.12`
+  (declared in `pyproject.toml`); the matrix surfaces interpreter-
+  specific regressions early. `fail-fast: false` keeps every entry's
+  result visible so a single 3.14 wheel gap does not mask a 3.13
+  regression. Classifiers in `pyproject.toml` updated to advertise
+  the three supported versions on PyPI.
 - `CODE_OF_CONDUCT.md` adopting the Contributor Covenant 2.1. The
   file is a thin pointer to the canonical upstream URL so wording
   changes track automatically; it documents scope, the

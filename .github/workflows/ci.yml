@@ -11,12 +11,21 @@ jobs:
       contents: read
     timeout-minutes: 20
     runs-on: ubuntu-latest
+    strategy:
+      # Surface every Python version's result so a single 3.14 wheel gap
+      # does not mask a 3.13 regression. The package floor is `>=3.12` in
+      # pyproject.toml; the matrix covers the floor plus the two newer
+      # interpreters in active CPython support.
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    name: check (py${{ matrix.python-version }})
     steps:
       - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: "pip"
 
       - name: Install
