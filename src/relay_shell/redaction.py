@@ -35,14 +35,15 @@ __all__ = ["redact", "redact_args"]
 
 def redact(text: str) -> str:
     """Replace secret-looking spans in ``text`` with a placeholder."""
-    out = patterns.URL_CREDS_PATTERN.sub("://[REDACTED]@", text)
+    placeholder = patterns.REDACTION_PLACEHOLDER
+    out = patterns.URL_CREDS_PATTERN.sub(f"://{placeholder}@", text)
     for pat, repl in patterns.REDACTION_PREFIX_PATTERNS:
         out = pat.sub(repl, out)
     for pat in patterns.REDACTION_PATTERNS:
-        out = pat.sub(patterns.REDACTION_PLACEHOLDER, out)
+        out = pat.sub(placeholder, out)
     if patterns.MYSQL_FAMILY_CLI_PATTERN.search(out):
         out = patterns.MYSQL_COMPACT_PASSWORD_PATTERN.sub(
-            lambda m: f"{m.group(1)}{patterns.REDACTION_PLACEHOLDER}", out
+            lambda m: f"{m.group(1)}{placeholder}", out
         )
     return out
 

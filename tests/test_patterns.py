@@ -90,7 +90,15 @@ def test_authorization_header_positive_and_negative() -> None:
 
 
 def test_bearer_positive_and_negative() -> None:
-    assert "abc.def" not in redaction.redact("Bearer abc.def-ghi")
+    # Positive: the entire token (including the hyphenated suffix) must be
+    # scrubbed; assert against the full token, not just an interior
+    # substring, so a regression that stopped at the hyphen would still
+    # fail this test.
+    out = redaction.redact("Bearer abc.def-ghi")
+    assert "abc.def-ghi" not in out
+    assert "abc.def" not in out
+    assert "-ghi" not in out
+    assert "[REDACTED]" in out
     # "Bearer" as a word with no following token must not turn the next
     # punctuation into a placeholder.
     assert "(bearer." in redaction.redact("the messenger (bearer.) arrived")
@@ -126,9 +134,18 @@ def test_mysql_compact_password_gated_by_family() -> None:
 
 
 def test_provider_token_shapes_positive_and_negative() -> None:
-    # Positive: each provider shape is caught.
-    assert "abcdefghij" not in redaction.redact("ghp_abcdefghijklmnopqrstuvwxyz0123456789")
-    assert "AKIA0000000000000000" not in redaction.redact("AKIA0000000000000000")
+    # Positive: each provider shape collapses to the placeholder; assert
+    # against the full input token so a regression that captured a
+    # partial prefix would leave evidence and fail the test.
+    ghp_token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+    out = redaction.redact(ghp_token)
+    assert ghp_token not in out
+    assert "abcdefghij" not in out
+    assert out == "[REDACTED]"
+    akia_token = "AKIA0000000000000000"
+    out = redaction.redact(akia_token)
+    assert akia_token not in out
+    assert out == "[REDACTED]"
     # Negative: a too-short look-alike does not trigger.
     assert "ghp_short" in redaction.redact("ghp_short")
     assert "AKIASHORT" in redaction.redact("AKIASHORT")

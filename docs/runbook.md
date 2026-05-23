@@ -808,9 +808,10 @@ by the same checklist.
 ### 8.11 `docs/adr/0003-tiered-authority.md`
 
 - Keep: as is.
-- Add: nothing now. Update if `_TIER2` / `_TIER3` regex sets gain a new
-  *category* (not just another verb) - new entries are heuristic
-  improvements, not policy changes.
+- Add: nothing now. Update if `TIER2_PATTERN` / `TIER3_PATTERN` (in
+  `src/relay_shell/patterns.py`) gain a new *category* (not just
+  another verb) - new entries are heuristic improvements, not policy
+  changes.
 
 ### 8.12 `docs/adr/0004-edge-tls-automation.md`
 
