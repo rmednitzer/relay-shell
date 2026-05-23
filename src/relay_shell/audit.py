@@ -95,3 +95,58 @@ class AuditLogger:
         # Audit must never break a tool call.
         with contextlib.suppress(Exception):
             self._log.info(json.dumps(entry, default=str, ensure_ascii=False))
+
+    def tail(self, lines: int) -> str:
+        """Return the last ``lines`` audit records as JSONL.
+
+        Records are returned in their original on-disk order (oldest first).
+        The empty string is returned if the audit file does not exist, is
+        empty, or cannot be read - this method must never raise; it is
+        consumed by a read-only diagnostic tool and a failure here should
+        not break the caller.
+
+        Reading is opened on a fresh fd; the writer's append-only fd is
+        untouched so this is safe to call concurrently with normal tool
+        execution. ``WatchedFileHandler`` line-buffers each emit, so any
+        record returned here is structurally complete.
+
+        Implementation reads backward from end-of-file in 8 KiB chunks
+        and stops as soon as it has ``lines + 1`` newlines (the +1
+        catches a partial leading line). Worst-case memory is bounded
+        by ``lines * record_size + chunk_size``, not by file size, so
+        the bounded-execution invariant holds even when the audit log
+        has not rotated in a long time.
+        """
+        if lines <= 0:
+            return ""
+        # Outer `except Exception` keeps the contract literal: even an
+        # exotic OSError subclass, a ValueError from a path with an
+        # embedded NUL, or an unexpected decoding failure must collapse
+        # to "" rather than propagate to the diagnostic tool's caller.
+        try:
+            path = Path(self.path).expanduser()
+            with path.open("rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                if size == 0:
+                    return ""
+
+                chunk_size = 8192
+                data = b""
+                offset = size
+                # Read backward until we have at least one more newline
+                # than requested, or we hit the start of the file.
+                while offset > 0 and data.count(b"\n") <= lines:
+                    read = min(chunk_size, offset)
+                    offset -= read
+                    fh.seek(offset)
+                    data = fh.read(read) + data
+
+            text = data.decode("utf-8", errors="replace")
+            # Drop blank trailing lines (logger does not write them, but
+            # a caller might tail a partial write window) and strip the
+            # line terminator on each record for consistent JSONL output.
+            records = [ln for ln in text.splitlines() if ln.strip()]
+            return "\n".join(records[-lines:])
+        except Exception:  # noqa: BLE001 - contract is "never raise"
+            return ""

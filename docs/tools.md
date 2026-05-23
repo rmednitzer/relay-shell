@@ -97,6 +97,14 @@ A session id from `shell_spawn` or `ssh_spawn` works with all of these.
 Version, transport, policy mode, effective limits, audit path and degraded
 flag, SSH defaults, inventory size. Tier 0.
 
+### `audit_tail`
+Return the last `lines` records from the audit log as JSONL (oldest first).
+`lines` defaults to 50 and is clamped to `[1, 1000]`. Returns the empty
+string if the audit file does not exist or is empty. Read-only: opens a
+fresh fd so the writer's append-only handle is untouched. Useful for an
+operator MCP client debugging a session without shelling into the host.
+Tier 0.
+
 ## Interactive pattern
 
 ```text

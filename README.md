@@ -66,6 +66,7 @@ centrally; failure paths never crash the transport. The reasoning layer sits
 | Tool | Purpose |
 |------|---------|
 | `server_info` | Server version, effective limits, policy mode, audit path. |
+| `audit_tail` | Return the last N audit records (read-only, Tier 0). |
 
 Full reference: [`docs/tools.md`](docs/tools.md).
 

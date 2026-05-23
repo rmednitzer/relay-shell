@@ -621,9 +621,6 @@ commitment.
   list (today `ssh_check` is the only parallel-ish path, and it only
   probes connectivity). Bound concurrency, surface per-host exit codes
   in a single response. Tier 1 or 2 depending on the command.
-- **B-003 (P2)** Add `audit_tail` (Tier 0) returning the last N audit
-  entries. Useful for an operator MCP client to debug a session without
-  shelling into the host.
 - **B-004 (P3)** Expose MCP **resources** (not just tools) for
   `~/.ssh/config` and inventory views, so clients that prefer resources
   to tools can list hosts the protocol-native way.

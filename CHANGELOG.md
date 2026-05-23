@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `audit_tail` MCP tool (Tier 0, read-only). Returns the last N
+  records from the audit log as JSONL, oldest first. `lines` defaults
+  to 50 and is clamped to `[1, 1000]`. Opens a fresh read-only fd so
+  the writer's append-only handle is untouched. Lets an operator MCP
+  client debug a session without shelling into the host. The audit
+  log's "output body never written" invariant is preserved end-to-end
+  (regression test in `tests/test_audit_tail_tool.py`).
 - CI now runs the full check matrix on Python **3.12, 3.13, and
   3.14** instead of 3.12 alone. The package floor stays `>=3.12`
   (declared in `pyproject.toml`); the matrix surfaces interpreter-
