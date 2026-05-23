@@ -12,6 +12,10 @@ All notable changes to this project are documented here. The format follows
   recipe, the documentation-moves-with-code requirement, and the
   security-sensitive-PR review path. The runbook remains the canonical
   procedure; `CONTRIBUTING.md` is the entry point that links into it.
+- GitHub PR template and bug / feature / security issue templates under
+  `.github/`. The PR template encodes the runbook §3.1 cross-reference
+  checklist and the §3.3 security-sensitive-diff confirmations so they
+  travel with every PR.
 - Maintenance runbook at `docs/runbook.md` covering audit, review,
   validate, enhance, and extend procedures, a prioritized backlog
   (capability, quality, ops, docs, security hardening), and a per-file
