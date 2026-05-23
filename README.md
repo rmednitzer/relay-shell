@@ -145,6 +145,13 @@ mypy
 pytest
 ```
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for scope, branch naming,
+the local development loop, and how security-sensitive PRs are
+reviewed. [`docs/runbook.md`](docs/runbook.md) is the canonical
+procedure for audit, review, validate, enhance, and extend tasks.
+
 ## AI contributor guidance
 
 - [`AGENTS.md`](AGENTS.md) - repository-wide agent operating contract

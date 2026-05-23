@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `CONTRIBUTING.md` covering scope, branch naming, the local-loop
+  recipe, the documentation-moves-with-code requirement, and the
+  security-sensitive-PR review path. The runbook remains the canonical
+  procedure; `CONTRIBUTING.md` is the entry point that links into it.
 - Maintenance runbook at `docs/runbook.md` covering audit, review,
   validate, enhance, and extend procedures, a prioritized backlog
   (capability, quality, ops, docs, security hardening), and a per-file
