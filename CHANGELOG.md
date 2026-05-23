@@ -15,12 +15,17 @@ All notable changes to this project are documented here. The format follows
   `relay-shell://ssh-config` (`{"path": "...", "aliases": [...]}` for the
   active ssh_config file). The data shape matches the `ssh_hosts` tool
   output so client renderers can be shared. Each read is audited as
-  tier 0 with `tool="resource:<name>"` so the operator still sees what
-  context the model pulled in (resource reads bypass `Relay.run` because
-  there is no work to admit / time out). Documented in `docs/tools.md`
-  and the README capability table. Closes B-004.
+  tier 0 with a STABLE `tool` field per resource
+  (`resource:inventory`, `resource:inventory_host`, `resource:ssh-config`) -
+  the host parameter for the templated read is carried in `args` so
+  redaction runs and tool-name cardinality stays bounded for downstream
+  audit consumers. Resource bodies are bounded by the same `max_output`
+  cap tools observe through `Relay.run`. The ssh-config alias list comes
+  from the raw ssh_config parse (inventory overrides do not suppress
+  aliases the file declares). Documented in `docs/tools.md` and the
+  README capability table. Closes B-004.
 - `GET /metrics` endpoint on the HTTP transport, in Prometheus text
-  exposition format. Five metric names:
+  exposition format. Four metric names:
   `relay_shell_tool_calls_total{tool,tier,mode,outcome}` (counter),
   `relay_shell_active_sessions`, `relay_shell_active_forwards`,
   `relay_shell_audit_degraded` (gauges, read live at scrape time).

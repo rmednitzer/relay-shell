@@ -1015,15 +1015,25 @@ def build_server(settings: Settings | None = None) -> FastMCP:
     # work to admit / tier / time out. Each read is still audited (tier 0,
     # tool name prefixed with "resource:") so the operator sees what context
     # the model is pulling in.
+    #
+    # The audit `tool` field is kept STABLE per resource (no user-controlled
+    # data interpolated): the host parameter for the templated resource is
+    # carried in `args` instead, so `redact_args` can scrub embedded secrets
+    # and tool-name cardinality stays bounded for downstream audit consumers.
 
-    def _audit_resource_read(name: str, body: str) -> None:
+    def _audit_resource_read(name: str, body: str, args: dict[str, Any] | None = None) -> None:
         app.audit.record(
             tool=f"resource:{name}",
-            args={},
+            args=redact_args(args or {}),
             output=body,
             exit_code=None,
             tier=0,
         )
+
+    # Bound every resource payload to the same cap tools observe via
+    # `Relay.run`. Without this, a huge inventory would produce arbitrarily
+    # large payloads (and audit-hashing work) in a single read.
+    _resource_cap = app.clamp_output(cfg.max_output)
 
     @mcp.resource(
         "relay-shell://inventory",
@@ -1032,12 +1042,15 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         description=(
             "Flat list of all hosts resolved from ~/.ssh/config and the optional "
             "RELAY_SHELL_INVENTORY file, as a JSON array of host specs. Same "
-            "data shape as the ssh_hosts tool."
+            "data shape as the ssh_hosts tool. Bodies are bounded by the same "
+            "max_output cap as tools; oversized responses get a [TRUNCATED ...] "
+            "marker appended, the same way tools do."
         ),
         mime_type="application/json",
     )
     def _resource_inventory() -> str:
         body = json.dumps([h.as_dict() for h in app.inventory.hosts()], default=str)
+        body = truncate(body, _resource_cap)
         _audit_resource_read("inventory", body)
         return body
 
@@ -1047,14 +1060,17 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         title="Single host spec",
         description=(
             "Resolved spec for one inventory entry (or a passthrough spec the "
-            "ssh layer would accept) as JSON."
+            "ssh layer would accept) as JSON. Audit records this read as "
+            'tool="resource:inventory_host" with the host in args (so redaction '
+            "runs and the tool-name cardinality stays bounded)."
         ),
         mime_type="application/json",
     )
     def _resource_inventory_host(host: str) -> str:
         spec = app.inventory.resolve(host).as_dict()
         body = json.dumps(spec, default=str)
-        _audit_resource_read(f"inventory/{host}", body)
+        body = truncate(body, _resource_cap)
+        _audit_resource_read("inventory_host", body, args={"host": host})
         return body
 
     @mcp.resource(
@@ -1063,17 +1079,19 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         title="SSH config metadata",
         description=(
             "Path to the active ssh_config and the sorted list of non-wildcard "
-            "Host aliases parsed from it, as JSON. Lets a client see what "
-            "ssh_config the server is consulting without reading the file."
+            "Host aliases declared in it, as JSON. Inventory overrides do not "
+            "suppress aliases - any name the active ssh_config declares appears "
+            "here, so a client gets an accurate view of what the file contains."
         ),
         mime_type="application/json",
     )
     def _resource_ssh_config() -> str:
         payload = {
             "path": app.inventory.ssh_config_file,
-            "aliases": sorted(h.name for h in app.inventory.hosts() if h.source == "ssh_config"),
+            "aliases": app.inventory.ssh_config_aliases(),
         }
         body = json.dumps(payload, default=str)
+        body = truncate(body, _resource_cap)
         _audit_resource_read("ssh-config", body)
         return body
 

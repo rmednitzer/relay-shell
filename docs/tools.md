@@ -138,19 +138,31 @@ Tier 0.
 
 Resources are read-only context the client can list and pull on its own
 initiative (the protocol-native counterpart to tools). Each read is
-audited as tier 0 with `tool="resource:<name>"` so the operator sees what
-context the model is pulling in even though resource reads do not go
-through `Relay.run`.
+audited as tier 0 so the operator sees what context the model is pulling
+in even though resource reads do not go through `Relay.run`.
 
-| URI                                     | mime               | meaning                                                       |
-|-----------------------------------------|--------------------|---------------------------------------------------------------|
-| `relay-shell://inventory`               | `application/json` | Flat JSON list of every host in the merged inventory.         |
-| `relay-shell://inventory/{host}`        | `application/json` | One host's resolved spec (passthrough spec for unknown alias).|
-| `relay-shell://ssh-config`              | `application/json` | `{"path": "...", "aliases": [...]}` for the active ssh_config.|
+| URI                                     | mime               | audit `tool`              | meaning                                                       |
+|-----------------------------------------|--------------------|---------------------------|---------------------------------------------------------------|
+| `relay-shell://inventory`               | `application/json` | `resource:inventory`      | Flat JSON list of every host in the merged inventory.         |
+| `relay-shell://inventory/{host}`        | `application/json` | `resource:inventory_host` | One host's resolved spec (passthrough for unknown alias).     |
+| `relay-shell://ssh-config`              | `application/json` | `resource:ssh-config`     | `{"path": "...", "aliases": [...]}` for the active ssh_config.|
+
+The audit `tool` field is **stable per resource** (no user-controlled
+data interpolated): for the templated read, the requested `host` lives
+in the audit `args` dict so `redact_args` can scrub embedded secrets
+(e.g. `user:password@...`) and the tool-name cardinality stays bounded
+for downstream audit consumers.
 
 A client that prefers resources to tools can list hosts the protocol-native
 way without invoking `ssh_hosts`. The data shape matches the `ssh_hosts`
-tool output so client code can share a renderer.
+tool output so client code can share a renderer. Bodies are bounded by the
+same `max_output` cap tools observe through `Relay.run`; an oversize
+response is truncated with a `[TRUNCATED ...]` marker the same way tools
+truncate.
+
+The `ssh-config` resource lists every alias the active ssh_config file
+declares, even if an entry in the inventory file overrides the same
+alias's spec - the resource describes the file, not the merged map.
 
 ## Interactive pattern
 

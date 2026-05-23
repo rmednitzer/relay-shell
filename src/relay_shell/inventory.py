@@ -131,18 +131,34 @@ class Inventory:
     ssh_config_path: str
     inventory_path: str
     _hosts: dict[str, HostSpec] = field(default_factory=dict)
+    # Raw ssh_config parse retained alongside the merged map so
+    # `ssh_config_aliases()` can report aliases that are present in
+    # the active ssh_config even when an inventory entry overrides them.
+    _ssh_config_hosts: dict[str, HostSpec] = field(default_factory=dict)
 
     def load(self) -> Inventory:
-        merged = _parse_ssh_config(_expand(self.ssh_config_path))
+        ssh_config_hosts = _parse_ssh_config(_expand(self.ssh_config_path))
+        merged = dict(ssh_config_hosts)
         if self.inventory_path:
             merged.update(_load_inventory_file(_expand(self.inventory_path)))
         self._hosts = merged
+        self._ssh_config_hosts = ssh_config_hosts
         return self
 
     @property
     def ssh_config_file(self) -> str | None:
         p = _expand(self.ssh_config_path)
         return str(p) if p.is_file() else None
+
+    def ssh_config_aliases(self) -> list[str]:
+        """Sorted aliases that appear in the active ssh_config file.
+
+        Unlike filtering ``hosts()`` by ``source == "ssh_config"``, this
+        method reports aliases that are *also* overridden by an inventory
+        entry. That makes it the right source for an ssh_config metadata
+        view (the file actually declares them, regardless of overrides).
+        """
+        return sorted(self._ssh_config_hosts.keys())
 
     def resolve(self, alias: str) -> HostSpec:
         """Return a known spec or a passthrough spec (asyncssh resolves it)."""

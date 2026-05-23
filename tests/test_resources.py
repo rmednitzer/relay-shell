@@ -7,9 +7,15 @@ Three are registered:
   - `relay-shell://inventory/{host}`    one host's resolved spec
   - `relay-shell://ssh-config`          ssh_config metadata (path + aliases)
 
-Each read is audited (tier 0, ``tool="resource:<name>"``) so the operator
-sees what context the model is pulling in even though resource reads do
-not flow through `Relay.run`.
+Each read is audited (tier 0). The audit `tool` field is STABLE per
+resource (no user-controlled data interpolated):
+
+  - ``resource:inventory``        for the flat list
+  - ``resource:inventory_host``   for the templated read (host in `args`)
+  - ``resource:ssh-config``       for the config metadata
+
+Resource reads do not flow through ``Relay.run`` - that path is for
+tool calls that need policy admission, timeouts, and exit codes.
 """
 
 from __future__ import annotations
@@ -118,14 +124,18 @@ async def test_inventory_host_resource_passthrough_unknown(tmp_path: Path) -> No
     assert spec["source"] == "explicit"
 
 
-async def test_inventory_host_resource_audited(tmp_path: Path) -> None:
+async def test_inventory_host_resource_audited_with_stable_tool_name(tmp_path: Path) -> None:
+    # The audit `tool` field is the STABLE name (no host interpolated);
+    # the host moves into `args` so redaction can run and tool-name
+    # cardinality stays bounded for audit consumers.
     cfg = _settings_with_inventory(tmp_path, {"x": {"hostname": "h"}})
     mcp = build_server(cfg)
     await mcp.read_resource("relay-shell://inventory/x")
     lines = _audit_lines(Path(cfg.audit_path))
-    matching = [e for e in lines if e["tool"] == "resource:inventory/x"]
+    matching = [e for e in lines if e["tool"] == "resource:inventory_host"]
     assert len(matching) == 1
     assert matching[0]["tier"] == 0
+    assert matching[0]["args"] == {"host": "x"}
 
 
 # --- resource://ssh-config --------------------------------------------------
@@ -180,3 +190,47 @@ async def test_ssh_config_resource_audited(tmp_path: Path) -> None:
     matching = [e for e in lines if e["tool"] == "resource:ssh-config"]
     assert len(matching) == 1
     assert matching[0]["tier"] == 0
+
+
+async def test_ssh_config_aliases_survive_inventory_override(tmp_path: Path) -> None:
+    # The ssh_config resource must report aliases that are declared in the
+    # active ssh_config file, even when an inventory entry overrides the
+    # spec for the same alias. Filtering merged hosts by source=="ssh_config"
+    # would silently drop these from the list - regression coverage.
+    cfg_file = tmp_path / "sshconfig"
+    cfg_file.write_text("Host shared\n  HostName 10.0.0.1\n")
+    inv_file = tmp_path / "inv.json"
+    inv_file.write_text(json.dumps({"shared": {"hostname": "10.99.99.99"}}))
+    cfg = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        policy_mode="open",
+        ssh_known_hosts="ignore",
+        ssh_connect_timeout=5,
+        ssh_keepalive=0,
+        ssh_config=str(cfg_file),
+        inventory=str(inv_file),
+        auth_state_dir=str(tmp_path / "oauth"),
+    )
+    mcp = build_server(cfg)
+    body = _read(await mcp.read_resource("relay-shell://ssh-config"))
+    payload = json.loads(body)
+    assert "shared" in payload["aliases"]
+
+
+# --- output cap ------------------------------------------------------------
+
+
+async def test_inventory_resource_is_bounded_by_max_output(tmp_path: Path) -> None:
+    # A pathologically large inventory must not produce an unbounded
+    # response: the resource applies the same `clamp_output(max_output)`
+    # cap that tools observe through `Relay.run`.
+    inventory = {f"host-{i:05d}": {"hostname": f"10.0.{i // 250}.{i % 250}"} for i in range(2000)}
+    cfg = _settings_with_inventory(tmp_path, inventory)
+    # Force a tiny cap so the truncation path fires deterministically.
+    cfg = cfg.model_copy(update={"max_output": 2048})
+    mcp = build_server(cfg)
+    body = _read(await mcp.read_resource("relay-shell://inventory"))
+    assert "[TRUNCATED" in body
+    # Output stays under the cap (plus the marker's small overhead).
+    assert len(body.encode("utf-8")) < 4096

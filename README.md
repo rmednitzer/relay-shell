@@ -71,8 +71,9 @@ centrally; failure paths never crash the transport. The reasoning layer sits
 | `audit_tail` | Return the last N audit records (read-only, Tier 0). |
 
 The HTTP transport also exposes `GET /metrics` (Prometheus text format):
-tool-call counter by `tool` / `tier` / `mode` / `outcome`, plus
-`active_sessions`, `active_forwards`, and `audit_degraded` gauges. See
+`relay_shell_tool_calls_total{tool,tier,mode,outcome}` (counter), plus
+`relay_shell_active_sessions`, `relay_shell_active_forwards`, and
+`relay_shell_audit_degraded` (gauges). See
 [`docs/deployment.md`](docs/deployment.md) §9a.
 
 ### Resources
