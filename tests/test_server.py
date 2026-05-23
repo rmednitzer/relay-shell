@@ -20,6 +20,7 @@ _EXPECTED = {
     "ssh_forward_list",
     "ssh_forward_close",
     "ssh_check",
+    "ssh_fanout",
     "ssh_keyscan",
     "ssh_hosts",
     "server_info",
@@ -32,7 +33,7 @@ async def test_all_tools_registered(settings: Settings) -> None:
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
     assert names == _EXPECTED
-    assert len(names) == 20
+    assert len(names) == 21
 
 
 async def test_every_tool_has_description(settings: Settings) -> None:

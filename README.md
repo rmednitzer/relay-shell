@@ -49,6 +49,7 @@ centrally; failure paths never crash the transport. The reasoning layer sits
 | `ssh_forward` | Local (`L`), remote (`R`), or dynamic SOCKS (`D`) forwarding. |
 | `ssh_forward_list` / `ssh_forward_close` | Manage active forwards. |
 | `ssh_check` | Connectivity probe across the inventory or a host list. |
+| `ssh_fanout` | Run a command in parallel across hosts; per-host exit codes in one JSON. |
 | `ssh_keyscan` | Fetch host public keys via `ssh-keyscan` (pre-populate `known_hosts` for `strict`). |
 | `ssh_hosts` | Resolved host inventory (`~/.ssh/config` + inventory file). |
 
