@@ -32,8 +32,12 @@ A shipper that meets the project's audit posture must:
    truncation. Records are already bounded by the relay
    (`output_sha256` + `output_len`, never the body).
 3. **Survive log rotation.** The shipper must reopen the file after
-   `logrotate` moves it. All three examples are configured to track
-   by inode, not name.
+   `logrotate` moves it. Vector and Fluent Bit use inode tracking
+   (the source of truth across a rotation); the `tail -F`-based
+   journal forwarder follows by name and reopens on rotation, which
+   is acceptable here because the bundled `logrotate` config uses
+   `create` (the new file is opened immediately, with no records
+   buffered past the close of the old fd).
 4. **Be observable.** Drops, retries, and back-pressure events must
    reach the operator. If the shipper silently buffers for hours,
    you have lost the property you were paying for.
@@ -41,10 +45,22 @@ A shipper that meets the project's audit posture must:
    for transport; the listener-side configuration is out of scope
    (it is your SIEM / log-aggregator's responsibility).
 
-The relay service account does not need to run the shipper. Run the
-shipper as `root` or its own service user with read access to
-`/var/log/relay-shell/`. The shipper writes nowhere under the relay
-state directory.
+The relay's installer creates `/var/log/relay-shell/audit.jsonl` as
+`0600 relay-shell:relay-shell` (see `deploy/install.sh` and
+`deploy/logrotate/relay-shell`). The shipper needs read access. Two
+documented approaches:
+
+- **Run the shipper as the `relay-shell` user.** The installer-created
+  service account already has read access; just point the shipper's
+  systemd unit at it. Used in the recipes below.
+- **POSIX ACL.** Keep the shipper as its own user and grant explicit
+  read with `setfacl -m u:<shipper>:r /var/log/relay-shell/audit.jsonl`
+  plus a `setfacl -m u:<shipper>:rx /var/log/relay-shell`. Re-apply
+  in `logrotate`'s `postrotate` script if you choose this path.
+
+Do not weaken the file mode to grant group read; the `0600` default
+is part of the on-host posture. The shipper writes nowhere under the
+relay state directory in either approach.
 
 ---
 
@@ -57,10 +73,24 @@ of the box.
 
 ### Install
 
+Use the official Timber-maintained apt repository. Avoid the
+`curl ... | bash` one-liner; the explicit-keyring path below is
+auditable and matches the project's security posture.
+
 ```bash
-# Debian / Ubuntu, from the official Timber-maintained repo
-curl -1sLf https://repositories.timber.io/public/vector/cfg/setup/bash.deb.sh \
-  | sudo -E bash
+# 1. Fetch and verify the signing key. The fingerprint is published
+#    at https://vector.dev/download/ - confirm it before importing.
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://repositories.timber.io/public/vector/gpg.3543DA2B.key \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/vector.gpg
+sudo chmod 0644 /etc/apt/keyrings/vector.gpg
+
+# 2. Add the apt source pinned to the keyring.
+echo "deb [signed-by=/etc/apt/keyrings/vector.gpg] \
+  https://repositories.timber.io/public/vector/deb/ubuntu $(lsb_release -cs) main" \
+  | sudo tee /etc/apt/sources.list.d/vector.list
+
+# 3. Install.
 sudo apt-get update && sudo apt-get install -y vector
 ```
 
@@ -133,13 +163,29 @@ sinks:
     address: 127.0.0.1:9598
 ```
 
-### Permissions
+### Run as the relay-shell user
+
+Drop in a systemd unit override so Vector reads the audit file as
+its owner:
 
 ```bash
-sudo install -d -m 0755 -o vector -g vector /var/lib/vector
-sudo usermod -a -G adm vector              # grants read on /var/log/relay-shell if the dir is 0750 root:adm
+sudo mkdir -p /etc/systemd/system/vector.service.d
+sudo tee /etc/systemd/system/vector.service.d/override.conf >/dev/null <<'EOF'
+[Service]
+User=relay-shell
+Group=relay-shell
+EOF
+
+# data_dir must be writable by relay-shell:
+sudo install -d -m 0755 -o relay-shell -g relay-shell /var/lib/vector
+
+sudo systemctl daemon-reload
 sudo systemctl enable --now vector
 ```
+
+If the operator prefers Vector to run as its own user (the upstream
+default), grant read explicitly via POSIX ACL — see §0's
+"common requirements" section.
 
 ### Verify
 
@@ -149,9 +195,9 @@ sudo systemctl status vector --no-pager
 sudo journalctl -u vector -n 100 --no-pager | grep -iE "error|warn" || true
 
 # Drive one tool call through the relay and confirm it lands at the
-# remote side. From the relay host:
-RELAY_SHELL_AUDIT_PATH=/var/log/relay-shell/audit.jsonl \
-  python -c "
+# remote side. From the relay host (Settings(audit_path=...) wins
+# over the env var, so pass the path explicitly here):
+python -c "
 import asyncio
 from relay_shell.config import Settings
 from relay_shell.server import build_server
@@ -166,12 +212,14 @@ curl -s http://127.0.0.1:9598/metrics | grep -E '^vector_(events|errors|buffer)'
 ### Troubleshoot
 
 - **"permission denied" on the audit file.** Check
-  `ls -l /var/log/relay-shell/audit.jsonl` - the file is created
-  `0640 relay-shell:relay-shell` by the service. Grant the shipper
-  group read (`adm` is common) instead of weakening file mode.
+  `ls -l /var/log/relay-shell/audit.jsonl` — the file is created
+  `0600 relay-shell:relay-shell` by `deploy/install.sh` and the
+  bundled `logrotate` config preserves that mode. Use the systemd
+  drop-in above (run Vector as `relay-shell`) or grant a POSIX ACL
+  for the shipper's user. Do not chmod the file.
 - **Records duplicated after restart.** Confirm `data_dir` is
-  persistent and writable by the `vector` user; the checkpoint lives
-  there.
+  persistent and writable by the user running Vector (`relay-shell`
+  in this recipe); the checkpoint lives there.
 - **Records lost after rotation.** `logrotate` should be the bundled
   config (`deploy/logrotate/relay-shell`), which uses `create` so
   the inode changes only at rotate time. Vector's
@@ -189,9 +237,25 @@ pipeline.
 
 ### Install
 
+Use the official Fluent Bit apt repository directly. Avoid the
+`curl ... | sh` one-liner; the explicit path below is auditable.
+
 ```bash
-# Debian / Ubuntu, from the official Fluent Bit apt repo
-curl -fsSL https://fluentbit.io/install.sh | sh
+# 1. Fetch and verify the signing key. The fingerprint is published
+#    at https://docs.fluentbit.io/manual/installation/linux/ubuntu -
+#    confirm it before importing.
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://packages.fluentbit.io/fluentbit.key \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/fluentbit.gpg
+sudo chmod 0644 /etc/apt/keyrings/fluentbit.gpg
+
+# 2. Add the apt source pinned to the keyring.
+echo "deb [signed-by=/etc/apt/keyrings/fluentbit.gpg] \
+  https://packages.fluentbit.io/ubuntu/$(lsb_release -cs) $(lsb_release -cs) main" \
+  | sudo tee /etc/apt/sources.list.d/fluent-bit.list
+
+# 3. Install.
+sudo apt-get update && sudo apt-get install -y fluent-bit
 ```
 
 ### Config (`/etc/fluent-bit/fluent-bit.conf`)
@@ -260,13 +324,28 @@ And the parser (`/etc/fluent-bit/parsers.conf`):
     Time_Keep   On
 ```
 
-### Permissions
+### Run as the relay-shell user
+
+Same pattern as the Vector recipe: a systemd drop-in moves Fluent Bit
+under the same uid that owns the audit file.
 
 ```bash
-sudo usermod -a -G adm fluent-bit
-sudo install -d -m 0755 -o fluent-bit -g fluent-bit /var/lib/fluent-bit/storage
+sudo mkdir -p /etc/systemd/system/fluent-bit.service.d
+sudo tee /etc/systemd/system/fluent-bit.service.d/override.conf >/dev/null <<'EOF'
+[Service]
+User=relay-shell
+Group=relay-shell
+EOF
+
+# Storage dir must be writable by relay-shell:
+sudo install -d -m 0755 -o relay-shell -g relay-shell /var/lib/fluent-bit/storage
+
+sudo systemctl daemon-reload
 sudo systemctl enable --now fluent-bit
 ```
+
+POSIX ACL is the alternative if Fluent Bit must run as its own user
+(see §0).
 
 ### Verify
 
@@ -299,11 +378,20 @@ Use this when the relay host already runs `systemd-journald` and the
 ops org standard is "journal everything, ship the journal". This is
 the lowest-friction shipper if you do not want a third-party agent on
 the host, but it requires that the audit file be **also** delivered
-to the journal (it is not, by default). The recipe below uses a tiny
-forwarder unit to feed the JSONL into the journal as structured
-fields; from there, `systemd-journal-remote` ships the journal over
-TLS to a collector that runs `systemd-journal-upload`'s peer
-(`systemd-journal-remote.service` on the collector side).
+to the journal (it is not, by default). The recipe below has two
+parts:
+
+1. A tiny forwarder unit `tail -F`s the audit file and pipes each
+   line to journald. Each line is stored verbatim as the journal
+   record's `MESSAGE` field — journald does **not** parse JSON into
+   structured fields automatically; the JSON travels as a string and
+   the receiving SIEM is responsible for re-parsing it. Pair with a
+   `SYSLOG_IDENTIFIER` so the records are easy to query.
+2. `systemd-journal-upload.service` runs on the relay host and
+   pushes journal entries over HTTPS to a collector. The collector
+   side runs `systemd-journal-remote.service` to receive — the two
+   service names are easy to confuse, but they sit on different
+   hosts.
 
 ### Forward the audit log into the journal
 
@@ -317,15 +405,17 @@ Wants=relay-shell.service
 
 [Service]
 Type=simple
-# tail -F follows rotation by name. SyslogIdentifier sets a stable
-# tag in the journal; structured JSON inside MESSAGE is preserved by
-# journald and indexed by the remote receiver.
+# tail -F follows rotation by name and reopens when logrotate's
+# `create` directive lands a new file. SyslogIdentifier sets a stable
+# tag in the journal; each MESSAGE is the original JSONL line verbatim
+# - the receiving SIEM is responsible for JSON-parsing it.
 ExecStart=/bin/sh -c 'exec /usr/bin/tail -n0 -F /var/log/relay-shell/audit.jsonl'
 StandardOutput=journal
 SyslogIdentifier=relay-shell-audit
-# Run as a dedicated unprivileged reader, not as root.
-DynamicUser=yes
-SupplementaryGroups=adm
+# Run as the audit-file owner so the 0600 mode is respected without
+# an ACL. The relay-shell account is unprivileged.
+User=relay-shell
+Group=relay-shell
 Restart=on-failure
 RestartSec=5s
 
