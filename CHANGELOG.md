@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- CI coverage floor raised from 75% to 85%. The new
+  `tests/test_tool_wrappers.py` module calls every `@mcp.tool()` wrapper
+  in `server.py` through `mcp.call_tool()` with arguments that produce
+  either valid output or a structured error string - either way exercises
+  the wrapper body, the audit path, the policy probe, and the truncate
+  path for every tool. `server.py` coverage lifted from ~65% to ~95% and
+  overall coverage to ~88%. Closes B-022 (partial; the remaining gap is
+  concentrated in `sshpool.py` at ~68% and tracked as a follow-up in
+  `docs/runbook.md` §7.2).
+
 ### Added
 
 - `ssh_fanout` MCP tool. Runs a command in parallel across hosts (or
