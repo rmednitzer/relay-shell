@@ -118,9 +118,11 @@ branch = false
 source = ["src/relay_shell", "*/src/relay_shell"]
 
 [tool.coverage.report]
-# Floor protects against regression; raise after sshpool/sessions/server tests
-# climb (tracked as a follow-up in `docs/runbook.md` §7.2). Current measured
-# baseline with subprocess collection enabled: ~78%.
-fail_under = 75
+# Floor protects against regression; raised from 75% to 85% after the
+# server.py wrapper tests (`tests/test_tool_wrappers.py`) lifted overall
+# coverage to ~88% (B-022). The remaining gap is mostly `sshpool.py` at
+# ~68% - the in-process asyncssh fixture stops at the dispatcher edge.
+# Current measured baseline with subprocess collection enabled: ~88%.
+fail_under = 85
 show_missing = true
 skip_empty = true

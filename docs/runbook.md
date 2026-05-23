@@ -372,7 +372,7 @@ export COVERAGE_PROCESS_START=$(pwd)/pyproject.toml
 coverage erase
 coverage run -m pytest -q
 coverage combine
-coverage report           # uses fail_under=75 from [tool.coverage.report]
+coverage report           # uses fail_under=85 from [tool.coverage.report]
 coverage html && xdg-open htmlcov/index.html
 ```
 
@@ -625,13 +625,13 @@ commitment.
   trusted publishing (OIDC, no long-lived token). Gate on tag signature.
 - **B-010 (P3)** Add a `hypothesis`-based fuzz suite for `redact` and
   `classify`; run nightly only (separate workflow with `schedule:`).
-- **B-022 (P2)** Raise the CI coverage floor from 75% (current) to 85%.
-  The gap is concentrated in `sshpool.py` (65%; SSH non-happy paths,
-  forwarding error handling), `server.py` wrapper bodies (53%; most
-  tools only run end-to-end through the stdio subprocess), and
-  `sessions.py` (79%; PTY edge cases). One PR per module is safer than
-  a single broad sweep, especially for `sshpool.py` which is
-  security-sensitive when its error paths change.
+- **B-022 (P3)** Raise the CI coverage floor from 85% (current) to 90%.
+  After `tests/test_tool_wrappers.py` lifted `server.py` to 95% and
+  overall to ~88%, the remaining gap is `sshpool.py` (~68%; SSH
+  non-happy paths, forwarding error handling). One PR adding fault
+  injection around the asyncssh dispatcher would close most of it;
+  treat it as security-sensitive because those error paths are what
+  the operator sees when a remote host misbehaves.
 
 ### 7.3 Operations + observability
 
