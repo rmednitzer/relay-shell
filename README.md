@@ -83,6 +83,9 @@ relay-shell
 
 # HTTP transport (streamable-http on 127.0.0.1:8080)
 RELAY_SHELL_TRANSPORT=http relay-shell
+
+# Validate config without starting the transport (useful for image bakes)
+relay-shell --check-config
 ```
 
 Register with an MCP client (stdio):
