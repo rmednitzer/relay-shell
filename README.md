@@ -151,6 +151,8 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for scope, branch naming,
 the local development loop, and how security-sensitive PRs are
 reviewed. [`docs/runbook.md`](docs/runbook.md) is the canonical
 procedure for audit, review, validate, enhance, and extend tasks.
+Participation is governed by the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## AI contributor guidance
 

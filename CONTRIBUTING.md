@@ -4,6 +4,9 @@ Thanks for the interest. `relay-shell` is a small, security-sensitive
 project; the rules here exist to keep it that way without making
 contribution painful.
 
+Participation is governed by the
+[Code of Conduct](CODE_OF_CONDUCT.md) — Contributor Covenant 2.1.
+
 Most of the procedural detail lives in [`docs/runbook.md`](docs/runbook.md).
 This document is the entry point: scope, branch naming, the local
 loop, the docs-with-code requirement, and how security-sensitive PRs
