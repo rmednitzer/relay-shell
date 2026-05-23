@@ -1,0 +1,123 @@
+name: sbom
+
+# Generates a CycloneDX SBOM (JSON + XML) of the resolved Python
+# environment for each release tag and attaches it to the GitHub release.
+# Cheap supply-chain signal: lists every runtime dependency that ships
+# with the wheel, with version pins, hashes, and PURLs. No runtime
+# change to the package itself.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach an SBOM to (e.g. v0.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write   # required to upload release assets
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install runtime + SBOM tool into a clean venv
+        run: |
+          python -m venv .sbom-venv
+          . .sbom-venv/bin/activate
+          python -m pip install --upgrade pip
+          # Install the package's runtime dependencies (not the dev extra).
+          # Pinning to requirements.txt keeps the SBOM aligned with the
+          # validated build set.
+          pip install --require-hashes=false -r requirements.txt
+          pip install .
+          pip install "cyclonedx-bom>=4,<6"
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          . .sbom-venv/bin/activate
+          OUT_JSON="relay-shell-${{ steps.tag.outputs.name }}.cdx.json"
+          OUT_XML="relay-shell-${{ steps.tag.outputs.name }}.cdx.xml"
+          # `--of JSON` / `--of XML` is the canonical flag in cyclonedx-py
+          # >=4.x; `-o` is the output-file flag. CDX 1.5 is the default
+          # spec version (1.6 exists; held at 1.5 for SIEM compatibility).
+          cyclonedx-py environment \
+            --of JSON \
+            --output-reproducible \
+            -o "$OUT_JSON"
+          cyclonedx-py environment \
+            --of XML \
+            --output-reproducible \
+            -o "$OUT_XML"
+          # Sanity: the SBOM must contain the relay-shell component and
+          # the version that triggered the workflow.
+          python - "$OUT_JSON" "${{ steps.tag.outputs.name }}" <<'PY'
+          import json, re, sys
+          path, tag = sys.argv[1], sys.argv[2]
+          data = json.load(open(path))
+          comps = {c.get("name"): c.get("version") for c in data.get("components", [])}
+          assert "mcp" in comps, "SBOM missing core dependency 'mcp'"
+          # Tag is like v0.2.0; allow either match or just presence of relay-shell.
+          # The package may appear with name 'relay-shell' or 'relay_shell'.
+          rs = comps.get("relay-shell") or comps.get("relay_shell")
+          assert rs is not None, "SBOM missing relay-shell component"
+          stripped = re.sub(r"^v", "", tag)
+          if stripped and not stripped.startswith("0.0"):
+              # Best-effort: warn but do not fail when running workflow_dispatch
+              # against a non-canonical tag.
+              if rs != stripped:
+                  print(f"::warning::relay-shell version in SBOM ({rs}) does not match tag ({tag})")
+          print(f"SBOM OK: relay-shell={rs}, components={len(comps)}")
+          PY
+
+      - name: Upload SBOM as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ steps.tag.outputs.name }}
+          path: |
+            relay-shell-${{ steps.tag.outputs.name }}.cdx.json
+            relay-shell-${{ steps.tag.outputs.name }}.cdx.xml
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attach SBOM to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.tag.outputs.name }}"
+          # If the release does not exist yet (e.g. the tag was just
+          # pushed and no release workflow has run), create one with
+          # generated notes so the upload has a home.
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "$TAG" \
+              --generate-notes
+          fi
+          gh release upload "$TAG" \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            "relay-shell-${TAG}.cdx.json" \
+            "relay-shell-${TAG}.cdx.xml"

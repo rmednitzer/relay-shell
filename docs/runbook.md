@@ -424,7 +424,7 @@ curl -s http://127.0.0.1:8080/.well-known/oauth-protected-resource \
 kill $SERVER_PID
 ```
 
-### 4.7 The release gate (no automation today - see B-006)
+### 4.7 The release gate
 
 Before tagging a release:
 
@@ -435,6 +435,12 @@ Before tagging a release:
       installs cleanly into a fresh venv and exposes the `relay-shell` CLI.
 - [ ] ADRs that informed the release are linked from the changelog entry.
 - [ ] `git tag -s vX.Y.Z` (signed) and `git push --tags`.
+
+When the tag lands, `.github/workflows/sbom.yml` generates a CycloneDX
+SBOM (JSON + XML, CDX spec 1.5) for the resolved environment and
+attaches both files to the GitHub release. PyPI publish automation
+(B-005) is still open; tag-driven trusted publishing will land once
+the PyPI trusted-publisher claim is configured on the project side.
 
 ---
 
@@ -615,9 +621,6 @@ commitment.
 - **B-005 (P1)** Add a `release.yml` workflow that on a `v*` tag builds
   the wheel/sdist, runs the full test suite, and publishes to PyPI via
   trusted publishing (OIDC, no long-lived token). Gate on tag signature.
-- **B-006 (P1)** Add an `sbom.yml` workflow generating a CycloneDX SBOM
-  per release; attach it to the GitHub release assets. Cheap supply-chain
-  signal, no runtime change.
 - **B-008 (P2)** Add a `pre-commit` config (`ruff`, `ruff format`,
   `mypy --strict`, a forbidden-imports check that fails if anything
   imports `requests`/`urllib3` synchronously). Reduce CI round-trips.

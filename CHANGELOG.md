@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `.github/workflows/sbom.yml` generates a CycloneDX SBOM (JSON + XML,
+  CDX spec 1.5) of the resolved Python environment on every `v*` tag
+  push and attaches both files to the GitHub release. Cheap
+  supply-chain signal; no runtime change. A `workflow_dispatch` input
+  lets the workflow attach an SBOM to an existing tag after the fact.
 - `docs/audit-shipper.md` with one worked example each for Vector,
   Fluent Bit, and `journalctl` → `systemd-journal-remote`. Cross-linked
   from `SECURITY.md` and `docs/deployment.md` §6 so the "ship the log
