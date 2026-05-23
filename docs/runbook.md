@@ -629,8 +629,6 @@ commitment.
 
 - **B-015 (P1)** Add `CONTRIBUTING.md` (scope, branch naming, how to run
   the local loop, how a security-sensitive PR gets extra review).
-- **B-016 (P1)** Add `.github/ISSUE_TEMPLATE/{bug,feature,security}.md`
-  and a `PULL_REQUEST_TEMPLATE.md` enforcing the section 3.1 checklist.
 - **B-017 (P2)** Add `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
 - **B-018 (P2)** Replace the loose "see ADR XYZ" prose with an
   `docs/adr/README.md` index that lists every ADR, its status, and the
@@ -798,10 +796,21 @@ by the same checklist.
 - `CODE_OF_CONDUCT.md` (B-017)
 - `docs/adr/README.md` (B-018)
 - `docs/audit-shipper.md` (B-011)
-- `.github/ISSUE_TEMPLATE/*.md` and `.github/PULL_REQUEST_TEMPLATE.md` (B-016)
 
 These are queued in the backlog, not created in the same PR as this
 runbook, so the runbook does not block on them.
+
+### 8.15 `.github/PULL_REQUEST_TEMPLATE.md` and `.github/ISSUE_TEMPLATE/*.md`
+
+- Keep: the section 3.1 cross-reference checklist in the PR template,
+  and the security-sensitive-diff confirmations from section 3.3. Both
+  the bug and the security issue templates point to `SECURITY.md` for
+  the disclosure process so the trust-boundary text has one home.
+- Add: a row to the PR-template "type of change" list whenever a new
+  category of change becomes routine (e.g. new transport, new auth
+  provider) - keep the list short or it stops being read.
+- Cross-checks: if section 3.1 or 3.3 of this runbook changes, mirror
+  the change in `.github/PULL_REQUEST_TEMPLATE.md`.
 
 ---
 
