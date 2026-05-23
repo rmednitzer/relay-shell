@@ -74,6 +74,17 @@ List active forwards / close one by id. Tier 1.
 Probe connectivity. `hosts` is a comma/space list, or empty for the whole
 inventory. Returns `host: ok | UNREACHABLE` per host. Tier 0.
 
+### `ssh_fanout`
+Run `command` in parallel across `hosts` (comma/space list, or empty for
+the whole inventory). Returns one JSON object with per-host
+`exit_code` and (truncated) `output`. `concurrency` bounds how many SSH
+connections run at once (clamped to `[1, 32]`, default 8); the host
+list is capped at 100 per call to bound the outbound burst. Tier
+classification reads `command` like a regular `ssh_exec`: `ssh_fanout
+rm -rf /` is still Tier 3, `ssh_fanout systemctl restart nginx` is
+Tier 2, and the deny list and `guarded`/`readonly` modes see the same
+probe text as a single-host call would.
+
 ### `ssh_hosts`
 Resolved inventory (`ssh_config` + JSON inventory). Tier 0.
 

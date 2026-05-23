@@ -43,6 +43,13 @@ __all__ = ["Relay", "build_server"]
 Work = Callable[[], Awaitable[tuple[str, int | None]]]
 _SUDO_SEARCH_PATHS = (Path("/usr/bin/sudo"), Path("/bin/sudo"), Path("/usr/local/bin/sudo"))
 
+# ssh_fanout: bound the per-call host count. A real production fleet
+# fan-out is almost always under this limit; raise if the use case
+# shows up. Without the cap a single tool call could open hundreds of
+# SSH connections (each with its own credential negotiation and remote
+# sshd auth log entry), turning the tool into a noisy sweep surface.
+_SSH_FANOUT_MAX_HOSTS = 100
+
 
 def _find_sudo_binary() -> str:
     """Return an executable sudo path from well-known locations, or ``""``.
@@ -637,6 +644,100 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         )
 
     @mcp.tool()
+    async def ssh_fanout(
+        command: str,
+        hosts: str = "",
+        timeout: int = 30,
+        concurrency: int = 8,
+        ctx: Context | None = None,
+    ) -> str:
+        """Run ``command`` in parallel across hosts; per-host exit codes in one JSON.
+
+        ``hosts`` is a comma/space-separated list, or empty to fan out across
+        every entry in the resolved inventory. ``concurrency`` bounds how
+        many SSH connections run at once (clamped to ``[1, 32]``). Tier is
+        classified from ``command`` like a regular ``ssh_exec`` so the deny
+        list and ``guarded``/``readonly`` modes see the same probe text;
+        ``ssh_fanout rm -rf /`` is still Tier 3 and still refused.
+        """
+        # Policy text is the command itself so the existing tier
+        # heuristics fire identically to ssh_exec. Construct once,
+        # outside _work, so app.run() sees it before admitting.
+        policy_text = command
+
+        async def _work() -> tuple[str, int | None]:
+            names = (
+                [h for h in hosts.replace(",", " ").split() if h]
+                if hosts.strip()
+                else [h.name for h in app.inventory.hosts()]
+            )
+            if not names:
+                return ("[no hosts configured; pass hosts= or add an inventory]", None)
+            if len(names) > _SSH_FANOUT_MAX_HOSTS:
+                return (
+                    f"[ERROR: {len(names)} hosts exceeds the per-call cap of "
+                    f"{_SSH_FANOUT_MAX_HOSTS}; split into smaller batches]",
+                    None,
+                )
+            tmo = app.clamp_timeout(timeout)
+            conc = clamp(concurrency, 1, 32)
+            sem = asyncio.Semaphore(conc)
+            # Per-host output budget so the aggregate respects the
+            # configured max_output. Leave headroom for the JSON
+            # envelope; floor at 1 KiB so individual results are
+            # never collapsed to nothing.
+            agg_budget = app.clamp_output(cfg.max_output)
+            per_host_budget = max(1024, (agg_budget // max(len(names), 1)) - 256)
+
+            async def _run_one(name: str) -> dict[str, Any]:
+                ck = {
+                    "user": "",
+                    "port": 0,
+                    "key_path": "",
+                    "known_hosts": "",
+                    "jump": "",
+                    "connect_timeout": tmo,
+                }
+                async with sem:
+                    try:
+                        out, code = await app.ssh.run(name, command, timeout=tmo, connect_kwargs=ck)
+                        return {
+                            "host": name,
+                            "exit_code": code,
+                            "output": truncate(out, per_host_budget),
+                        }
+                    except Exception as exc:  # noqa: BLE001
+                        return {
+                            "host": name,
+                            "exit_code": None,
+                            "output": f"[UNREACHABLE: {exc.__class__.__name__}: {exc}]",
+                        }
+
+            results = await asyncio.gather(*(_run_one(n) for n in names))
+            payload = {
+                "command": command,
+                "concurrency": conc,
+                "timeout": tmo,
+                "host_count": len(names),
+                "results": results,
+            }
+            return (json.dumps(payload, indent=2, default=str), None)
+
+        return await app.run(
+            tool="ssh_fanout",
+            ctx=ctx,
+            audit_args={
+                "command": command,
+                "hosts": hosts or "inventory",
+                "timeout": timeout,
+                "concurrency": concurrency,
+            },
+            policy_text=policy_text,
+            max_output=app.clamp_output(cfg.max_output),
+            work=_work,
+        )
+
+    @mcp.tool()
     async def ssh_hosts(ctx: Context | None = None) -> str:
         """Show the resolved host inventory (ssh_config + inventory file)."""
 
@@ -732,7 +833,7 @@ relay-shell - shell and SSH operations.
 
 Local: shell_exec (one-shot), shell_script (multi-line), shell_spawn (PTY).
 SSH:   ssh_exec, ssh_spawn, ssh_upload/ssh_download, ssh_forward(/list/close),
-       ssh_check, ssh_hosts.
+       ssh_check, ssh_hosts, ssh_fanout (parallel exec across a host list).
 PTY sessions (local or ssh) are driven by session_send / session_recv /
 session_resize / session_kill / session_list.
 Diagnostics: server_info reports limits and policy mode; audit_tail

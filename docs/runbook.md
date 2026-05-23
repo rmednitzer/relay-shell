@@ -617,10 +617,6 @@ commitment.
 - **B-001 (P2)** Add an `ssh_keyscan` tool for pre-populating
   `~/.ssh/known_hosts` on a service account that runs `strict`. Today the
   operator must shell into the box once with `accept-new` to seed it.
-- **B-002 (P2)** Add `ssh_fanout` for parallel `ssh_exec` across a host
-  list (today `ssh_check` is the only parallel-ish path, and it only
-  probes connectivity). Bound concurrency, surface per-host exit codes
-  in a single response. Tier 1 or 2 depending on the command.
 - **B-004 (P3)** Expose MCP **resources** (not just tools) for
   `~/.ssh/config` and inventory views, so clients that prefer resources
   to tools can list hosts the protocol-native way.

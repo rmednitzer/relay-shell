@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `ssh_fanout` MCP tool. Runs a command in parallel across hosts (or
+  the whole inventory) with bounded concurrency (default 8, clamped
+  to `[1, 32]`) and returns one JSON object with per-host `exit_code`
+  and truncated `output`. The host list is capped at 100 per call to
+  bound the outbound SSH burst. Tier classification reads `command`
+  via `policy_text` like a regular `ssh_exec`, so the deny list and
+  `guarded`/`readonly` modes see the same probe text - `ssh_fanout
+  rm -rf /` is still Tier 3 and still refused. Closes B-002.
 - `audit_tail` MCP tool (Tier 0, read-only). Returns the last N
   records from the audit log as JSONL, oldest first. `lines` defaults
   to 50 and is clamped to `[1, 1000]`. Opens a fresh read-only fd so
