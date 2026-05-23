@@ -19,95 +19,31 @@ MySQL-family gate avoids over-redacting unrelated arguments while still
 covering the common ``mysql -psecret`` shape. Operators putting DB
 passwords on the command line should still prefer ``--password=...``,
 the interactive ``-p`` (no value), or ``~/.my.cnf`` instead.
+
+The compiled regex tables live in :mod:`relay_shell.patterns` so a security
+reviewer can audit "added a pattern" as a one-file diff.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from . import patterns
+
 __all__ = ["redact", "redact_args"]
-
-_PLACEHOLDER = "[REDACTED]"
-
-# Ordered, conservative patterns. Prefer structure-preserving replacements (keep
-# the non-secret prefix) when feasible; otherwise collapse the matched region to
-# the placeholder.
-_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    # Authorization / Proxy-Authorization header value
-    (
-        re.compile(r"(?i)\b(?P<prefix>(?:proxy-)?authorization\s*[:=]\s*)\S+"),
-        r"\g<prefix>[REDACTED]",
-    ),
-    # Bearer <token>
-    (
-        re.compile(r"(?i)\b(?P<prefix>bearer\s+)[A-Za-z0-9._\-]+"),
-        r"\g<prefix>[REDACTED]",
-    ),
-    # token=... / api[_-]?key=... / password: ...
-    (
-        re.compile(
-            r"(?i)\b(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*)\S+"
-        ),
-        r"\g<prefix>[REDACTED]",
-    ),
-    # CLI-style flags: ``--password value``, ``--token=value``,
-    # ``--api-key "two words"``, ``--password top\ secret``. See the module
-    # docstring for scope and the reasoning around interactive flags.
-    (
-        re.compile(
-            r"""(?ix)
-            (?P<prefix>
-                --?(?:password|passwd|pwd|secret|token|api[_-]?key)
-                [=\ \t]+
-            )
-            (?:
-                "(?:[^"\\]|\\.)*"        # double-quoted, escape-aware
-              | '(?:[^'\\]|\\.)*'        # single-quoted, escape-aware
-              | (?:-(?!-)|(?!--))(?:\\.|\S)+
-                                        # bare value, treating \\<char> as one unit;
-                                        # allow single-dash-prefixed secrets (-abc)
-                                        # but still reject next long option (--host)
-            )
-            """,
-        ),
-        r"\g<prefix>[REDACTED]",
-    ),
-)
-
-_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # PEM / OpenSSH private key blocks
-    re.compile(
-        r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
-        re.DOTALL,
-    ),
-    # Common provider token shapes
-    re.compile(r"\bgith(?:ub)?_pat_[A-Za-z0-9_]+"),
-    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
-    re.compile(r"\bsk-[A-Za-z0-9]{16,}"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
-)
-
-# URL-embedded credentials (``user:pass@host``) need a structure-preserving
-# replacement; everything else collapses to the placeholder.
-_URL_CREDS = re.compile(r"://[^/\s:@]+:[^/\s:@]+@")
-
-# Short-form ``-p<value>`` is overloaded across many CLIs, so redact it only
-# when a MySQL-family command appears in the same argument string.
-_MYSQL_FAMILY_CLI = re.compile(r"\b(?:mysql\w*|mariadb\w*|mycli)\b", re.IGNORECASE)
-_MYSQL_COMPACT_PASSWORD = re.compile(r"(?<![A-Za-z0-9-])(-p)[^\s=-]\S*")
 
 
 def redact(text: str) -> str:
     """Replace secret-looking spans in ``text`` with a placeholder."""
-    out = _URL_CREDS.sub("://[REDACTED]@", text)
-    for pat, repl in _PREFIX_PATTERNS:
+    out = patterns.URL_CREDS_PATTERN.sub("://[REDACTED]@", text)
+    for pat, repl in patterns.REDACTION_PREFIX_PATTERNS:
         out = pat.sub(repl, out)
-    for pat in _PATTERNS:
-        out = pat.sub(_PLACEHOLDER, out)
-    if _MYSQL_FAMILY_CLI.search(out):
-        out = _MYSQL_COMPACT_PASSWORD.sub(lambda m: f"{m.group(1)}{_PLACEHOLDER}", out)
+    for pat in patterns.REDACTION_PATTERNS:
+        out = pat.sub(patterns.REDACTION_PLACEHOLDER, out)
+    if patterns.MYSQL_FAMILY_CLI_PATTERN.search(out):
+        out = patterns.MYSQL_COMPACT_PASSWORD_PATTERN.sub(
+            lambda m: f"{m.group(1)}{patterns.REDACTION_PLACEHOLDER}", out
+        )
     return out
 
 

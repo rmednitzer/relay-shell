@@ -55,9 +55,10 @@ out, or be denied, but it always returns a single bounded, audited string.
 |--------|----------------|
 | `config` | Typed `RELAY_SHELL_*` settings; invalid values fail fast at startup. |
 | `util` | Time, hashing, byte-safe truncation, id generation. |
-| `redaction` | Scrub secrets from audited arguments. |
+| `patterns` | Version-pinned compiled regex tables for redaction and tier classification. |
+| `redaction` | Scrub secrets from audited arguments (consumes `patterns`). |
 | `audit` | Rotation-safe append-only JSONL; hash, never body. |
-| `policy` | Tier 0..3 classification; `open`/`guarded`/`readonly` admission. |
+| `policy` | Tier 0..3 classification (consumes `patterns`); `open`/`guarded`/`readonly` admission. |
 | `errors` | Error types and the uniform `[ERROR: ...]` formatter. |
 | `sessions` | Local PTY transport + transport-agnostic session registry. |
 | `shelltools` | One-shot command/script execution (no PTY). |

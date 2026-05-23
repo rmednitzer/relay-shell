@@ -260,9 +260,10 @@ Use this for every PR, your own or external.
 | Module               | First thing to check                                                                              |
 |----------------------|---------------------------------------------------------------------------------------------------|
 | `server.py`          | Every new tool goes through `Relay.run()`. No tool ever raises into the transport.                |
-| `policy.py`          | `_TIER3` / `_TIER2` regex changes have a paired test; deny list is still the first gate.          |
+| `patterns.py`        | The single home for `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN` and the redaction tables. Any change bumps `PATTERNS_VERSION`. Paired tests in `tests/test_patterns.py`. |
+| `policy.py`          | Consumes `patterns`; deny list is still the first gate; `_READ_ONLY_TOOLS` / `_MUTATING_TOOLS` membership intact. |
 | `audit.py`           | Output body never written, only `sha256` + `len`. `degraded` path still degrades, not crashes.    |
-| `redaction.py`       | New patterns have an over-scrub *and* an under-scrub test. Watch for greedy regex.                |
+| `redaction.py`       | Consumes `patterns`; the loop order (URL creds → prefix patterns → whole-match patterns → MySQL family) is unchanged. |
 | `sessions.py`        | Lost-wakeup invariant: `recv` clears the event under the buffer lock before awaiting.             |
 | `sshpool.py`         | `known_hosts` arg is validated. Connection cache keyed by `user@host:port`. Forwards leak-free.   |
 | `auth/oauth.py`      | File modes (0o700 dir / 0o600 files), atomic save, lazy expiry, single-client lockdown intact.    |
@@ -273,7 +274,7 @@ Use this for every PR, your own or external.
 
 Trigger an extra review pass if the diff touches:
 
-- `audit.py`, `redaction.py`, `policy.py`
+- `patterns.py`, `audit.py`, `redaction.py`, `policy.py`
 - The `Relay.run()` body in `server.py`
 - `auth/oauth.py` (any TTL, store, or token-shape change)
 - `deploy/install*.sh` (anything that writes a systemd unit / EnvironmentFile)
@@ -306,8 +307,9 @@ These keep coming back; check them explicitly:
    the count assertion catches it but the message is confusing if the test
    maintainer forgot to bump `len(names) == 18`.
 2. **Redaction pattern that eats the next argv token** - quoted/escaped
-   values are tested; if you change `_PREFIX_PATTERNS`, run the full
-   `test_redaction.py` and re-read every existing assertion.
+   values are tested; if you change `REDACTION_PREFIX_PATTERNS` in
+   `patterns.py`, run `tests/test_redaction.py` and
+   `tests/test_patterns.py` and re-read every existing assertion.
 3. **Policy text not including stdin/env in `shell_exec`** - regression
    path: the deny list must see the same text the executor sees. The
    `policy_text` argument to `Relay.run()` is the contract.
@@ -572,25 +574,32 @@ JWT-static-keys provider for service-to-service):
 
 ### 6.4 Add a new policy heuristic
 
-Anything you add to `_TIER2` / `_TIER3` regexes:
+Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
 
-1. Has at least one *positive* test (classifies as expected) and one
-   *negative* test (doesn't over-match a near-miss).
-2. Is documented in `docs/adr/0003-tiered-authority.md` if the heuristic
-   represents a new category (not just another verb).
-3. Never replaces the deny list as a security control. The heuristics are
-   advisory in `open` mode; the deny list is the only guarantee.
+1. Edit `src/relay_shell/patterns.py` (the single source). Bump
+   `PATTERNS_VERSION` if the addition changes classification semantics.
+2. Add a paired test in `tests/test_patterns.py`: one *positive* case
+   (classifies as expected) and one *negative* near-miss case
+   (`\b`-bounded text that does not over-match).
+3. Document the addition in `docs/adr/0003-tiered-authority.md` if the
+   heuristic represents a new category (not just another verb).
+4. Never replaces the deny list as a security control. The heuristics
+   are advisory in `open` mode; the deny list is the only guarantee.
 
 ### 6.5 Add a new redaction rule
 
-1. Choose between `_PREFIX_PATTERNS` (keeps the non-secret prefix) and
-   `_PATTERNS` (collapses the whole match). Prefix-preserving is almost
-   always the right choice for audit usefulness.
+1. Edit `src/relay_shell/patterns.py`. Choose between
+   `REDACTION_PREFIX_PATTERNS` (keeps the non-secret prefix) and
+   `REDACTION_PATTERNS` (collapses the whole match). Prefix-preserving
+   is almost always the right choice for audit usefulness. Bump
+   `PATTERNS_VERSION`.
 2. Anchor on structure (PEM markers, `Bearer `, `--password `, URL
    `://user:pass@`) rather than on the secret's character class - the
    character class evolves, the structure does not.
-3. Add the over-scrub and under-scrub test as a pair. The
-   `test_redact_cli_flag_does_not_eat_next_flag` family is the model.
+3. Add the over-scrub and under-scrub test as a pair in
+   `tests/test_patterns.py` (or `tests/test_redaction.py` for higher-
+   level scenarios). The `test_redact_cli_flag_does_not_eat_next_flag`
+   family is the model.
 
 ---
 
@@ -658,16 +667,21 @@ commitment.
 
 ### 7.5 Security hardening (incremental, no posture change)
 
-- **B-019 (P1)** Move `_PREFIX_PATTERNS`, `_PATTERNS`, and `_TIER*`
-  regexes into compiled, version-pinned tables in a separate file and
-  re-export. Makes "added a pattern" a one-file diff that a security
-  reviewer can audit without scrolling past the executor.
 - **B-020 (P2)** Add a `relay-shell verify-deploy` CLI subcommand that
   validates the systemd unit, drop-in, logrotate, and Caddyfile against
   the shipped templates. Drift detection for production.
 - **B-021 (P3)** Investigate `seccomp-bpf` notification mode (not
   enforcement) for the local executor: not a sandbox, but an additional
   audit channel covering syscalls. ADR-worthy before any code lands.
+- **B-023 (P2)** Tighten the `Authorization:` redaction. Today the
+  pattern consumes only the first whitespace-delimited token after
+  `:`/`=`, so `Authorization: Bearer <token>` collapses to
+  `Authorization: [REDACTED] <token>` and the token leaks into the
+  audit args. The Bearer pattern that runs next does not catch it
+  because the prefix is now `[REDACTED]`. Fix: either consume to end
+  of line / quote / argv terminator, or chain the Authorization match
+  to also redact the next token. Add the explicit `Authorization:
+  Bearer X` regression test alongside.
 
 ---
 
