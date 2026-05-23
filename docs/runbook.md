@@ -519,6 +519,12 @@ and clearer code, not to land a refactor for its own sake.
 
 ## 6. Extend (recipes for new capability)
 
+Anything in this section that adds a new transport, auth provider,
+policy category, or changes the audit-record shape needs an ADR
+under `docs/adr/` before code lands. The
+[ADR index](adr/README.md) documents the criteria and the next free
+number.
+
 ### 6.1 Add a new tool
 
 1. Decide the tier. If it can mutate local or remote state, it is at least
@@ -658,9 +664,6 @@ commitment.
 ### 7.4 Docs and contribution
 
 - **B-017 (P2)** Add `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
-- **B-018 (P2)** Replace the loose "see ADR XYZ" prose with an
-  `docs/adr/README.md` index that lists every ADR, its status, and the
-  date it was accepted/superseded.
 
 ### 7.5 Security hardening (incremental, no posture change)
 
@@ -818,7 +821,6 @@ by the same checklist.
 ### 8.14 New `.md` files to create (tracked by the backlog)
 
 - `CODE_OF_CONDUCT.md` (B-017)
-- `docs/adr/README.md` (B-018)
 
 These are queued in the backlog, not created in the same PR as this
 runbook, so the runbook does not block on them.
@@ -862,6 +864,18 @@ runbook, so the runbook does not block on them.
   posture documented in `deploy/logrotate/relay-shell` and the
   append-only attribute documented in `docs/deployment.md` §6. If
   either of those changes, the recipes here change with them.
+
+### 8.18 `docs/adr/README.md`
+
+- Keep: the status-vocabulary table, the indexed ADR list (number /
+  title / status / date / one-line subject), the "when to write an
+  ADR" criteria, the next-free-number marker, and the cross-references
+  to `docs/architecture.md` and `docs/runbook.md` §6.
+- Add: a row to the index table whenever a new ADR lands. Update the
+  status column when an ADR is superseded or deprecated.
+- Cross-checks: the index must list every file in `docs/adr/000*.md`;
+  any superseded ADR must carry a `Superseded by` line in its own
+  header so the chain is navigable from either direction.
 
 ---
 
