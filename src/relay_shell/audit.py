@@ -95,3 +95,35 @@ class AuditLogger:
         # Audit must never break a tool call.
         with contextlib.suppress(Exception):
             self._log.info(json.dumps(entry, default=str, ensure_ascii=False))
+
+    def tail(self, lines: int) -> str:
+        """Return the last ``lines`` audit records as JSONL.
+
+        Records are returned in their original on-disk order (oldest first).
+        The empty string is returned if the audit file does not exist, is
+        empty, or cannot be read - this method must never raise; it is
+        consumed by a read-only diagnostic tool and a failure here should
+        not break the caller.
+
+        Reading is opened on a fresh fd; the writer's append-only fd is
+        untouched so this is safe to call concurrently with normal tool
+        execution. ``WatchedFileHandler`` line-buffers each emit, so any
+        record returned here is structurally complete.
+        """
+        if lines <= 0:
+            return ""
+        path = Path(self.path).expanduser()
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as fh:
+                # readlines() is fine for daily-rotated logs (bundled
+                # logrotate config rotates at 1 day). For larger files a
+                # seek-from-end implementation would be more efficient;
+                # tracked as a follow-up if it becomes a real cost.
+                all_lines = fh.readlines()
+        except OSError:
+            return ""
+        # Drop blank trailing lines (logger does not write them, but a
+        # caller might tail a partial write window) and strip the line
+        # terminator on each record for consistent JSONL output.
+        records = [ln.rstrip("\n") for ln in all_lines if ln.strip()]
+        return "\n".join(records[-lines:])

@@ -65,3 +65,65 @@ def test_audit_precreate_uses_o_append(tmp_path: Path, monkeypatch) -> None:
     log = AuditLogger(str(path))
     assert log.degraded is False
     assert seen_append is True
+
+
+def test_tail_returns_last_n_records(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    for i in range(10):
+        log.record(tool="shell_exec", args={"i": i}, output="ok", exit_code=0, tier=1)
+
+    out = log.tail(3)
+    lines = out.splitlines()
+    assert len(lines) == 3
+    # Oldest first; last record has i=9.
+    recs = [json.loads(ln) for ln in lines]
+    assert [r["args"]["i"] for r in recs] == [7, 8, 9]
+
+
+def test_tail_returns_all_when_lines_exceeds_record_count(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    for i in range(3):
+        log.record(tool="t", args={"i": i}, output="", exit_code=0, tier=0)
+    assert len(log.tail(100).splitlines()) == 3
+
+
+def test_tail_returns_empty_when_file_missing(tmp_path: Path) -> None:
+    # The audit file is created lazily by AuditLogger.__init__ today, so use
+    # a path the constructor never touches: ask tail() about a sibling
+    # file that does not exist.
+    log = AuditLogger(str(tmp_path / "a.jsonl"))
+    other = AuditLogger.__new__(AuditLogger)
+    other.path = str(tmp_path / "never-created.jsonl")
+    other.degraded = False
+    other.degraded_reason = ""
+    # tail() on the path that does not exist must return "" without raising.
+    assert other.tail(10) == ""
+    # And the real instance with zero records must also return "".
+    assert log.tail(10) == ""
+
+
+def test_tail_rejects_non_positive_lines(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    log.record(tool="t", args={}, output="", exit_code=0, tier=0)
+    assert log.tail(0) == ""
+    assert log.tail(-5) == ""
+
+
+def test_tail_does_not_leak_output_body(tmp_path: Path) -> None:
+    # Output bodies are never written to the audit log, so they cannot
+    # show up here. Belt-and-braces regression: confirm at the tail()
+    # layer (not just record()) since this tool exposes the log to a
+    # caller that may itself be untrusted.
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    log.record(
+        tool="shell_exec",
+        args={"command": "echo hi"},
+        output="VERY-SECRET-BODY-MARKER",
+        exit_code=0,
+        tier=1,
+    )
+    assert "VERY-SECRET-BODY-MARKER" not in log.tail(5)

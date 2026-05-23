@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `audit_tail` MCP tool (Tier 0, read-only). Returns the last N
+  records from the audit log as JSONL, oldest first. `lines` defaults
+  to 50 and is clamped to `[1, 1000]`. Opens a fresh read-only fd so
+  the writer's append-only handle is untouched. Lets an operator MCP
+  client debug a session without shelling into the host. The audit
+  log's "output body never written" invariant is preserved end-to-end
+  (regression test in `tests/test_audit_tail_tool.py`).
 - `relay-shell --check-config` CLI flag. Loads `RELAY_SHELL_*` settings,
   constructs the server (audit sink, policy, inventory, OAuth if
   enabled) without starting a transport, and exits 0 on success or 2

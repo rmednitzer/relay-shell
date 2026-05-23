@@ -35,7 +35,7 @@ async def test_stdio_initialize_list_and_call(tmp_path: Path) -> None:
         names = {t.name for t in listed.tools}
         assert "shell_exec" in names
         assert "ssh_exec" in names
-        assert len(names) == 18
+        assert len(names) == 19
 
         info = await session.call_tool("server_info", {})
         info_text = "".join(

@@ -40,7 +40,15 @@ class Tier(IntEnum):
 
 # Tools that never mutate local/remote state.
 _READ_ONLY_TOOLS = frozenset(
-    {"server_info", "ssh_hosts", "ssh_check", "session_list", "session_recv", "ssh_forward_list"}
+    {
+        "server_info",
+        "ssh_hosts",
+        "ssh_check",
+        "session_list",
+        "session_recv",
+        "ssh_forward_list",
+        "audit_tail",
+    }
 )
 
 # Tools whose primary effect is to change remote/local state.

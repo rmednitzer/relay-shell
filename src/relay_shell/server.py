@@ -14,6 +14,7 @@ but it always returns a single bounded, audited string.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
@@ -699,6 +700,30 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             work=_work,
         )
 
+    @mcp.tool()
+    async def audit_tail(lines: int = 50, ctx: Context | None = None) -> str:
+        """Return the last N records from the audit log (Tier 0, read-only)."""
+        # Clamp to a generous but bounded ceiling so a misconfigured client
+        # cannot ask for the whole log. The output budget on the wrapper is
+        # the second line of defence: even at 1000 lines x worst-case
+        # record size, the bound truncates rather than the response
+        # blowing the transport.
+        bounded = clamp(lines, 1, 1000)
+
+        async def _work() -> tuple[str, int | None]:
+            # File read is blocking; offload so the event loop stays free.
+            body = await asyncio.to_thread(app.audit.tail, bounded)
+            return body, None
+
+        return await app.run(
+            tool="audit_tail",
+            ctx=ctx,
+            audit_args={"lines": bounded},
+            policy_text="",
+            max_output=app.clamp_output(cfg.max_output),
+            work=_work,
+        )
+
     return mcp
 
 
@@ -710,9 +735,10 @@ SSH:   ssh_exec, ssh_spawn, ssh_upload/ssh_download, ssh_forward(/list/close),
        ssh_check, ssh_hosts.
 PTY sessions (local or ssh) are driven by session_send / session_recv /
 session_resize / session_kill / session_list.
+Diagnostics: server_info for limits and policy mode, audit_tail for the
+last N audit records.
 
 Every call is tier-classified, bounded (timeout + output caps), and appended
 to an append-only audit log (output is hashed, never stored). Prefer
-ssh_hosts/ssh_check before fleet operations. Use server_info for limits and
-policy mode.
+ssh_hosts/ssh_check before fleet operations.
 """
