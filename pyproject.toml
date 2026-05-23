@@ -38,6 +38,7 @@ dev = [
   "ruff>=0.8",
   "mypy>=1.13",
   "coverage[toml]>=7.6",
+  "pre-commit>=4.0",
   "PyJWT>=2.10",
   "cryptography>=44",
 ]
@@ -59,7 +60,7 @@ target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ASYNC", "PIE", "PTH", "BLE"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ASYNC", "PIE", "PTH", "BLE", "TID"]
 # B008: FastMCP tools use callable defaults by design.
 # RUF006: background tasks are owned by the session registry by design.
 # ASYNC109: timeout params are intentional and enforced via asyncio.wait_for.
@@ -69,6 +70,13 @@ ignore = ["B008", "RUF006", "ASYNC109", "ASYNC240"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S", "B", "BLE", "PTH"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Synchronous HTTP clients have no place in this async codebase; they
+# would block the event loop and bypass the async test fixtures. Use
+# `httpx` (already pinned) or `anyio`+`asyncssh` instead.
+"requests" = { msg = "Use httpx (async) instead; synchronous requests blocks the event loop." }
+"urllib3" = { msg = "Use httpx (async) instead; synchronous urllib3 blocks the event loop." }
 
 [tool.mypy]
 python_version = "3.12"

@@ -1,0 +1,48 @@
+# Pre-commit hooks for relay-shell.
+#
+# Install: `pip install pre-commit && pre-commit install`
+# Run on a single file: `pre-commit run --files <path>`
+# Run on the whole tree: `pre-commit run --all-files`
+#
+# These hooks mirror the CI loop. A green local run is the bar before
+# pushing; CI is the second line of defence, not the first. Banned-import
+# checks (no synchronous `requests` / `urllib3`) live inside the ruff
+# config (`[tool.ruff.lint.flake8-tidy-imports.banned-api]` in
+# `pyproject.toml`) so they fire identically here and in CI.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Pin to a known-good ruff release. Update this `rev` and the
+    # `ruff>=` floor in `[project.optional-dependencies] dev` together
+    # so local pre-commit and `pip install -e ".[dev]"` agree.
+    rev: v0.15.14
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      # mypy --strict needs the project's full import graph (asyncssh stubs
+      # override, FastMCP Context typing, etc.). Run it from the project's
+      # own venv rather than an isolated pre-commit env so the configured
+      # overrides in pyproject.toml apply identically here and in CI. This
+      # assumes the contributor ran `pip install -e ".[dev]"` first, which
+      # the runbook §4.1 already requires.
+      - id: mypy
+        name: mypy --strict (project venv)
+        entry: mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+        require_serial: true
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        exclude: ^(LICENSE|NOTICE)$

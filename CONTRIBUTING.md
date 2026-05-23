@@ -59,6 +59,22 @@ pytest -q
 
 Requires CPython 3.12+.
 
+### Pre-commit
+
+The repository ships a `.pre-commit-config.yaml` that mirrors the
+local loop above (plus a forbidden-imports check that fails if anything
+imports `requests` or `urllib3` — those would block the event loop).
+Install it once after the venv setup:
+
+```bash
+pre-commit install            # set up the git hook
+pre-commit run --all-files    # one-time sweep
+```
+
+The hooks are advisory locally and mandatory in CI. Pre-commit cuts a
+round-trip you would otherwise lose when CI catches a missing `ruff
+format` or a strict-typing regression on a remote runner.
+
 A green local loop is the bar before pushing. If something fails in CI
 but not locally, that is a CI-config bug; fix that, not the test. The
 full validation phase (targeted runs, coverage, manual smokes) is in
