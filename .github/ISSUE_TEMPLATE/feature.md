@@ -7,8 +7,9 @@ labels: ["enhancement"]
 
 <!--
 Before filing, check `docs/runbook.md` §7 to see if this is already in
-the backlog. If it is, comment on this template with the backlog ID
-(e.g. B-007) instead of opening a duplicate.
+the backlog. If it is, reference the backlog ID (e.g. B-007) in this
+issue's body so the maintainer can link the discussion to the existing
+item instead of treating it as a duplicate.
 
 The runbook §6 has recipes for adding tools / transports / auth
 providers / policy heuristics / redaction rules. If you plan to send
