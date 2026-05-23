@@ -630,9 +630,6 @@ commitment.
 - **B-005 (P1)** Add a `release.yml` workflow that on a `v*` tag builds
   the wheel/sdist, runs the full test suite, and publishes to PyPI via
   trusted publishing (OIDC, no long-lived token). Gate on tag signature.
-- **B-009 (P2)** Run CI on Python 3.13 and 3.14 in addition to 3.12. The
-  code is `from __future__ import annotations` clean; pinning only 3.12
-  is conservative.
 - **B-010 (P3)** Add a `hypothesis`-based fuzz suite for `redact` and
   `classify`; run nightly only (separate workflow with `schedule:`).
 - **B-022 (P2)** Raise the CI coverage floor from 75% (current) to 85%.
