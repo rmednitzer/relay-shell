@@ -27,7 +27,9 @@ that a persuaded model still cannot exceed the operator-defined envelope:
   byte length, exit code, request id, client id, tier. The output **body is
   never written** - only its hash and length. Make the file append-only on
   disk (`chattr +a`) and ship it off-host; the bundled logrotate config
-  preserves the attribute across rotation.
+  preserves the attribute across rotation. See
+  [`docs/audit-shipper.md`](docs/audit-shipper.md) for worked Vector,
+  Fluent Bit, and `systemd-journal-remote` recipes.
 - **Secret redaction.** Audited arguments are scrubbed for bearer tokens,
   API keys, private-key blocks, `Authorization` headers, long-name CLI
   flags (both `--password` and single-dash `-token=` forms), and

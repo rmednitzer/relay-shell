@@ -611,10 +611,6 @@ commitment.
 
 ### 7.3 Operations + observability
 
-- **B-011 (P1)** A small `audit-shipper.md` recipe in `docs/` covering one
-  worked example each for Vector, Fluent Bit, and `journalctl ->
-  systemd-journal-remote`. Today `SECURITY.md` and `docs/deployment.md`
-  say "ship it off-host" without showing how.
 - **B-012 (P2)** Expose Prometheus-format counters at
   `/metrics` (HTTP transport only): tool calls by name + tier + denied,
   audit-degraded gauge, active sessions, active forwards. The audit log
@@ -797,11 +793,26 @@ by the same checklist.
 - `CONTRIBUTING.md` (B-015)
 - `CODE_OF_CONDUCT.md` (B-017)
 - `docs/adr/README.md` (B-018)
-- `docs/audit-shipper.md` (B-011)
 - `.github/ISSUE_TEMPLATE/*.md` and `.github/PULL_REQUEST_TEMPLATE.md` (B-016)
 
 These are queued in the backlog, not created in the same PR as this
 runbook, so the runbook does not block on them.
+
+### 8.15 `docs/audit-shipper.md`
+
+- Keep: the three worked examples (Vector, Fluent Bit, journal-remote),
+  the §0 "common requirements" preamble (append-only preserved, no
+  re-encoding, rotation-safe, observable, TLS to remote), and the
+  picking-one matrix at the end.
+- Add: a fourth recipe only when a fourth deployment shape is in
+  production and demonstrably different (e.g. an S3 object-lock sink
+  with an event-driven Lambda processor). Resist adding shapes that
+  reduce to "configure your aggregator's file input"; the three here
+  cover the structural choices.
+- Cross-checks: every example must still preserve the rotation
+  posture documented in `deploy/logrotate/relay-shell` and the
+  append-only attribute documented in `docs/deployment.md` §6. If
+  either of those changes, the recipes here change with them.
 
 ---
 

@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `docs/audit-shipper.md` with one worked example each for Vector,
+  Fluent Bit, and `journalctl` → `systemd-journal-remote`. Cross-linked
+  from `SECURITY.md` and `docs/deployment.md` §6 so the "ship the log
+  off-host" instruction now points at concrete configs that preserve
+  the append-only posture and rotation behavior.
 - Maintenance runbook at `docs/runbook.md` covering audit, review,
   validate, enhance, and extend procedures, a prioritized backlog
   (capability, quality, ops, docs, security hardening), and a per-file

@@ -144,7 +144,9 @@ sudo cp deploy/logrotate/relay-shell /etc/logrotate.d/relay-shell
 
 The bundled logrotate config drops the append-only bit only for the rotate
 and restores it immediately. **Ship the log off-host** and alert on gaps; an
-on-host log is evidence only until the host is compromised.
+on-host log is evidence only until the host is compromised. See
+[`docs/audit-shipper.md`](audit-shipper.md) for worked examples using
+Vector, Fluent Bit, and `journalctl` → `systemd-journal-remote`.
 
 ## 7. SSH credential scoping
 
