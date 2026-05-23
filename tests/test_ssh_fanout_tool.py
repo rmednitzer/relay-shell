@@ -17,7 +17,7 @@ import pytest
 
 from relay_shell.config import Settings
 from relay_shell.policy import Policy, Tier, classify
-from relay_shell.server import build_server
+from relay_shell.server import _SSH_FANOUT_MAX_HOSTS, build_server
 
 
 def _audit_lines(path: Path) -> list[dict[str, Any]]:
@@ -235,6 +235,92 @@ async def test_ssh_fanout_no_hosts_no_inventory(tmp_path: Path) -> None:
     mcp = build_server(settings)
     content, _ = await mcp.call_tool("ssh_fanout", {"command": "uptime"})
     assert "no hosts configured" in _text(content)
+
+
+async def test_ssh_fanout_output_stays_within_max_output(
+    fanout_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression for the review on #31: at the maximum host count the
+    # JSON envelope must still be parseable. Without bounded per-host
+    # output AND bounded exception strings AND a bounded command echo,
+    # Relay.run() would truncate the serialized JSON mid-stream and
+    # break the contract that every ssh_fanout response is one JSON
+    # object.
+    big_output = "X" * 100_000
+
+    async def fake_run(_self: Any, *_a: Any, **_k: Any) -> tuple[str, int | None]:
+        return (big_output, 0)
+
+    from relay_shell.sshpool import SshPool
+
+    monkeypatch.setattr(SshPool, "run", fake_run)
+
+    hosts = ",".join(f"h{i}.example" for i in range(_SSH_FANOUT_MAX_HOSTS))
+    mcp = build_server(fanout_settings)
+    content, _ = await mcp.call_tool("ssh_fanout", {"command": "uptime", "hosts": hosts})
+    text = _text(content)
+    # The response is one parseable JSON object - the envelope was not
+    # truncated by Relay.run().
+    payload = json.loads(text)
+    assert payload["host_count"] == _SSH_FANOUT_MAX_HOSTS
+    assert len(payload["results"]) == _SSH_FANOUT_MAX_HOSTS
+    # And the response fits the configured aggregate output budget.
+    # The serialized payload fits under the wrapper's clamp_output,
+    # so Relay.run() did not have to truncate. The default max_output
+    # is 65536; the wrapper's interior budgeting kept us comfortably
+    # below that even at the maximum host count.
+    assert len(text.encode("utf-8")) <= fanout_settings.max_output
+
+
+async def test_ssh_fanout_truncates_unreachable_exception_messages(
+    fanout_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # codex review P2 on #31: exception messages must also be bounded
+    # by per_host_budget so a few hosts with long error messages
+    # cannot blow the envelope.
+    huge_exc_msg = "Y" * 100_000
+
+    async def fake_run(_self: Any, *_a: Any, **_k: Any) -> tuple[str, int | None]:
+        raise OSError(huge_exc_msg)
+
+    from relay_shell.sshpool import SshPool
+
+    monkeypatch.setattr(SshPool, "run", fake_run)
+
+    hosts = ",".join(f"h{i}.example" for i in range(_SSH_FANOUT_MAX_HOSTS))
+    mcp = build_server(fanout_settings)
+    content, _ = await mcp.call_tool("ssh_fanout", {"command": "uptime", "hosts": hosts})
+    text = _text(content)
+    # JSON still parses.
+    payload = json.loads(text)
+    # Output stayed within the cap.
+    # The serialized payload fits under the wrapper's clamp_output,
+    # so Relay.run() did not have to truncate. The default max_output
+    # is 65536; the wrapper's interior budgeting kept us comfortably
+    # below that even at the maximum host count.
+    assert len(text.encode("utf-8")) <= fanout_settings.max_output
+    # Every record marks UNREACHABLE.
+    assert all("UNREACHABLE" in r["output"] for r in payload["results"])
+
+
+async def test_ssh_fanout_records_raw_hosts_argument(
+    fanout_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Copilot review on #31: when `hosts=""` triggers the inventory
+    # fallback, the audit record should still show the caller-supplied
+    # value rather than the resolved fallback string. Audit logs are
+    # for "what was actually called", not "what the wrapper inferred".
+    async def fake_run(_self: Any, *_a: Any, **_k: Any) -> tuple[str, int | None]:
+        return ("ok", 0)
+
+    from relay_shell.sshpool import SshPool
+
+    monkeypatch.setattr(SshPool, "run", fake_run)
+
+    mcp = build_server(fanout_settings)
+    await mcp.call_tool("ssh_fanout", {"command": "uptime"})
+    last = _audit_lines(Path(fanout_settings.audit_path))[-1]
+    assert last["args"]["hosts"] == ""  # raw input, NOT "inventory"
 
 
 async def test_ssh_fanout_audits_its_args(

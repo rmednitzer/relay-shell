@@ -700,12 +700,34 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             tmo = app.clamp_timeout(timeout)
             conc = clamp(concurrency, 1, 32)
             sem = asyncio.Semaphore(conc)
-            # Per-host output budget so the aggregate respects the
-            # configured max_output. Leave headroom for the JSON
-            # envelope; floor at 1 KiB so individual results are
-            # never collapsed to nothing.
+
+            # Aggregate output budget guides every interior `truncate`
+            # call so the final serialized JSON is guaranteed to fit.
+            # The top-level Relay.run() truncates this tool's return
+            # value to `cfg.max_output` (clamped); if the JSON exceeds
+            # that, Relay.run() appends a [TRUNCATED ...] marker which
+            # turns the response into unparseable JSON. The arithmetic
+            # below errs on the conservative side so that does not
+            # happen even at the maximum host count and longest
+            # plausible per-host output. See review on #31.
             agg_budget = app.clamp_output(cfg.max_output)
-            per_host_budget = max(1024, (agg_budget // max(len(names), 1)) - 256)
+            # Cap the echoed command at a fraction of the budget so a
+            # very long command alone cannot blow the envelope.
+            command_budget = min(2048, agg_budget // 4)
+            command_echo = truncate(command, command_budget)
+            # Per-record framing reserve: compact JSON record framing
+            # `{"host":"X","exit_code":N,"output":"..."}` is ~50 bytes;
+            # the `truncate` marker `\n\n[TRUNCATED - X bytes total,
+            # Y shown]` adds another ~50 when the output is actually
+            # truncated; allow ~100 bytes of slack for JSON escape
+            # expansion (e.g. embedded quotes, newlines). 200 bytes/
+            # record is generous but bounded.
+            per_record_overhead = 200
+            # Top-level envelope: command echo + the integer fields
+            # + the results array brackets + slack. 1 KiB is plenty.
+            envelope_overhead = 1024 + len(command_echo) + len(names) * per_record_overhead
+            remaining = max(agg_budget - envelope_overhead, 0)
+            per_host_budget = max(128, remaining // max(len(names), 1))
 
             async def _run_one(name: str) -> dict[str, Any]:
                 ck = {
@@ -725,28 +747,42 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                             "output": truncate(out, per_host_budget),
                         }
                     except Exception as exc:  # noqa: BLE001
+                        # codex P2 on #31: bound the exception message
+                        # too, otherwise a few hosts with long error
+                        # messages can blow the envelope.
+                        err = truncate(
+                            f"[UNREACHABLE: {exc.__class__.__name__}: {exc}]",
+                            per_host_budget,
+                        )
                         return {
                             "host": name,
                             "exit_code": None,
-                            "output": f"[UNREACHABLE: {exc.__class__.__name__}: {exc}]",
+                            "output": err,
                         }
 
             results = await asyncio.gather(*(_run_one(n) for n in names))
             payload = {
-                "command": command,
+                "command": command_echo,
                 "concurrency": conc,
                 "timeout": tmo,
                 "host_count": len(names),
                 "results": results,
             }
-            return (json.dumps(payload, indent=2, default=str), None)
+            # Compact JSON (no indent) so the per-record overhead
+            # estimate above is realistic. Operators wanting a
+            # pretty-printed view can pipe through `jq`.
+            return (json.dumps(payload, default=str), None)
 
         return await app.run(
             tool="ssh_fanout",
             ctx=ctx,
             audit_args={
                 "command": command,
-                "hosts": hosts or "inventory",
+                # Record the raw input so the audit reflects the actual
+                # request parameters, not the resolved fallback. Copilot
+                # review on #31 noted that "hosts or 'inventory'" loses
+                # caller intent when the input was an empty string.
+                "hosts": hosts,
                 "timeout": timeout,
                 "concurrency": concurrency,
             },
