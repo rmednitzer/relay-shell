@@ -37,6 +37,7 @@ dev = [
   "pytest-asyncio>=0.24",
   "ruff>=0.8",
   "mypy>=1.13",
+  "coverage[toml]>=7.6",
   "PyJWT>=2.10",
   "cryptography>=44",
 ]
@@ -94,3 +95,22 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q"
 filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["src/relay_shell"]
+# parallel + COVERAGE_PROCESS_START let the stdio e2e subprocess contribute;
+# without it server.py's wrappers register near-zero. See `docs/runbook.md` §4.3.
+parallel = true
+branch = false
+
+[tool.coverage.paths]
+# Normalise subprocess paths back onto the in-repo source so combine merges them.
+source = ["src/relay_shell", "*/src/relay_shell"]
+
+[tool.coverage.report]
+# Floor protects against regression; raise after sshpool/sessions/server tests
+# climb (tracked as a follow-up in `docs/runbook.md` §7.2). Current measured
+# baseline with subprocess collection enabled: ~78%.
+fail_under = 75
+show_missing = true
+skip_empty = true

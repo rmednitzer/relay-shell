@@ -8,6 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Coverage measurement in CI with a 75% floor. Configuration lives in
+  `pyproject.toml` and enables subprocess collection so the stdio e2e
+  contributes; the CI workflow drops a small `coverage_subprocess.pth`
+  during install. Current measured baseline is ~78%; `coverage report`
+  fails the CI step below 75. See `docs/runbook.md` §4.3 for the local
+  recipe and §7.2 B-022 for the path to raising the floor to 85%.
 - `CONTRIBUTING.md` covering scope, branch naming, the local-loop
   recipe, the documentation-moves-with-code requirement, and the
   security-sensitive-PR review path. The runbook remains the canonical
