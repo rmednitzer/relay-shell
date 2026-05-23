@@ -497,9 +497,6 @@ and clearer code, not to land a refactor for its own sake.
 
 ### 5.3 Tests to add (gap analysis)
 
-- **T-001** No test currently exercises `__main__.main()` and its
-  configuration-error exit path (the print-and-return-2 case). One
-  `subprocess.run` test with an invalid `RELAY_SHELL_TRANSPORT` would close it.
 - **T-002** `server_info` is exercised via the stdio e2e test, but not by
   itself. A direct unit test confirming every documented field is present
   would catch silent removals.
@@ -655,9 +652,6 @@ commitment.
   `/metrics` (HTTP transport only): tool calls by name + tier + denied,
   audit-degraded gauge, active sessions, active forwards. The audit log
   is the source of truth; metrics are for dashboards, not evidence.
-- **B-013 (P2)** Add a `--check-config` CLI flag that loads settings,
-  builds the server without starting a transport, and exits 0 if the
-  config is valid. Useful in CI pipelines that bake an image.
 - **B-014 (P3)** Add an `RELAY_SHELL_AUDIT_FORMAT=jsonl|cef|leef` knob for
   operators whose SIEMs only accept CEF/LEEF. Default stays JSONL.
 
