@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `.pre-commit-config.yaml` mirroring the CI quality loop: `ruff`,
+  `ruff format`, `mypy --strict` (local hook against the project's
+  venv), plus standard hygiene hooks. A new banned-imports rule under
+  `[tool.ruff.lint.flake8-tidy-imports.banned-api]` refuses to let
+  `requests` or `urllib3` enter the codebase synchronously - they
+  would block the event loop. `pre-commit` is in the dev extras;
+  `CONTRIBUTING.md` documents the one-shot install.
+
 ### Fixed
 
 - `Authorization:` redaction no longer leaks the bearer / Basic /

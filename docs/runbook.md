@@ -630,9 +630,6 @@ commitment.
 - **B-005 (P1)** Add a `release.yml` workflow that on a `v*` tag builds
   the wheel/sdist, runs the full test suite, and publishes to PyPI via
   trusted publishing (OIDC, no long-lived token). Gate on tag signature.
-- **B-008 (P2)** Add a `pre-commit` config (`ruff`, `ruff format`,
-  `mypy --strict`, a forbidden-imports check that fails if anything
-  imports `requests`/`urllib3` synchronously). Reduce CI round-trips.
 - **B-009 (P2)** Run CI on Python 3.13 and 3.14 in addition to 3.12. The
   code is `from __future__ import annotations` clean; pinning only 3.12
   is conservative.
