@@ -39,6 +39,13 @@ class Tier(IntEnum):
 
 
 # Tools that never mutate local/remote state.
+# Note: ssh_keyscan is NOT here. It opens caller-chosen outbound TCP
+# connections (SSRF-shaped surface to whatever the relay can reach,
+# including private/cloud-metadata ranges) and leaves entries in
+# remote sshd logs. That puts it outside the "observation-only client"
+# contract of `readonly` mode. classify() falls through to Tier 1
+# (REVERSIBLE) for ssh_keyscan, which keeps it permitted in `open` and
+# in `guarded` (Tier 1 < Tier 2) but rejected in `readonly`.
 _READ_ONLY_TOOLS = frozenset(
     {
         "server_info",

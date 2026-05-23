@@ -19,6 +19,8 @@ import contextlib
 import json
 import os
 import pwd
+import re
+import shlex
 import signal
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -49,6 +51,22 @@ _SUDO_SEARCH_PATHS = (Path("/usr/bin/sudo"), Path("/bin/sudo"), Path("/usr/local
 # SSH connections (each with its own credential negotiation and remote
 # sshd auth log entry), turning the tool into a noisy sweep surface.
 _SSH_FANOUT_MAX_HOSTS = 100
+
+# ssh_keyscan: validate host tokens at the boundary so the eventual
+# shell concatenation is safe. Hostnames (and bracketed IPv6 literals) only;
+# no whitespace, no shell metacharacters, no path separators.
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9._\-\[\]:]+$")
+
+# ssh_keyscan: the key types ssh-keyscan emits. Restrict to algorithms
+# that appear in current OpenSSH; reject anything else at the boundary.
+_ALLOWED_KEY_TYPES = frozenset({"rsa", "ecdsa", "ed25519", "dsa"})
+
+# ssh_keyscan: cap the per-call host count so a single tool invocation
+# cannot fan out thousands of outbound TCP SYNs. A real operator sweep
+# is almost always well under this limit; raise if the use case shows
+# up. Without the cap the tool is a free network-burst surface even at
+# Tier 1.
+_SSH_KEYSCAN_MAX_HOSTS = 32
 
 
 def _find_sudo_binary() -> str:
@@ -738,6 +756,101 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         )
 
     @mcp.tool()
+    async def ssh_keyscan(
+        hosts: str,
+        port: int = 22,
+        key_types: str = "rsa,ecdsa,ed25519",
+        timeout: int = 10,
+        ctx: Context | None = None,
+    ) -> str:
+        """Fetch host public keys via ssh-keyscan (Tier 1, reversible).
+
+        Opens caller-chosen outbound TCP connections to each host on
+        ``port`` and reads their public host keys in known_hosts line
+        format. Useful for pre-populating ``~/.ssh/known_hosts`` so a
+        service account can run ``strict`` without a manual
+        ``accept-new`` seeding pass.
+        """
+
+        async def _work() -> tuple[str, int | None]:
+            # Validate every input *before* it reaches the shell.
+            host_list = [h for h in hosts.replace(",", " ").split() if h]
+            if not host_list:
+                return ("[no hosts; pass hosts=<host>[,<host>...]]", None)
+            # Cap the host count to bound outbound network burst. The
+            # tool is operator-facing and a real production sweep is
+            # almost always under 32; raise this if the use case shows
+            # up. Without the cap a single call could initiate
+            # thousands of SYNs to attacker-chosen destinations.
+            if len(host_list) > _SSH_KEYSCAN_MAX_HOSTS:
+                return (
+                    f"[ERROR: {len(host_list)} hosts exceeds the per-call cap of "
+                    f"{_SSH_KEYSCAN_MAX_HOSTS}; split into smaller batches]",
+                    None,
+                )
+            for h in host_list:
+                # Permitted: letters, digits, dot, dash, underscore,
+                # brackets, colon (for bracketed IPv6 literals). No
+                # whitespace, no shell metachars, no path separators.
+                if not _HOSTNAME_RE.match(h):
+                    return (
+                        f"[ERROR: rejected host {h!r}: must match {_HOSTNAME_RE.pattern}]",
+                        None,
+                    )
+            if not 1 <= port <= 65535:
+                return (f"[ERROR: port {port} out of range 1..65535]", None)
+            type_list = [t.strip() for t in key_types.split(",") if t.strip()]
+            for t in type_list:
+                if t not in _ALLOWED_KEY_TYPES:
+                    return (
+                        f"[ERROR: rejected key type {t!r}: "
+                        f"choose from {sorted(_ALLOWED_KEY_TYPES)}]",
+                        None,
+                    )
+            if not type_list:
+                return ("[ERROR: empty key_types]", None)
+            tmo = clamp(timeout, 1, 60)
+
+            # Build the command using shlex.quote on every interpolated
+            # token. Every token has also passed the regex check, but
+            # quoting is defence in depth - the regex permits `-` so a
+            # future loosening that admits a leading-dash hostname
+            # would otherwise become an option-injection vector.
+            #
+            # The literal `--` separates options from positional
+            # arguments so getopt-style parsing cannot interpret a host
+            # that starts with `-` as a flag. ssh-keyscan accepts `--`
+            # per standard POSIX option conventions.
+            cmd_parts = [
+                "ssh-keyscan",
+                "-T",
+                str(tmo),
+                "-t",
+                shlex.quote(",".join(type_list)),
+                "-p",
+                str(port),
+                "--",
+                *(shlex.quote(h) for h in host_list),
+            ]
+            cmd = " ".join(cmd_parts)
+            # ssh-keyscan writes the keys to stdout and progress/error
+            # messages to stderr; merge so the operator sees both.
+            return await run_command(cmd, timeout=tmo, merge_stderr=True)
+
+        return await app.run(
+            tool="ssh_keyscan",
+            ctx=ctx,
+            audit_args={
+                "hosts": hosts,
+                "port": port,
+                "key_types": key_types,
+            },
+            policy_text="",
+            max_output=app.clamp_output(cfg.max_output),
+            work=_work,
+        )
+
+    @mcp.tool()
     async def ssh_hosts(ctx: Context | None = None) -> str:
         """Show the resolved host inventory (ssh_config + inventory file)."""
 
@@ -833,7 +946,8 @@ relay-shell - shell and SSH operations.
 
 Local: shell_exec (one-shot), shell_script (multi-line), shell_spawn (PTY).
 SSH:   ssh_exec, ssh_spawn, ssh_upload/ssh_download, ssh_forward(/list/close),
-       ssh_check, ssh_hosts, ssh_fanout (parallel exec across a host list).
+       ssh_check, ssh_hosts, ssh_keyscan (pre-populate known_hosts),
+       ssh_fanout (parallel exec across a host list).
 PTY sessions (local or ssh) are driven by session_send / session_recv /
 session_resize / session_kill / session_list.
 Diagnostics: server_info reports limits and policy mode; audit_tail

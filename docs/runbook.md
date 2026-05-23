@@ -614,9 +614,6 @@ commitment.
 
 ### 7.1 Capability
 
-- **B-001 (P2)** Add an `ssh_keyscan` tool for pre-populating
-  `~/.ssh/known_hosts` on a service account that runs `strict`. Today the
-  operator must shell into the box once with `accept-new` to seed it.
 - **B-004 (P3)** Expose MCP **resources** (not just tools) for
   `~/.ssh/config` and inventory views, so clients that prefer resources
   to tools can list hosts the protocol-native way.
