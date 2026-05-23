@@ -71,9 +71,24 @@ centrally; failure paths never crash the transport. The reasoning layer sits
 | `audit_tail` | Return the last N audit records (read-only, Tier 0). |
 
 The HTTP transport also exposes `GET /metrics` (Prometheus text format):
-tool-call counter by `tool` / `tier` / `mode` / `outcome`, plus
-`active_sessions`, `active_forwards`, and `audit_degraded` gauges. See
+`relay_shell_tool_calls_total{tool,tier,mode,outcome}` (counter), plus
+`relay_shell_active_sessions`, `relay_shell_active_forwards`, and
+`relay_shell_audit_degraded` (gauges). See
 [`docs/deployment.md`](docs/deployment.md) §9a.
+
+### Resources
+
+Three MCP resources let clients read inventory and `ssh_config` views
+the protocol-native way (no tool call needed):
+
+| URI                                  | meaning                              |
+|--------------------------------------|--------------------------------------|
+| `relay-shell://inventory`            | Flat list of all known hosts (JSON). |
+| `relay-shell://inventory/{host}`     | One host's resolved spec (JSON).     |
+| `relay-shell://ssh-config`           | ssh_config path + aliases (JSON).    |
+
+Resource reads are audited (tier 0). See
+[`docs/tools.md`](docs/tools.md) for the full reference.
 
 Full reference: [`docs/tools.md`](docs/tools.md).
 

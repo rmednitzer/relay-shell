@@ -1008,6 +1008,93 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                 media_type="text/plain; version=0.0.4; charset=utf-8",
             )
 
+    # --- MCP resources ------------------------------------------------------
+    #
+    # Resources are read-only context the client can list and pull on its
+    # own initiative - they do NOT go through Relay.run because there is no
+    # work to admit / tier / time out. Each read is still audited (tier 0,
+    # tool name prefixed with "resource:") so the operator sees what context
+    # the model is pulling in.
+    #
+    # The audit `tool` field is kept STABLE per resource (no user-controlled
+    # data interpolated): the host parameter for the templated resource is
+    # carried in `args` instead, so `redact_args` can scrub embedded secrets
+    # and tool-name cardinality stays bounded for downstream audit consumers.
+
+    def _audit_resource_read(name: str, body: str, args: dict[str, Any] | None = None) -> None:
+        app.audit.record(
+            tool=f"resource:{name}",
+            args=redact_args(args or {}),
+            output=body,
+            exit_code=None,
+            tier=0,
+        )
+
+    # Bound every resource payload to the same cap tools observe via
+    # `Relay.run`. Without this, a huge inventory would produce arbitrarily
+    # large payloads (and audit-hashing work) in a single read.
+    _resource_cap = app.clamp_output(cfg.max_output)
+
+    @mcp.resource(
+        "relay-shell://inventory",
+        name="inventory",
+        title="Host inventory",
+        description=(
+            "Flat list of all hosts resolved from ~/.ssh/config and the optional "
+            "RELAY_SHELL_INVENTORY file, as a JSON array of host specs. Same "
+            "data shape as the ssh_hosts tool. Bodies are bounded by the same "
+            "max_output cap as tools; oversized responses get a [TRUNCATED ...] "
+            "marker appended, the same way tools do."
+        ),
+        mime_type="application/json",
+    )
+    def _resource_inventory() -> str:
+        body = json.dumps([h.as_dict() for h in app.inventory.hosts()], default=str)
+        body = truncate(body, _resource_cap)
+        _audit_resource_read("inventory", body)
+        return body
+
+    @mcp.resource(
+        "relay-shell://inventory/{host}",
+        name="inventory_host",
+        title="Single host spec",
+        description=(
+            "Resolved spec for one inventory entry (or a passthrough spec the "
+            "ssh layer would accept) as JSON. Audit records this read as "
+            'tool="resource:inventory_host" with the host in args (so redaction '
+            "runs and the tool-name cardinality stays bounded)."
+        ),
+        mime_type="application/json",
+    )
+    def _resource_inventory_host(host: str) -> str:
+        spec = app.inventory.resolve(host).as_dict()
+        body = json.dumps(spec, default=str)
+        body = truncate(body, _resource_cap)
+        _audit_resource_read("inventory_host", body, args={"host": host})
+        return body
+
+    @mcp.resource(
+        "relay-shell://ssh-config",
+        name="ssh_config",
+        title="SSH config metadata",
+        description=(
+            "Path to the active ssh_config and the sorted list of non-wildcard "
+            "Host aliases declared in it, as JSON. Inventory overrides do not "
+            "suppress aliases - any name the active ssh_config declares appears "
+            "here, so a client gets an accurate view of what the file contains."
+        ),
+        mime_type="application/json",
+    )
+    def _resource_ssh_config() -> str:
+        payload = {
+            "path": app.inventory.ssh_config_file,
+            "aliases": app.inventory.ssh_config_aliases(),
+        }
+        body = json.dumps(payload, default=str)
+        body = truncate(body, _resource_cap)
+        _audit_resource_read("ssh-config", body)
+        return body
+
     return mcp
 
 
