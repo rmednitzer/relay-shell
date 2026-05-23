@@ -70,6 +70,11 @@ centrally; failure paths never crash the transport. The reasoning layer sits
 | `server_info` | Server version, effective limits, policy mode, audit path. |
 | `audit_tail` | Return the last N audit records (read-only, Tier 0). |
 
+The HTTP transport also exposes `GET /metrics` (Prometheus text format):
+tool-call counter by `tool` / `tier` / `mode` / `outcome`, plus
+`active_sessions`, `active_forwards`, and `audit_degraded` gauges. See
+[`docs/deployment.md`](docs/deployment.md) §9a.
+
 Full reference: [`docs/tools.md`](docs/tools.md).
 
 ## Quickstart

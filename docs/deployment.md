@@ -189,6 +189,27 @@ prohibitions regardless of posture.
 the supervising client's concern. `server_info` reports effective limits and
 whether the audit sink is degraded (a degraded audit sink is an alert).
 
+### 9a. Prometheus metrics
+
+The HTTP transport exposes a `GET /metrics` endpoint in Prometheus text
+exposition format (no auth - the route bypasses OAuth by design, scope it
+via the Caddy CIDR allowlist). The audit log remains the source of truth
+for what happened; metrics are for dashboards only and reset on restart.
+
+| metric                              | type    | meaning                                                             |
+|-------------------------------------|---------|---------------------------------------------------------------------|
+| `relay_shell_tool_calls_total`      | counter | One per tool call. Labels: `tool`, `tier`, `mode`, `outcome`.       |
+| `relay_shell_active_sessions`       | gauge   | Live local + SSH PTY sessions.                                      |
+| `relay_shell_active_forwards`       | gauge   | Live SSH port forwards.                                             |
+| `relay_shell_audit_degraded`        | gauge   | 1 if the audit sink is degraded, 0 otherwise. Should always be 0.   |
+
+`outcome` is one of `ok` (work returned), `denied` (policy refused), or
+`error` (work raised). Combine `mode + tier + outcome` for the classic
+"denied tier-3 calls per minute" panel.
+
+The stdio transport does not expose `/metrics`; the route is gated on
+`RELAY_SHELL_TRANSPORT=http`.
+
 ## 10. Drift detection
 
 After install, and on a periodic schedule in production, run:
