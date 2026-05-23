@@ -13,6 +13,11 @@ All notable changes to this project are documented here. The format follows
   push and attaches both files to the GitHub release. Cheap
   supply-chain signal; no runtime change. A `workflow_dispatch` input
   lets the workflow attach an SBOM to an existing tag after the fact.
+- `docs/audit-shipper.md` with one worked example each for Vector,
+  Fluent Bit, and `journalctl` → `systemd-journal-remote`. Cross-linked
+  from `SECURITY.md` and `docs/deployment.md` §6 so the "ship the log
+  off-host" instruction now points at concrete configs that preserve
+  the append-only posture and rotation behavior.
 - Coverage measurement in CI with a 75% floor. Configuration lives in
   `pyproject.toml` and enables subprocess collection so the stdio e2e
   contributes; the CI workflow drops a small `coverage_subprocess.pth`
