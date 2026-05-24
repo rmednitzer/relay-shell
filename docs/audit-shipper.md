@@ -50,13 +50,15 @@ The relay's installer creates `/var/log/relay-shell/audit.jsonl` as
 `deploy/logrotate/relay-shell`). The shipper needs read access. Two
 documented approaches:
 
-- **Run the shipper as the `relay-shell` user.** The installer-created
-  service account already has read access; just point the shipper's
-  systemd unit at it. Used in the recipes below.
-- **POSIX ACL.** Keep the shipper as its own user and grant explicit
+- **Dedicated shipper user + POSIX ACL (recommended).** Keep the
+  shipper under its own service account and grant explicit
   read with `setfacl -m u:<shipper>:r /var/log/relay-shell/audit.jsonl`
   plus a `setfacl -m u:<shipper>:rx /var/log/relay-shell`. Re-apply
-  in `logrotate`'s `postrotate` script if you choose this path.
+  in `logrotate`'s `postrotate` script.
+- **Run the shipper as the `relay-shell` user.** This avoids ACL
+  management but weakens separation of duties: the same uid that can
+  execute relay commands can also stop or tamper with shipper process
+  state. Use only if your threat model explicitly accepts that tradeoff.
 
 Do not weaken the file mode to grant group read; the `0600` default
 is part of the on-host posture. The shipper writes nowhere under the
@@ -163,29 +165,30 @@ sinks:
     address: 127.0.0.1:9598
 ```
 
-### Run as the relay-shell user
+### Run as a dedicated Vector user (recommended)
 
-Drop in a systemd unit override so Vector reads the audit file as
-its owner:
+Keep Vector as its own user and grant read access to the audit file
+with ACLs:
 
 ```bash
+sudo id -u vector >/dev/null 2>&1 || sudo useradd --system --home /var/lib/vector --shell /usr/sbin/nologin vector
+sudo install -d -m 0755 -o vector -g vector /var/lib/vector
+sudo setfacl -m u:vector:rx /var/log/relay-shell
+sudo setfacl -m u:vector:r /var/log/relay-shell/audit.jsonl
+
 sudo mkdir -p /etc/systemd/system/vector.service.d
 sudo tee /etc/systemd/system/vector.service.d/override.conf >/dev/null <<'EOF'
 [Service]
-User=relay-shell
-Group=relay-shell
+User=vector
+Group=vector
 EOF
-
-# data_dir must be writable by relay-shell:
-sudo install -d -m 0755 -o relay-shell -g relay-shell /var/lib/vector
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now vector
 ```
 
-If the operator prefers Vector to run as its own user (the upstream
-default), grant read explicitly via POSIX ACL — see §0's
-"common requirements" section.
+If you instead run Vector as `relay-shell`, treat that as an explicit
+risk acceptance (see §0).
 
 ### Verify
 
@@ -327,28 +330,29 @@ And the parser (`/etc/fluent-bit/parsers.conf`):
     # default per-record arrival timestamp covers the agent side.
 ```
 
-### Run as the relay-shell user
+### Run as a dedicated Fluent Bit user (recommended)
 
-Same pattern as the Vector recipe: a systemd drop-in moves Fluent Bit
-under the same uid that owns the audit file.
+Keep Fluent Bit as its own user and grant read access with ACLs:
 
 ```bash
+sudo id -u fluent-bit >/dev/null 2>&1 || sudo useradd --system --home /var/lib/fluent-bit --shell /usr/sbin/nologin fluent-bit
+sudo install -d -m 0755 -o fluent-bit -g fluent-bit /var/lib/fluent-bit/storage
+sudo setfacl -m u:fluent-bit:rx /var/log/relay-shell
+sudo setfacl -m u:fluent-bit:r /var/log/relay-shell/audit.jsonl
+
 sudo mkdir -p /etc/systemd/system/fluent-bit.service.d
 sudo tee /etc/systemd/system/fluent-bit.service.d/override.conf >/dev/null <<'EOF'
 [Service]
-User=relay-shell
-Group=relay-shell
+User=fluent-bit
+Group=fluent-bit
 EOF
-
-# Storage dir must be writable by relay-shell:
-sudo install -d -m 0755 -o relay-shell -g relay-shell /var/lib/fluent-bit/storage
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now fluent-bit
 ```
 
-POSIX ACL is the alternative if Fluent Bit must run as its own user
-(see §0).
+If you instead run Fluent Bit as `relay-shell`, treat that as an
+explicit risk acceptance (see §0).
 
 ### Verify
 
@@ -415,10 +419,8 @@ Type=simple
 ExecStart=/bin/sh -c 'exec /usr/bin/tail -n0 -F /var/log/relay-shell/audit.jsonl'
 StandardOutput=journal
 SyslogIdentifier=relay-shell-audit
-# Run as the audit-file owner so the 0600 mode is respected without
-# an ACL. The relay-shell account is unprivileged.
-User=relay-shell
-Group=relay-shell
+User=relay-shell-audit-tail
+Group=relay-shell-audit-tail
 Restart=on-failure
 RestartSec=5s
 
@@ -427,6 +429,9 @@ WantedBy=multi-user.target
 ```
 
 ```bash
+sudo id -u relay-shell-audit-tail >/dev/null 2>&1 || sudo useradd --system --home /nonexistent --shell /usr/sbin/nologin relay-shell-audit-tail
+sudo setfacl -m u:relay-shell-audit-tail:rx /var/log/relay-shell
+sudo setfacl -m u:relay-shell-audit-tail:r /var/log/relay-shell/audit.jsonl
 sudo systemctl daemon-reload
 sudo systemctl enable --now relay-shell-audit-tail.service
 ```
