@@ -40,6 +40,7 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
+      release_commit: ${{ steps.verify_tag.outputs.release_commit }}
     steps:
       - name: Resolve tag from trigger
         id: tag
@@ -86,6 +87,7 @@ jobs:
           echo "OK: tag $TAG matches pyproject version $version"
 
       - name: Verify tag signature via GitHub API
+        id: verify_tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -100,15 +102,22 @@ jobs:
             exit 1
           fi
           obj_sha=$(printf '%s' "$ref" | jq -r '.object.sha')
-          ver=$(curl -fsS -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/$REPO/git/tags/$obj_sha" | jq -r '.verification')
+          tag_obj=$(curl -fsS -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/git/tags/$obj_sha")
+          ver=$(printf '%s' "$tag_obj" | jq -r '.verification')
           verified=$(printf '%s' "$ver" | jq -r '.verified')
           reason=$(printf '%s' "$ver" | jq -r '.reason')
           if [ "$verified" != "true" ]; then
             echo "ERROR: $TAG signature not verified by GitHub (reason: $reason)" >&2
             exit 1
           fi
-          echo "OK: $TAG is a signed annotated tag, verified ($reason)"
+          release_commit=$(printf '%s' "$tag_obj" | jq -r '.object.sha')
+          if [ -z "$release_commit" ] || [ "$release_commit" = "null" ]; then
+            echo "ERROR: could not resolve peeled commit for $TAG" >&2
+            exit 1
+          fi
+          echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
+          echo "OK: $TAG is a signed annotated tag, verified ($reason); release commit $release_commit"
 
   build:
     name: Build wheel + sdist
@@ -118,7 +127,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.verify.outputs.tag }}
+          ref: ${{ needs.verify.outputs.release_commit }}
 
       - uses: actions/setup-python@v6
         with:
