@@ -128,6 +128,14 @@ def test_authorization_header_value_stops_at_newline() -> None:
     assert "Host: example.org" in out
 
 
+def test_authorization_header_does_not_hide_trailing_shell_suffix() -> None:
+    # Regression for audit-integrity: bare `Authorization:` redaction must
+    # not consume shell suffixes that are outside the header value.
+    text = ": Authorization: cover && echo suffix-output"
+    out = redaction.redact(text)
+    assert out == ": Authorization: [REDACTED] && echo suffix-output"
+
+
 def test_authorization_header_json_dict_form() -> None:
     # JSON shape (e.g. a Python `headers={"Authorization": "Bearer X"}`
     # passed verbatim through to the audit args). The prefix's optional
