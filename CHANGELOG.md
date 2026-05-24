@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- ADR 0006 (Proposed) recording the design contract for a syscall-level
+  audit channel via seccomp-bpf notification mode (`SECCOMP_RET_USER_NOTIF`
+  with `SECCOMP_USER_NOTIF_FLAG_CONTINUE`). Notify-only, never blocking;
+  opt-in via `RELAY_SHELL_SECCOMP_NOTIFY` (default `off`); Linux >= 5.5;
+  narrow syscall set (`execve`, `openat` for write, `mount`, `setuid`,
+  `unshare`, `prctl`, `ptrace`, ...); additive audit-record shape
+  (`tool="syscall_notify"`, new overflow event) so existing log shippers
+  keep working. Closes the audit gap on the child side of
+  `asyncio.create_subprocess_*` without re-introducing a sandbox —
+  ADR 0002's trust boundary stays verbatim. The runbook backlog entry
+  B-021 now points at the ADR; promotion to Accepted is gated on the
+  implementing PR and its ADR 0005 §"Decision" step 5 validation
+  outcome. ADR README next-free marker bumped to **0007**;
+  runbook §8.18 status updated.
 - ADR 0005 documenting a repeatable validation pass against upstream
   known-good sources (the `mcp` SDK surface, `asyncssh.connect` kwargs,
   the OAuth provider contract, the audit-record schema, and canonical
@@ -18,7 +32,8 @@ All notable changes to this project are documented here. The format follows
   three small documentation-drift findings the pass surfaced
   (`requirements.txt` pin staleness, runbook §4.3 coverage figure,
   runbook §3.4 obsolete tool-count reference). All three resolved in
-  this PR. The next free ADR number is **0006**.
+  this PR. The next-free-ADR marker landed at **0006** in this entry
+  and was bumped to **0007** by the ADR 0006 entry above.
 - README "Status" line under the title (version, supported Python
   matrix, transports, MCP SDK pin, last-validation date with ADR
   pointer) and a "Compatibility matrix" block (Python / host OS /

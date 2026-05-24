@@ -701,7 +701,10 @@ currently empty.)
 
 - **B-021 (P3)** Investigate `seccomp-bpf` notification mode (not
   enforcement) for the local executor: not a sandbox, but an additional
-  audit channel covering syscalls. ADR-worthy before any code lands.
+  audit channel covering syscalls. Design contract recorded in
+  [ADR 0006](adr/0006-seccomp-notify-audit-channel.md) (Proposed);
+  promotion to Accepted is gated on the implementing PR and its
+  validation-pass outcome (ADR 0005 §"Decision" step 5).
 
 ---
 
@@ -913,7 +916,7 @@ plan lands in the same PR.)
 
 - Keep: the status-vocabulary table, the indexed ADR list (number /
   title / status / date / one-line subject), the "when to write an
-  ADR" criteria, the next-free-number marker (currently **0006**),
+  ADR" criteria, the next-free-number marker (currently **0007**),
   and the cross-references to `docs/architecture.md` and
   `docs/runbook.md` §6.
 - Add: a row to the index table whenever a new ADR lands. Update the

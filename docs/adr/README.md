@@ -25,6 +25,7 @@ top. Status values:
 | [0003](0003-tiered-authority.md) | Tiered authority | Accepted | 2026-05-19 | The four-tier classification (read-only / reversible / stateful / irreversible) plus `open` / `guarded` / `readonly` admission modes that consume it. The deny list is enforced first in every mode. |
 | [0004](0004-edge-tls-automation.md) | Automated TLS at the edge | Accepted | 2026-05-20 | Why `deploy/install-edge.sh` provisions Caddy + ACME (Let's Encrypt) for the HTTP transport, and why certbot+cron and native TLS in the Python service were rejected. |
 | [0005](0005-codebase-validation.md) | Codebase validation against known-good sources | Accepted | 2026-05-24 | A repeatable validation pass against the upstream `mcp` / `asyncssh` / OAuth surfaces, the audit record schema, and the documented redaction / tier behavior. Captures the 2026-05-24 pass outcome and the three small documentation-drift findings it resolved. |
+| [0006](0006-seccomp-notify-audit-channel.md) | Syscall-level audit channel via seccomp-bpf notification mode | Proposed | 2026-05-24 | An audit-only seccomp-bpf channel (notify-mode, never blocking) that closes the audit gap on the child side of `asyncio.create_subprocess_*` without re-introducing a sandbox. Opt-in via `RELAY_SHELL_SECCOMP_NOTIFY`, Linux >= 5.5, narrow syscall set, additive audit-record shape. Design contract for the implementing PR; validation outcome lands at Acceptance. |
 
 ## When to write an ADR
 
@@ -42,7 +43,7 @@ runbook §6 has recipes per case.
 
 ## How to write one
 
-1. Number sequentially. Next free number is **0006**.
+1. Number sequentially. Next free number is **0007**.
 2. Filename pattern: `NNNN-short-slug.md`.
 3. Required header:
 
