@@ -95,6 +95,7 @@ async def test_ssh_fanout_runs_command_across_inventory(
         *,
         timeout: int,
         connect_kwargs: dict[str, Any],
+        **_k: Any,
     ) -> tuple[str, int | None]:
         called.append(host)
         return (f"out-from-{host}\n", 0)
@@ -155,6 +156,7 @@ async def test_ssh_fanout_surfaces_per_host_failure(
         *,
         timeout: int,
         connect_kwargs: dict[str, Any],
+        **_k: Any,
     ) -> tuple[str, int | None]:
         if host == "host-b":
             raise OSError("connection refused")

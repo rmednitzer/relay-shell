@@ -18,7 +18,7 @@ from typing import Any
 import asyncssh
 
 from .inventory import HostSpec, Inventory
-from .util import gen_id
+from .util import gen_id, truncate
 
 __all__ = ["ForwardHandle", "SshPool", "SshProcessTransport"]
 
@@ -183,18 +183,56 @@ class SshPool:
         *,
         timeout: int,
         connect_kwargs: dict[str, Any],
+        max_output_bytes: int | None = None,
     ) -> tuple[str, int | None]:
         conn = await self.connect(target, **connect_kwargs)
+        if not max_output_bytes or max_output_bytes <= 0:
+            max_output_bytes = None
         try:
-            result = await asyncio.wait_for(
-                conn.run(command, check=False, encoding="utf-8", errors="replace"),
+            if max_output_bytes is None:
+                result = await asyncio.wait_for(
+                    conn.run(command, check=False, encoding="utf-8", errors="replace"),
+                    timeout,
+                )
+                out = (result.stdout or "") + (result.stderr or "")
+                code = result.exit_status
+                return (str(out), int(code) if isinstance(code, int) else None)
+            out_parts: list[bytes] = []
+            err_parts: list[bytes] = []
+            out_seen = 0
+            err_seen = 0
+
+            async def _drain(stream: Any, parts: list[bytes], seen: int) -> int:
+                kept = 0
+                while True:
+                    chunk = await stream.read(65536)
+                    if not chunk:
+                        return seen
+                    seen += len(chunk)
+                    budget = max_output_bytes - kept
+                    if budget > 0:
+                        piece = chunk[:budget]
+                        parts.append(piece)
+                        kept += len(piece)
+
+            proc = await conn.create_process(command, encoding=None)
+            out_seen, err_seen = await asyncio.wait_for(
+                asyncio.gather(
+                    _drain(proc.stdout, out_parts, out_seen),
+                    _drain(proc.stderr, err_parts, err_seen),
+                ),
                 timeout,
             )
+            await proc.wait_closed()
+            out = b"".join(out_parts).decode("utf-8", "replace") + b"".join(err_parts).decode(
+                "utf-8", "replace"
+            )
+            if out_seen + err_seen > max_output_bytes:
+                out = truncate(out, max_output_bytes)
+            code = proc.exit_status
+            return (str(out), int(code) if isinstance(code, int) else None)
         except TimeoutError:
             return (f"[TIMEOUT after {timeout}s]", None)
-        out = (result.stdout or "") + (result.stderr or "")
-        code = result.exit_status
-        return (str(out), int(code) if isinstance(code, int) else None)
 
     async def open_process(
         self,
