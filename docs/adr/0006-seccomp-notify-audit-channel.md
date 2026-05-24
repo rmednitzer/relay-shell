@@ -40,7 +40,9 @@ README criteria ("A change to the audit-record shape... needs an ADR").
 ## Decision (Proposed)
 
 Add an **audit-only** seccomp-bpf channel using user-notify mode
-(`SECCOMP_RET_USER_NOTIF`, Linux >= 5.0). The channel is:
+(`SECCOMP_RET_USER_NOTIF`, first available in Linux 5.0; the effective
+floor for this design is **Linux >= 5.5** because
+`SECCOMP_USER_NOTIF_FLAG_CONTINUE` lands there). The channel is:
 
 - **Notify-only, never block.** Every notified syscall is allowed to
   continue via `SECCOMP_USER_NOTIF_FLAG_CONTINUE` (Linux >= 5.5). The
@@ -53,17 +55,19 @@ Add an **audit-only** seccomp-bpf channel using user-notify mode
   is installed on the child and the spawn path is byte-identical to
   today.
 - **Linux-only.** Macs and BSDs silently no-op the setting (logged once
-  at startup with the host's `uname -s`). The runbook documents the
+  at startup with the host's `uname -s`). The runbook will document the
   supported kernel floor (5.5 for `ADDFD`/`CONTINUE`; 6.0+ recommended
-  for stable `seccomp_notify_id_valid` semantics).
+  for stable `seccomp_notify_id_valid` semantics) when the implementing
+  PR lands.
 - **Narrow syscall set.** The filter notifies on a small,
   forensically-interesting list — `execve`, `execveat`, `openat` with
   `O_WRONLY|O_RDWR|O_CREAT`, `mount`, `umount2`, `setuid`/`setgid`,
   `unshare`, `prctl` (with capability-relevant `option` values), and
   `ptrace`. Everything else stays in the default `SECCOMP_RET_ALLOW`
-  path with no kernel-userspace round-trip. The list is checked into
-  `src/relay_shell/seccomp.py` and version-pinned the way
-  `patterns.py` is.
+  path with no kernel-userspace round-trip. The list will live in a
+  dedicated module under `src/relay_shell/` and be version-pinned the
+  way `patterns.py` is; the exact filename is the implementing PR's
+  call.
 - **Bounded audit volume.** The notify handler writes one JSON event
   per notification into the same `audit.jsonl` stream with
   `tool="syscall_notify"` and `tier=0` (a passive observation, not a
@@ -83,11 +87,12 @@ Add an **audit-only** seccomp-bpf channel using user-notify mode
 ## Consequences
 
 - The audit record schema grows a new event type (`syscall_notify`,
-  `syscall_notify_overflow`). Documented in `docs/architecture.md`
-  §"Request lifecycle" and `docs/tools.md` §"Audit shape". The
-  existing per-call record is unchanged — the new events are
-  *additional* lines, not replacement fields, so log shippers and
-  off-host parsers built against the current shape keep working.
+  `syscall_notify_overflow`). The implementing PR will document the
+  new shape in `docs/architecture.md` §"Request lifecycle" and
+  `docs/tools.md` §"Audit shape". The existing per-call record is
+  unchanged — the new events are *additional* lines, not replacement
+  fields, so log shippers and off-host parsers built against the
+  current shape keep working.
 - The runbook §2 audit pass gains a step under §3 (Upstream surface
   validation): assert that the kernel-side constants the filter uses
   (`SECCOMP_RET_USER_NOTIF`, `SECCOMP_USER_NOTIF_FLAG_CONTINUE`) are

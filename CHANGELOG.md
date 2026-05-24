@@ -32,7 +32,8 @@ All notable changes to this project are documented here. The format follows
   three small documentation-drift findings the pass surfaced
   (`requirements.txt` pin staleness, runbook §4.3 coverage figure,
   runbook §3.4 obsolete tool-count reference). All three resolved in
-  this PR. The next free ADR number is **0006**.
+  this PR. The next-free-ADR marker landed at **0006** in this entry
+  and was bumped to **0007** by the ADR 0006 entry above.
 - README "Status" line under the title (version, supported Python
   matrix, transports, MCP SDK pin, last-validation date with ADR
   pointer) and a "Compatibility matrix" block (Python / host OS /
