@@ -49,7 +49,10 @@ __all__ = [
 #     HTTP, quoted CLI flag, JSON dict literal) and to consume past the
 #     first comma so AWS SigV4 / Digest challenge-response schemes do
 #     not leak the trailing Signature/response field.
-PATTERNS_VERSION = "2"
+# v3: Authorization-header bare form no longer consumes arbitrary shell
+#     control operators; this preserves audit fidelity for command-style
+#     input while keeping quoted/JSON and comma-separated auth schemes.
+PATTERNS_VERSION = "3"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -61,7 +64,7 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # input shapes the relay actually sees:
     #
     #   1. Bare HTTP header  ->  `Authorization: Bearer X`
-    #      Value runs to end-of-line.
+    #      Value runs until a line break or shell control operator.
     #   2. Quoted CLI flag    ->  `-H "Authorization: Bearer X"`
     #      Value stops at the surrounding closing quote.
     #   3. JSON dict literal  ->  `{"Authorization": "Bearer X"}`
@@ -77,7 +80,13 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # otherfield=val` will over-scrub `otherfield=val` - that case is
     # uncommon and the over-scrub is audit-fidelity loss, not a leak.
     (
-        re.compile(r"(?i)\b(?P<prefix>(?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?)[^\r\n\"']+"),
+        re.compile(
+            r"(?i)\b(?P<prefix>(?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?)"
+            r"(?:"
+            r"[^\"'\r\n]+(?=[\"'])"
+            r"|[^\r\n\"']+?(?=(?:\s(?:&&|\|\||\|)\s|[\r\n]|$))"
+            r")"
+        ),
         r"\g<prefix>[REDACTED]",
     ),
     # Bearer <token>
