@@ -740,7 +740,13 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                 }
                 async with sem:
                     try:
-                        out, code = await app.ssh.run(name, command, timeout=tmo, connect_kwargs=ck)
+                        out, code = await app.ssh.run(
+                            name,
+                            command,
+                            timeout=tmo,
+                            connect_kwargs=ck,
+                            max_output_bytes=per_host_budget,
+                        )
                         return {
                             "host": name,
                             "exit_code": code,
