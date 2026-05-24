@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Raised the CI coverage floor from 85% to 90% (`fail_under` in
+  `pyproject.toml`). Closes backlog B-022. New fault-injection tests
+  in `tests/test_ssh_integration.py` exercise port-forwarding
+  (`L:` / `R:` / `D:` / invalid spec, plus `close_forward`),
+  `accept-new` known-hosts persistence (single-write + idempotency
+  on reconnect), `SshProcessTransport.resize` / `.signal` on a live
+  remote process, `run()` timeout, `_known_hosts_arg` resolution
+  in `strict` / `ignore` / `accept-new` modes, and the
+  `keepalive` / `client_keys` / `ssh_config` connect-option
+  branches. `sshpool.py` coverage lifted from ~69% to ~96%,
+  overall from ~89% to ~92%. Runbook §4.3 and §7.2 status updated.
+
 ### Added
 
 - ADR 0006 (Proposed) recording the design contract for a syscall-level

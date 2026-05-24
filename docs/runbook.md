@@ -368,10 +368,10 @@ pytest -x -vv -s
 `pytest-asyncio` mode is `auto` (see `pyproject.toml`); you do not need to
 mark coroutines.
 
-### 4.3 Coverage (CI floor: 85%, current ~89%)
+### 4.3 Coverage (CI floor: 90%, current ~92%)
 
-`coverage` is in the dev extra and runs as part of the CI loop with an
-85% floor that fails the workflow on regression. Reproduce locally:
+`coverage` is in the dev extra and runs as part of the CI loop with a
+90% floor that fails the workflow on regression. Reproduce locally:
 
 ```bash
 # One-time: wire subprocess coverage so the stdio e2e contributes.
@@ -397,9 +397,10 @@ to runs that opt in.
 
 Modules to bring to and hold above 90%: `policy.py`, `redaction.py`,
 `audit.py`, `sessions.py`. Anything that handles secrets or admission.
-Lifting the project floor to 85% means hardening `sshpool.py` (65%),
-`server.py` wrapper bodies (53%), and `sessions.py` (79%) - tracked as
-a follow-up in §7.2.
+After B-022, `sshpool.py` is at ~96% and `server.py` wrapper bodies are
+at ~95%. The remaining gap is in `sessions.py` (~85%; OS-specific
+BlockingIOError + NotImplementedError fallbacks) and `auth/oauth.py`
+(~84%; HTTP transport only).
 
 ### 4.4 Type-checking notes
 
@@ -679,13 +680,9 @@ currently empty.)
 
 ### 7.2 Quality + automation
 
-- **B-022 (P3)** Raise the CI coverage floor from 85% (current) to 90%.
-  After `tests/test_tool_wrappers.py` lifted `server.py` to 95% and
-  overall to ~88%, the remaining gap is `sshpool.py` (~68%; SSH
-  non-happy paths, forwarding error handling). One PR adding fault
-  injection around the asyncssh dispatcher would close most of it;
-  treat it as security-sensitive because those error paths are what
-  the operator sees when a remote host misbehaves.
+(Items in this category are tracked here as they land; the queue is
+currently empty. B-022 closed by the sshpool fault-injection PR -
+floor is now 90%, baseline ~92%.)
 
 ### 7.3 Operations + observability
 
