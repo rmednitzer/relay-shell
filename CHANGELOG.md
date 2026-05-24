@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- ADR 0006 (Proposed) recording the design contract for a syscall-level
+  audit channel via seccomp-bpf notification mode (`SECCOMP_RET_USER_NOTIF`
+  with `SECCOMP_USER_NOTIF_FLAG_CONTINUE`). Notify-only, never blocking;
+  opt-in via `RELAY_SHELL_SECCOMP_NOTIFY` (default `off`); Linux >= 5.5;
+  narrow syscall set (`execve`, `openat` for write, `mount`, `setuid`,
+  `unshare`, `prctl`, `ptrace`, ...); additive audit-record shape
+  (`tool="syscall_notify"`, new overflow event) so existing log shippers
+  keep working. Closes the audit gap on the child side of
+  `asyncio.create_subprocess_*` without re-introducing a sandbox —
+  ADR 0002's trust boundary stays verbatim. The runbook backlog entry
+  B-021 now points at the ADR; promotion to Accepted is gated on the
+  implementing PR and its ADR 0005 §"Decision" step 5 validation
+  outcome. ADR README next-free marker bumped to **0007**;
+  runbook §8.18 status updated.
 - ADR 0005 documenting a repeatable validation pass against upstream
   known-good sources (the `mcp` SDK surface, `asyncssh.connect` kwargs,
   the OAuth provider contract, the audit-record schema, and canonical
