@@ -25,10 +25,17 @@ Conventions:
 - `jump` is an `ssh_config`-style `user@host[:port]` bastion (asyncssh
   `tunnel`); `ssh_config` `ProxyJump` is also honoured automatically.
 
+Each tool entry below lists the test file that exercises it. Line
+numbers are intentionally omitted — they drift; the file name is the
+stable handle. The tool-list contract itself lives in
+`tests/test_server.py`.
+
 ## Local shell
 
 ### `shell_exec`
 Run a command on the local host; returns `[exit N]` + combined output.
+
+Tests: `tests/test_shell.py`, `tests/test_tool_wrappers.py`.
 
 | param | type | default | notes |
 |-------|------|---------|-------|
@@ -49,10 +56,14 @@ Run a multi-line script fed on stdin. `interpreter` is `bash` | `sh` |
 `python`. With `strict` and a shell interpreter, `set -euo pipefail` is
 prepended. Tier: heuristic from the script text.
 
+Tests: `tests/test_shell.py`, `tests/test_tool_wrappers.py`.
+
 ### `shell_spawn`
 Start a persistent local PTY (default `/bin/bash`); returns a session id.
 Params: `command`, `cols=120`, `rows=40`, `cwd`, `env_json`. Drive it with
 the `session_*` tools. Tier 1.
+
+Tests: `tests/test_sessions.py`, `tests/test_tool_wrappers.py`.
 
 ## SSH
 
@@ -61,15 +72,21 @@ Run a command on a remote host; returns `[exit N]` + combined output. Params:
 `host`, `command`, `timeout=60`, `user`, `port`, `key_path`, `known_hosts`,
 `jump`. Tier: heuristic from the command.
 
+Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
+
 ### `ssh_spawn`
 Open a persistent interactive remote PTY; returns a session id. Params:
 `host`, `command` (empty = login shell), `cols`, `rows`, plus the standard
 connection params. Tier 1.
 
+Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
+
 ### `ssh_upload` / `ssh_download`
 SFTP transfer. `ssh_upload(host, local_path, remote_path, recursive=false,
 ...)`; `ssh_download(host, remote_path, local_path, recursive=false, ...)`.
 Tier 2 (mutating).
+
+Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 
 ### `ssh_forward`
 Create a port forward. `spec`:
@@ -80,12 +97,18 @@ Create a port forward. `spec`:
 
 Returns a forward id and the listening port. Tier 2.
 
+Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
+
 ### `ssh_forward_list` / `ssh_forward_close`
 List active forwards / close one by id. Tier 1.
+
+Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 
 ### `ssh_check`
 Probe connectivity. `hosts` is a comma/space list, or empty for the whole
 inventory. Returns `host: ok | UNREACHABLE` per host. Tier 0.
+
+Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 
 ### `ssh_fanout`
 Run `command` in parallel across `hosts` (comma/space list, or empty for
@@ -97,6 +120,8 @@ classification reads `command` like a regular `ssh_exec`: `ssh_fanout
 rm -rf /` is still Tier 3, `ssh_fanout systemctl restart nginx` is
 Tier 2, and the deny list and `guarded`/`readonly` modes see the same
 probe text as a single-host call would.
+
+Tests: `tests/test_ssh_fanout_tool.py`.
 
 ### `ssh_keyscan`
 Shell out to `ssh-keyscan` to fetch each host's public key in
@@ -116,8 +141,12 @@ but it opens caller-chosen outbound TCP connections, which puts it
 outside the "observation-only" contract of `readonly` mode. Permitted
 in `open` and `guarded`; rejected in `readonly`.
 
+Tests: `tests/test_ssh_keyscan_tool.py`.
+
 ### `ssh_hosts`
 Resolved inventory (`ssh_config` + JSON inventory). Tier 0.
+
+Tests: `tests/test_inventory.py`, `tests/test_tool_wrappers.py`.
 
 ## Sessions (local PTY and SSH PTY, unified)
 
@@ -133,11 +162,15 @@ A session id from `shell_spawn` or `ssh_spawn` works with all of these.
 
 `session_recv` is Tier 0; `session_list` is Tier 0; the others are Tier 1.
 
+Tests: `tests/test_sessions.py`, `tests/test_tool_wrappers.py`.
+
 ## Diagnostics
 
 ### `server_info`
 Version, transport, policy mode, effective limits, audit path and degraded
 flag, SSH defaults, inventory size. Tier 0.
+
+Tests: `tests/test_tool_wrappers.py`, `tests/test_stdio_e2e.py`.
 
 ### `audit_tail`
 Return the last `lines` records from the audit log as JSONL (oldest first).
@@ -146,6 +179,8 @@ string if the audit file does not exist or is empty. Read-only: opens a
 fresh fd so the writer's append-only handle is untouched. Useful for an
 operator MCP client debugging a session without shelling into the host.
 Tier 0.
+
+Tests: `tests/test_audit_tail_tool.py`.
 
 ## Resources
 
@@ -176,6 +211,8 @@ truncate.
 The `ssh-config` resource lists every alias the active ssh_config file
 declares, even if an entry in the inventory file overrides the same
 alias's spec - the resource describes the file, not the merged map.
+
+Tests: `tests/test_resources.py`.
 
 ## Interactive pattern
 

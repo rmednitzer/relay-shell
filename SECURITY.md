@@ -76,8 +76,22 @@ plainly so it can be designed around rather than discovered.
 
 Open a private security advisory on the GitHub repository, or open an issue
 without exploit detail and request a private channel. Please do not file
-public issues containing working exploit payloads. Indicative response
-target: 7 days to triage.
+public issues containing working exploit payloads.
+
+### Disclosure timeline
+
+The maintainer's intent for any confirmed vulnerability:
+
+| Stage                         | Target                                                                                                 |
+|-------------------------------|--------------------------------------------------------------------------------------------------------|
+| Acknowledge receipt           | within 7 days                                                                                          |
+| Fix or mitigation plan shared | within 30 days of triage (a workaround / configuration change while a code fix is in flight counts)    |
+| Public advisory + credit      | when the fix ships; reporter credited unless they ask to remain anonymous                              |
+
+A reporter who needs a faster window for a coordinated disclosure can say
+so in the initial report; the timeline above is a default, not a ceiling.
+Targets slip only with an explicit acknowledgement back to the reporter
+explaining why.
 
 ## Scope
 

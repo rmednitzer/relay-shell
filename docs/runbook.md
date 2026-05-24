@@ -316,7 +316,7 @@ These keep coming back; check them explicitly:
 
 1. **New tool added but `tests/test_server.py::_EXPECTED` not updated** -
    the count assertion catches it but the message is confusing if the test
-   maintainer forgot to bump `len(names) == 18`.
+   maintainer forgot to bump `len(names) == 21`.
 2. **Redaction pattern that eats the next argv token** - quoted/escaped
    values are tested; if you change `REDACTION_PREFIX_PATTERNS` in
    `patterns.py`, run `tests/test_redaction.py` and
@@ -368,10 +368,10 @@ pytest -x -vv -s
 `pytest-asyncio` mode is `auto` (see `pyproject.toml`); you do not need to
 mark coroutines.
 
-### 4.3 Coverage (CI floor: 75%, current ~78%)
+### 4.3 Coverage (CI floor: 85%, current ~89%)
 
-`coverage` is in the dev extra and runs as part of the CI loop with a
-75% floor that fails the workflow on regression. Reproduce locally:
+`coverage` is in the dev extra and runs as part of the CI loop with an
+85% floor that fails the workflow on regression. Reproduce locally:
 
 ```bash
 # One-time: wire subprocess coverage so the stdio e2e contributes.
@@ -717,28 +717,31 @@ by the same checklist.
 - Keep: title, DeepWiki badge, Why, Capabilities tables (local shell,
   SSH, sessions, diagnostics, resources), Quickstart, Security posture
   summary, Layout, Development, AI contributor guidance, License.
-- Add (still open):
-  - A short "Status" line under the title: current version, supported
-    Python, supported transports.
-  - A "Compatibility matrix" block (tested on Ubuntu 24.04 + Python 3.12;
-    macOS dev OK but unsupported; Windows out of scope).
 - Done (do not re-add):
   - Runbook link under "AI contributor guidance".
   - `/metrics` paragraph under Diagnostics.
   - Resources subsection.
+  - Status line under the title (version, Python matrix, transports,
+    last validation date with ADR pointer).
+  - Compatibility matrix block (Python / host OS / transport / SDK /
+    SSH library), refreshed on every validation pass.
 - Cross-checks: capability tables must match `docs/tools.md` and
-  `tests/test_server.py::_EXPECTED`.
+  `tests/test_server.py::_EXPECTED`. The Status line's "last
+  validated" date must match the most recent ADR 0005 outcome
+  paragraph.
 
 ### 8.2 `SECURITY.md`
 
 - Keep: Model, Trust boundary, Deployment requirements, Residual risk,
   Reporting, Scope sections - they are accurate and pithy.
-- Add:
-  - A "Disclosure timeline" subsection under "Reporting a vulnerability"
+- Done (do not re-add):
+  - "Disclosure timeline" subsection under "Reporting a vulnerability"
     (acknowledge in 7 days, fix or mitigation plan in 30, public
     advisory + credit when shipped).
-  - A "Supported versions" table once the project tags a second release
-    (today only 0.1.0 exists). Until then, omit rather than fake.
+- Add (still open):
+  - A "Supported versions" table once the project tags a second
+    release (today only 0.1.0 exists). Until then, omit rather than
+    fake.
 - Remove: nothing.
 
 ### 8.3 `CHANGELOG.md`
@@ -779,9 +782,8 @@ by the same checklist.
   - "Where the lifecycle maps in code" appendix linking each step to
     the exact `server.py` / `audit.py` / `util.py` call site.
   - `metrics`, `verifier` rows in the module table.
-- Add (still open):
-  - A pointer to `docs/runbook.md` section 2 for the operator-facing
-    audit of these guarantees.
+  - Pointer to `docs/runbook.md` §2 and ADR 0005 in the security-model
+    section.
 - Remove: nothing.
 
 ### 8.7 `docs/tools.md`
@@ -793,26 +795,28 @@ by the same checklist.
   - Tier reference sidebar at the top of the file.
   - Resources section listing the three `relay-shell://...` URIs and
     the stable audit `tool` names.
-- Add (still open):
-  - A note under each tool's row stating which test exercises it
-    (single file path, no line numbers - lines drift).
+  - Per-tool "Tests: ..." line giving the test file(s) that exercise
+    each tool (file paths only - lines drift).
 - Remove: nothing.
 - Cross-checks: the set of tools listed here must equal
   `tests/test_server.py::_EXPECTED`. The default-tier note for each tool
   must match `policy._READ_ONLY_TOOLS` / `policy._MUTATING_TOOLS` / the
-  `classify` function.
+  `classify` function. Each tool's "Tests: ..." line must reference a
+  file that actually exists under `tests/`.
 
 ### 8.8 `docs/deployment.md`
 
 - Keep: every section. The deployment guide is accurate and
   worked-example heavy.
-- Add:
-  - A "Pre-flight checklist" at the top (service account exists, audit
-    dir owned by the account, append-only attribute settable on the FS,
-    DNS resolves for the edge domain, port 80/443 reachable).
-  - A "Backup and restore" subsection (clients.json/tokens.json under
-    the OAuth state dir, the audit log itself, the systemd EnvironmentFile).
-  - Link to `docs/runbook.md` section 4.6 for the manual HTTP smoke.
+- Done (do not re-add):
+  - §0 "Pre-flight checklist" (service account name, audit dir
+    writable + append-only-capable filesystem, DNS A/AAAA resolves
+    for the edge domain, ports 80/443 reachable, SSH service account
+    keypair, off-host audit shipper ready).
+  - §11 "Backup and restore" (`clients.json` / `codes.json` /
+    `tokens.json` under the OAuth state dir, the
+    `/etc/relay-shell/` EnvironmentFile, the audit log + rotations).
+  - Link to `docs/runbook.md` §4.6 for the manual HTTP smoke in §9.
 - Remove: nothing.
 
 ### 8.9 `docs/adr/0001-runtime-and-sdk.md`
@@ -837,11 +841,22 @@ by the same checklist.
 ### 8.12 `docs/adr/0004-edge-tls-automation.md`
 
 - Keep: as is. It accurately reflects what `install-edge.sh` does today.
-- Add:
-  - A short "Operational notes" appendix listing the `journalctl -u caddy`
+- Done (do not re-add):
+  - "Operational notes" appendix listing the `journalctl -u caddy`
     invocation for cert issuance troubleshooting and the
     `caddy validate --config /etc/caddy/Caddyfile` invocation for
     drift detection.
+
+### 8.12a `docs/adr/0005-codebase-validation.md`
+
+- Keep: the validation methodology (steps 1-4), the 2026-05-24
+  outcome paragraph, and the rejected-alternatives section.
+- Add on each subsequent validation pass: a new outcome paragraph
+  + findings table dated to the pass. Do not overwrite prior dates;
+  the ADR is a running record of validation events.
+- Cross-checks: every finding row must reference the file + line the
+  drift lived at and the same PR's resolution (so the audit trail is
+  recoverable without `git blame`).
 
 ### 8.13 `NOTICE`
 
@@ -898,10 +913,12 @@ plan lands in the same PR.)
 
 - Keep: the status-vocabulary table, the indexed ADR list (number /
   title / status / date / one-line subject), the "when to write an
-  ADR" criteria, the next-free-number marker, and the cross-references
-  to `docs/architecture.md` and `docs/runbook.md` §6.
+  ADR" criteria, the next-free-number marker (currently **0006**),
+  and the cross-references to `docs/architecture.md` and
+  `docs/runbook.md` §6.
 - Add: a row to the index table whenever a new ADR lands. Update the
-  status column when an ADR is superseded or deprecated.
+  status column when an ADR is superseded or deprecated. Bump the
+  next-free-number marker every time an ADR file is created.
 - Cross-checks: the index must list every file in `docs/adr/000*.md`;
   any superseded ADR must carry a `Superseded by` line in its own
   header so the chain is navigable from either direction.

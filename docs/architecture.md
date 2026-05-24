@@ -124,4 +124,7 @@ compensating controls plus deployment discipline.
 
 For the operator-facing audit of the guarantees described above (deny
 list precedence, audit-record shape, hash-not-body invariant, output
-bounds), see [`runbook.md`](runbook.md) §2.
+bounds), see [`runbook.md`](runbook.md) §2. The reproducible validation
+pass against the upstream `mcp` / `asyncssh` / OAuth surfaces lives in
+[ADR 0005](adr/0005-codebase-validation.md), which records the
+methodology and the most recent pass outcome.

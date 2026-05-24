@@ -1,17 +1,21 @@
-# Pinned runtime + dev versions, verified working on Python 3.12 (Ubuntu 24.04).
-# Mirrors the validated build set. For library-style installs use pyproject.toml.
+# Validated against the current development matrix (Python 3.12, Ubuntu
+# 24.04). Versions here mirror the resolved set `pip install -e ".[dev]"`
+# produces against the lower bounds declared in pyproject.toml; the full
+# test suite + mypy + ruff are green at this combination (ADR 0005,
+# 2026-05-24 validation pass). For library-style installs, use
+# pyproject.toml — the lower bounds there are the contract.
 mcp==1.27.1
 pydantic==2.13.4
 pydantic-settings==2.14.1
 asyncssh==2.23.0
 uvicorn==0.47.0
-starlette==1.0.0
+starlette==1.1.0
 anyio==4.13.0
 httpx==0.28.1
-PyJWT==2.12.1
+PyJWT==2.13.0
 cryptography==48.0.0
 # dev / CI
 pytest==9.0.3
 pytest-asyncio==1.3.0
-ruff==0.15.13
+ruff==0.15.14
 mypy==2.1.0
