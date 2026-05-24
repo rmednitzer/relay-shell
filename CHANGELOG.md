@@ -8,6 +8,47 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- ADR 0005 documenting a repeatable validation pass against upstream
+  known-good sources (the `mcp` SDK surface, `asyncssh.connect` kwargs,
+  the OAuth provider contract, the audit-record schema, and canonical
+  redaction / tier-classification samples). The ADR records the
+  methodology, the 2026-05-24 outcome (all four steps green: 21 tools
+  registered, 195 tests pass, 89% coverage with subprocess collection,
+  every upstream symbol resolves on the pinned versions), and the
+  three small documentation-drift findings the pass surfaced
+  (`requirements.txt` pin staleness, runbook §4.3 coverage figure,
+  runbook §3.4 obsolete tool-count reference). All three resolved in
+  this PR. The next free ADR number is **0006**.
+- README "Status" line under the title (version, supported Python
+  matrix, transports, MCP SDK pin, last-validation date with ADR
+  pointer) and a "Compatibility matrix" block (Python / host OS /
+  transport / SDK / SSH library). Runbook §8.1 status updated.
+- `SECURITY.md` "Disclosure timeline" subsection under "Reporting a
+  vulnerability" (acknowledge in 7 days, fix or mitigation plan in
+  30 days of triage, public advisory + credit when shipped). The
+  reporter can request a faster window in their initial report.
+  Runbook §8.2 status updated.
+- `docs/architecture.md` cross-link to ADR 0005 (and the existing
+  runbook §2 pointer) in the security-model section so the
+  validation methodology is one click away from the request-
+  lifecycle diagram. Runbook §8.6 status updated.
+- `docs/tools.md` per-tool "Tests: ..." lines for every registered
+  tool (and the resources section), each pointing at the test
+  file(s) that exercise it. File paths only — line numbers drift.
+  Runbook §8.7 status updated and the cross-check list extended to
+  cover the new lines.
+- `docs/deployment.md` §0 "Pre-flight checklist" (service account
+  name, audit-dir writability + filesystem support for `chattr +a`,
+  DNS A/AAAA, ports 80/443, SSH keypair, off-host audit shipper),
+  §11 "Backup and restore" subsection (OAuth state dir,
+  `/etc/relay-shell/` EnvironmentFile, audit log + rotations), and
+  a cross-link to runbook §4.6 from the §9 Health section.
+  Runbook §8.8 status updated.
+- `docs/adr/0004-edge-tls-automation.md` "Operational notes"
+  appendix listing the `journalctl -u caddy` and
+  `caddy validate --config /etc/caddy/Caddyfile` invocations
+  operators reach for during ACME troubleshooting and Caddyfile
+  drift checks. Runbook §8.12 status updated.
 - `.github/workflows/release.yml` cuts a PyPI release on a signed `v*`
   tag push. Three gated jobs: **verify** (annotated + GPG/SSH-signed
   tag, verified by GitHub; tag matches `[project] version` in
@@ -171,6 +212,29 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- `requirements.txt` pins refreshed to the actually-resolved set
+  produced by `pip install -e ".[dev]"` against the pyproject.toml
+  lower bounds (the previous file claimed `starlette==1.0.0` /
+  `PyJWT==2.12.1` / `ruff==0.15.13` while pip resolved `1.1.0` /
+  `2.13.0` / `0.15.14`; the file header now describes itself as
+  validated against the development matrix rather than as a strict
+  lockfile, and points at ADR 0005 for the validation date).
+- `docs/runbook.md` §4.3 coverage figure refreshed from the stale
+  "CI floor: 75%, current ~78%" to "CI floor: 85%, current ~89%"
+  (matches `pyproject.toml`'s `fail_under = 85` and the measured
+  subprocess-collected coverage). §3.4 "common review failures"
+  obsolete `len(names) == 18` reference updated to `21` (matches
+  `tests/test_server.py:36`).
+- `docs/runbook.md` §8 status table updated: §8.1 (README), §8.2
+  (SECURITY.md), §8.6 (architecture.md), §8.7 (tools.md), §8.8
+  (deployment.md), §8.12 (ADR 0004) and a new §8.12a (ADR 0005)
+  move their "still open" items into "done", with the validation-
+  cadence note attached to §8.12a so each subsequent ADR-0005 pass
+  appends a dated outcome paragraph instead of overwriting prior
+  ones. §8.18 (ADR README) records the next-free-number bump to
+  0006.
+- `docs/adr/README.md` adds the ADR 0005 index row and bumps the
+  next-free-number marker to **0006**.
 - CI coverage floor raised to 85% (from the initial 75%). The new
   `tests/test_tool_wrappers.py` module calls every `@mcp.tool()` wrapper
   in `server.py` through `mcp.call_tool()` with arguments that produce

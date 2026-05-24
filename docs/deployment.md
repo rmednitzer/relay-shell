@@ -4,6 +4,43 @@
 **where and as whom it runs**. This guide describes a production-grade
 deployment modeled on a mature MCP gateway.
 
+## 0. Pre-flight checklist
+
+Run through this list before §1 (service account creation). Each row is a
+hard precondition for the matching later section; skipping any of them
+turns a smooth install into an outage.
+
+- [ ] **Service account name decided.** The default is `relay-shell`
+      with home directory `/var/lib/relay-shell` (§1). Pick a different
+      name only if your host conventions require it; update the systemd
+      unit + logrotate config + `chown` lines below accordingly.
+- [ ] **Audit directory writable by the service account.**
+      `/var/log/relay-shell/` exists, is owned by the service account,
+      and the filesystem supports `chattr +a` (ext2/3/4, xfs).
+      Append-only on a `tmpfs` or fuse mount silently degrades to a
+      normal write — confirm `lsattr` after `chattr +a`.
+- [ ] **DNS resolves for the edge domain** (HTTP transport only).
+      `dig +short ${RELAY_SHELL_EDGE_DOMAIN}` returns the host's public
+      IP. The HTTP-01 ACME challenge does not work without this.
+- [ ] **Ports 80 and 443 reachable from the internet** (HTTP transport
+      only). Port 80 is required for HTTP-01; closing it blocks
+      issuance and renewal both. If a host firewall is in front, open
+      it before running `install-edge.sh` (or set
+      `RELAY_SHELL_EDGE_OPEN_FIREWALL=1` to have the installer try).
+- [ ] **SSH service account keypair generated** (`ssh-keygen -t ed25519`
+      as the service account) and `known_hosts` strategy chosen
+      (`strict` for production — pre-populate with `ssh-keyscan`; see
+      §7).
+- [ ] **Off-host audit shipping target ready** (Vector / Fluent Bit /
+      journal-remote — see `docs/audit-shipper.md`). An on-host audit
+      file is evidence only until the host is compromised; the
+      shipper must be in place *before* the unit is enabled in
+      production.
+
+If any row is unchecked, fix it before continuing — the install is
+idempotent but recovery from a half-configured edge or a non-shipping
+audit log is more work than the precondition.
+
 ## 1. Service account
 
 Default recommendation: run as a dedicated unprivileged user, never a human's account.
@@ -188,6 +225,9 @@ prohibitions regardless of posture.
 `scripts/healthcheck.sh` checks the local HTTP port. For stdio, liveness is
 the supervising client's concern. `server_info` reports effective limits and
 whether the audit sink is degraded (a degraded audit sink is an alert).
+The end-to-end HTTP smoke (start the transport, hit
+`/.well-known/oauth-protected-resource`, stop it) is documented in
+[`runbook.md`](runbook.md) §4.6.
 
 ### 9a. Prometheus metrics
 
@@ -237,6 +277,45 @@ Ansible drift-detection callouts). A cron line like:
 ```
 
 …lets a log shipper trip an alert when `ok: false` lands in the JSON.
+
+## 11. Backup and restore
+
+The relay's persistent state is small and lives in three directories.
+Back them up together; the relay itself is stateless beyond these:
+
+| What                                                            | Where                                                                                         | Why it matters                                                                              |
+|-----------------------------------------------------------------|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
+| OAuth state                                                     | `${RELAY_SHELL_AUTH_STATE_DIR}/{clients.json, codes.json, tokens.json}` (default `/var/lib/relay-shell/oauth/`) | Losing it logs every client out and re-runs single-client lockdown from scratch (a new client can register, the old one cannot). |
+| systemd EnvironmentFile                                         | `/etc/relay-shell/relay-shell.env` (plus `/etc/relay-shell/relay-shell-edge.env` for the edge) | Source of truth for every `RELAY_SHELL_*` knob; recreating it from scratch is error-prone.  |
+| Audit log                                                       | `${RELAY_SHELL_AUDIT_PATH}` (default `/var/log/relay-shell/audit.jsonl`) plus `audit.jsonl.{1..N}.gz` rotations | The on-host copy is the local fallback when the off-host shipper has fallen behind.        |
+
+A simple recipe (adapt to your backup tool):
+
+```bash
+sudo tar -czf relay-shell-state-$(date +%F).tar.gz \
+  /etc/relay-shell \
+  /var/lib/relay-shell/oauth \
+  /var/log/relay-shell
+```
+
+Restore the OAuth state with `chmod 0700 oauth/ && chmod 0600 oauth/*.json`
+preserved (the file modes are part of the trust boundary — the relay
+re-applies them on next write, but an attacker reading between restore
+and first write should not see 0644 files). The audit log is append-only
+on disk; restore it *before* the relay starts so `chattr +a` does not
+race with a write into the unmoved file. The drift-detection CLI
+(`relay-shell --verify-deploy`, §10) confirms the systemd unit + Caddyfile
++ logrotate config match the templates after a restore.
+
+What is **not** in scope for backup:
+
+- The Python venv under `/var/lib/relay-shell/venv/` — recreate with
+  `pip install relay-shell` (§2).
+- The Caddy data directory (`/var/lib/caddy/`) — Caddy will re-issue
+  the certificate from ACME on first start. Backing it up is only
+  worth doing if you are rate-limited on the ACME directory.
+- The SSH known_hosts file under the service account's `~/.ssh/` —
+  reseed with `ssh_keyscan` (§7) rather than restoring stale entries.
 
 ## Emergency
 

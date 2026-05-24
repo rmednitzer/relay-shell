@@ -74,3 +74,39 @@ and ship it as a turnkey installer:
   into the application.
 - **Manual cert installation**: workable for a one-off deploy but loses the
   automated-renewal property the task requires.
+
+## Operational notes
+
+The day-to-day operator-facing surface for the edge boils down to two
+commands. They live here rather than in `deployment.md` so the
+troubleshooting context stays next to the decision they exercise.
+
+- **Cert issuance / renewal troubleshooting.** Caddy logs ACME activity
+  to its systemd journal stream. The most useful first look:
+
+  ```bash
+  sudo journalctl -u caddy -n 200 --no-pager
+  sudo journalctl -u caddy -f          # follow during an issuance attempt
+  ```
+
+  ACME failures usually show as `obtain: ...` or `solve: ...` errors;
+  the message names the failing challenge (HTTP-01) and the upstream
+  reason (rate limit, DNS, port 80 unreachable). Switch to the LE
+  staging directory via `RELAY_SHELL_EDGE_ACME_CA` (see
+  `deployment.md` §4a) while reproducing — production rate limits are
+  unforgiving.
+
+- **Caddyfile drift / validation.** A misconfigured Caddyfile fails
+  closed at service-start. Validate before pushing:
+
+  ```bash
+  sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+  ```
+
+  This is what `install-edge.sh` runs internally before swapping the
+  file; running it standalone is the right move when the install
+  finished but a downstream config change (a new CIDR, a header
+  edit) needs a one-off check. Pair with `relay-shell --verify-deploy`
+  (see `deployment.md` §10) for a byte-for-byte comparison against
+  the shipped template — useful when "did someone hand-edit this?"
+  is the operative question.
