@@ -292,11 +292,18 @@ Back them up together; the relay itself is stateless beyond these:
 A simple recipe (adapt to your backup tool):
 
 ```bash
-sudo tar -czf relay-shell-state-$(date +%F).tar.gz \
+backup_dir=/root/relay-shell-backups
+sudo install -d -m 700 "$backup_dir"
+sudo install -m 600 /dev/null "$backup_dir/relay-shell-state-$(date +%F).tar.gz"
+sudo tar -czf "$backup_dir/relay-shell-state-$(date +%F).tar.gz" \
   /etc/relay-shell \
   /var/lib/relay-shell/oauth \
   /var/log/relay-shell
 ```
+
+The `install` steps intentionally create a root-only destination
+(directory `0700`, archive `0600`) before `tar` writes sensitive OAuth
+state and environment material.
 
 Restore the OAuth state with `chmod 0700 oauth/ && chmod 0600 oauth/*.json`
 preserved (the file modes are part of the trust boundary — the relay
