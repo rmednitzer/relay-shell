@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bats:*)",
+      "Bash(bash -n:*)",
+      "Bash(bash --version)",
+      "Bash(just:*)"
+    ]
+  }
+}
