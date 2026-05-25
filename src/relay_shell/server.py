@@ -99,7 +99,11 @@ class Relay:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.audit = AuditLogger(settings.audit_path, also_stderr=settings.audit_stderr)
+        self.audit = AuditLogger(
+            settings.audit_path,
+            also_stderr=settings.audit_stderr,
+            fmt=settings.audit_format,
+        )
         self.policy = Policy(settings.policy_mode, settings.policy_deny, settings.policy_allow)
         self.inventory = Inventory(settings.ssh_config, settings.inventory).load()
         self.sessions = SessionRegistry(

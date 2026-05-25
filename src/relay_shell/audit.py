@@ -28,13 +28,59 @@ from .util import now_iso, sha256_hex
 __all__ = ["AuditLogger"]
 
 
+def _format_jsonl(entry: dict[str, Any]) -> str:
+    return json.dumps(entry, default=str, ensure_ascii=False)
+
+
+def _stringify(value: Any) -> str:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return str(value)
+    return json.dumps(value, default=str, ensure_ascii=False, separators=(",", ":"))
+
+
+def _cef_escape(value: str) -> str:
+    # CEF extension escaping for separators and line breaks.
+    return (
+        value.replace("\\", "\\\\")
+        .replace("=", "\\=")
+        .replace("|", "\\|")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
+
+
+def _leef_escape(value: str) -> str:
+    # LEEF extension escaping with tab-separated key-value fields.
+    return (
+        value.replace("\\", "\\\\")
+        .replace("=", "\\=")
+        .replace("\t", "\\t")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
+
+
+def _format_cef(entry: dict[str, Any]) -> str:
+    ext = " ".join(f"{k}={_cef_escape(_stringify(v))}" for k, v in sorted(entry.items()))
+    return f"CEF:0|relay-shell|relay-shell|1.0|audit|tool-call|5|{ext}"
+
+
+def _format_leef(entry: dict[str, Any]) -> str:
+    ext = "\t".join(f"{k}={_leef_escape(_stringify(v))}" for k, v in sorted(entry.items()))
+    return f"LEEF:2.0|relay-shell|relay-shell|1.0|audit\t{ext}"
+
+
+_FORMATTERS = {"jsonl": _format_jsonl, "cef": _format_cef, "leef": _format_leef}
+
+
 class AuditLogger:
     """Writes structured audit records. Construction never raises."""
 
-    def __init__(self, path: str, also_stderr: bool = False) -> None:
+    def __init__(self, path: str, also_stderr: bool = False, fmt: str = "jsonl") -> None:
         self.path = path
         self.degraded = False
         self.degraded_reason = ""
+        self.format = fmt
         self._log = logging.getLogger("relay_shell.audit")
         self._log.setLevel(logging.INFO)
         self._log.propagate = False
@@ -94,10 +140,11 @@ class AuditLogger:
             entry["client_id"] = client_id
         # Audit must never break a tool call.
         with contextlib.suppress(Exception):
-            self._log.info(json.dumps(entry, default=str, ensure_ascii=False))
+            formatter = _FORMATTERS.get(self.format, _format_jsonl)
+            self._log.info(formatter(entry))
 
     def tail(self, lines: int) -> str:
-        """Return the last ``lines`` audit records as JSONL.
+        """Return the last ``lines`` audit records as on-disk text lines.
 
         Records are returned in their original on-disk order (oldest first).
         The empty string is returned if the audit file does not exist, is
@@ -145,7 +192,7 @@ class AuditLogger:
             text = data.decode("utf-8", errors="replace")
             # Drop blank trailing lines (logger does not write them, but
             # a caller might tail a partial write window) and strip the
-            # line terminator on each record for consistent JSONL output.
+            # line terminator on each record for consistent line output.
             records = [ln for ln in text.splitlines() if ln.strip()]
             return "\n".join(records[-lines:])
         except Exception:  # noqa: BLE001 - contract is "never raise"

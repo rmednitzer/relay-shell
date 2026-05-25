@@ -161,3 +161,53 @@ def test_tail_bounded_by_requested_lines_not_file_size(tmp_path: Path) -> None:
     file_size = path.stat().st_size
     assert file_size > 1_000_000  # sanity: file really is big
     assert len(out.encode()) < 4_000  # tail is small regardless
+
+
+def test_audit_cef_format(tmp_path: Path) -> None:
+    path = tmp_path / "audit.cef"
+    log = AuditLogger(str(path), fmt="cef")
+    log.record(tool="shell_exec", args={"command": "id"}, output="ok", exit_code=0, tier=1)
+    line = path.read_text(encoding="utf-8").strip()
+    assert line.startswith("CEF:0|relay-shell|relay-shell|1.0|audit|tool-call|5|")
+    assert "tool=shell_exec" in line
+    assert "output_sha256=" in line
+
+
+def test_audit_leef_format(tmp_path: Path) -> None:
+    path = tmp_path / "audit.leef"
+    log = AuditLogger(str(path), fmt="leef")
+    log.record(tool="server_info", args={}, output="ok", exit_code=0, tier=0)
+    line = path.read_text(encoding="utf-8").strip()
+    assert line.startswith("LEEF:2.0|relay-shell|relay-shell|1.0|audit\t")
+    assert "tool=server_info" in line
+    assert "\toutput_len=" in line
+
+
+def test_audit_cef_escapes_delimiters(tmp_path: Path) -> None:
+    path = tmp_path / "audit.cef"
+    log = AuditLogger(str(path), fmt="cef")
+    log.record(
+        tool="shell_exec",
+        args={"command": "echo a|b=c"},
+        output="ok\nline2",
+        exit_code=0,
+        tier=1,
+    )
+    line = path.read_text(encoding="utf-8").strip()
+    assert "args={\"command\":\"echo a\\|b\\=c\"}" in line
+    assert "output_len=8" in line
+
+
+def test_audit_leef_escapes_tabs_and_delimiters(tmp_path: Path) -> None:
+    path = tmp_path / "audit.leef"
+    log = AuditLogger(str(path), fmt="leef")
+    log.record(
+        tool="shell_exec",
+        args={"command": "printf 'a\\tb=c'"},
+        output="ok\r\nline2",
+        exit_code=0,
+        tier=1,
+    )
+    line = path.read_text(encoding="utf-8").strip()
+    assert "args={\"command\":\"printf 'a\\\\\\\\tb\\=c'\"}" in line
+    assert "\ttool=shell_exec" in line

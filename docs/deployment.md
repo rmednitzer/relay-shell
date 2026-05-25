@@ -195,6 +195,9 @@ sudo touch /var/log/relay-shell/audit.jsonl && sudo chattr +a /var/log/relay-she
 sudo cp deploy/logrotate/relay-shell /etc/logrotate.d/relay-shell
 ```
 
+`RELAY_SHELL_AUDIT_FORMAT` controls serialization for downstream SIEM ingest:
+`jsonl` (default), `cef`, or `leef`.
+
 The bundled logrotate config drops the append-only bit only for the rotate
 and restores it immediately. **Ship the log off-host** and alert on gaps; an
 on-host log is evidence only until the host is compromised. See
