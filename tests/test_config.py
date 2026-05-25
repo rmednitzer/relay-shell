@@ -11,6 +11,7 @@ def test_defaults(clean_env: None) -> None:
     assert s.transport == "stdio"
     assert s.policy_mode == "open"
     assert s.max_timeout >= s.default_timeout
+    assert s.audit_format == "jsonl"
 
 
 def test_env_override(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -31,5 +32,11 @@ def test_invalid_transport(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_invalid_known_hosts(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RELAY_SHELL_SSH_KNOWN_HOSTS", "whatever")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_invalid_audit_format(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RELAY_SHELL_AUDIT_FORMAT", "syslog")
     with pytest.raises(ValidationError):
         Settings()

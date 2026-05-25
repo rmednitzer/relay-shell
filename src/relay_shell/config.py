@@ -16,6 +16,7 @@ __all__ = ["Settings", "get_settings"]
 _TRANSPORTS = {"stdio", "http"}
 _POLICY_MODES = {"open", "guarded", "readonly"}
 _KNOWN_HOSTS = {"strict", "accept-new", "ignore"}
+_AUDIT_FORMATS = {"jsonl", "cef", "leef"}
 
 
 class Settings(BaseSettings):
@@ -51,6 +52,7 @@ class Settings(BaseSettings):
     # Audit
     audit_path: str = "/var/log/relay-shell/audit.jsonl"
     audit_stderr: bool = False
+    audit_format: str = "jsonl"
 
     # SSH
     ssh_config: str = "~/.ssh/config"
@@ -90,6 +92,14 @@ class Settings(BaseSettings):
         v = v.strip().lower()
         if v not in _KNOWN_HOSTS:
             raise ValueError(f"ssh_known_hosts must be one of {sorted(_KNOWN_HOSTS)}")
+        return v
+
+    @field_validator("audit_format")
+    @classmethod
+    def _v_audit_format(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in _AUDIT_FORMATS:
+            raise ValueError(f"audit_format must be one of {sorted(_AUDIT_FORMATS)}")
         return v
 
 
