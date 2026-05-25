@@ -50,8 +50,9 @@ jobs:
           python -m pip install --upgrade pip
           # Install the package's runtime dependencies (not the dev extra).
           # Pinning to requirements.txt keeps the SBOM aligned with the
-          # validated build set.
-          pip install --require-hashes=false -r requirements.txt
+          # validated build set. requirements.txt carries no --hash entries,
+          # so pip does not require hashes by default.
+          pip install -r requirements.txt
           pip install .
           pip install "cyclonedx-bom>=4,<6"
 
