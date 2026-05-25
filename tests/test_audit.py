@@ -194,7 +194,7 @@ def test_audit_cef_escapes_delimiters(tmp_path: Path) -> None:
         tier=1,
     )
     line = path.read_text(encoding="utf-8").strip()
-    assert "args={\"command\":\"echo a\\|b\\=c\"}" in line
+    assert 'args={"command":"echo a\\|b\\=c"}' in line
     assert "output_len=8" in line
 
 
@@ -209,5 +209,5 @@ def test_audit_leef_escapes_tabs_and_delimiters(tmp_path: Path) -> None:
         tier=1,
     )
     line = path.read_text(encoding="utf-8").strip()
-    assert "args={\"command\":\"printf 'a\\\\\\\\tb\\=c'\"}" in line
+    assert 'args={"command":"printf \'a\\\\\\\\tb\\=c\'"}' in line
     assert "\ttool=shell_exec" in line
