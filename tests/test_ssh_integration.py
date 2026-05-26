@@ -447,3 +447,165 @@ async def test_ssh_close_all_drops_forwards(forward_ssh_port: int, tmp_path: Pat
     await pool.close_all()
     assert pool.forward_count() == 0
     assert pool.list_forwards() == []
+
+
+async def test_close_forward_swallows_listener_close_exception(
+    forward_ssh_port: int, tmp_path: Path
+) -> None:
+    """If the listener's close() itself raises, close_forward() degrades gracefully.
+
+    Direct unit-level fault injection: swap the listener for an object
+    whose .close() always raises and .wait_closed() always raises.
+    close_forward() must still return the "closed forward" message and
+    pop the handle from the registry (best-effort teardown is the
+    contract, recorded in sshpool.py around the suppress block).
+    """
+    pool = _pool(tmp_path)
+    handle = await pool.add_forward(
+        "127.0.0.1", "L:0:127.0.0.1:80", connect_kwargs=_ck(forward_ssh_port)
+    )
+
+    class _BrokenListener:
+        def close(self) -> None:
+            raise RuntimeError("listener close failed")
+
+        async def wait_closed(self) -> None:
+            raise RuntimeError("wait_closed failed")
+
+    # Replace the underlying listener with one that fails on teardown.
+    # The handle is a dataclass with a `listener` field — swap it.
+    handle.listener = _BrokenListener()  # type: ignore[assignment]
+    try:
+        msg = await pool.close_forward(handle.id)
+        assert "closed forward" in msg
+        assert pool.forward_count() == 0
+    finally:
+        await pool.close_all()
+
+
+async def test_connection_cache_reuses_on_same_target(ssh_port: int, tmp_path: Path) -> None:
+    """A second connect() against the same target returns the cached entry."""
+    pool = _pool(tmp_path)
+    try:
+        conn1 = await pool.connect("127.0.0.1", **_ck(ssh_port))
+        conn2 = await pool.connect("127.0.0.1", **_ck(ssh_port))
+        assert conn1 is conn2
+        assert len(pool._conns) == 1
+    finally:
+        await pool.close_all()
+
+
+async def test_connection_cache_evicts_idle_entries(ssh_port: int, tmp_path: Path) -> None:
+    """A connection that exceeds ssh_idle_timeout is dropped on the next connect."""
+    settings = Settings(
+        audit_path=str(tmp_path / "a.jsonl"),
+        ssh_known_hosts="ignore",
+        ssh_connect_timeout=5,
+        ssh_keepalive=0,
+        ssh_idle_timeout=1,  # one-second idle window so the test runs fast
+        ssh_config=str(tmp_path / "none"),
+    )
+    inv = Inventory(settings.ssh_config, "").load()
+    pool = SshPool(settings=settings, inventory=inv)
+    try:
+        conn1 = await pool.connect("127.0.0.1", **_ck(ssh_port))
+        # Backdate last_used so the next connect() sweep evicts it.
+        # The cache key is internal; pick the only entry there is.
+        assert len(pool._conns) == 1
+        only_key = next(iter(pool._conns))
+        pool._conns[only_key].last_used -= 10  # well past 1s timeout
+
+        conn2 = await pool.connect("127.0.0.1", **_ck(ssh_port))
+        # A fresh connection must have been opened.
+        assert conn1 is not conn2
+        assert len(pool._conns) == 1
+    finally:
+        await pool.close_all()
+
+
+async def test_connection_cache_purges_closed_entries(ssh_port: int, tmp_path: Path) -> None:
+    """A cached connection whose ``is_closed()`` returns True is purged on sweep."""
+    pool = _pool(tmp_path)
+    try:
+        conn1 = await pool.connect("127.0.0.1", **_ck(ssh_port))
+        # Close out from under the cache. is_closed() now reports True.
+        conn1.close()
+        await conn1.wait_closed()
+        assert conn1.is_closed()
+
+        conn2 = await pool.connect("127.0.0.1", **_ck(ssh_port))
+        assert conn1 is not conn2
+        assert not conn2.is_closed()
+    finally:
+        await pool.close_all()
+
+
+async def test_connection_cache_idle_timeout_zero_disables_eviction(
+    ssh_port: int, tmp_path: Path
+) -> None:
+    """ssh_idle_timeout=0 keeps the historical behavior (idle entries are kept)."""
+    settings = Settings(
+        audit_path=str(tmp_path / "a.jsonl"),
+        ssh_known_hosts="ignore",
+        ssh_connect_timeout=5,
+        ssh_keepalive=0,
+        ssh_idle_timeout=0,  # disable
+        ssh_config=str(tmp_path / "none"),
+    )
+    inv = Inventory(settings.ssh_config, "").load()
+    pool = SshPool(settings=settings, inventory=inv)
+    try:
+        conn1 = await pool.connect("127.0.0.1", **_ck(ssh_port))
+        only_key = next(iter(pool._conns))
+        # Backdate way past any sensible window; still must not evict.
+        pool._conns[only_key].last_used -= 1_000_000
+
+        conn2 = await pool.connect("127.0.0.1", **_ck(ssh_port))
+        assert conn1 is conn2
+    finally:
+        await pool.close_all()
+
+
+async def test_connection_cache_sweep_treats_is_closed_exception_as_closed(
+    ssh_port: int, tmp_path: Path
+) -> None:
+    """If ``is_closed()`` raises, the sweep treats the entry as dead and evicts it.
+
+    Defensive branch: a connection that has slipped into an exotic state
+    (e.g. asyncssh internal invariant violation, garbage collection
+    race) should not wedge the pool. The sweep absorbs the exception
+    and drops the entry; the next connect() opens a fresh one.
+
+    Drive ``_sweep_conns`` directly rather than going through ``connect()``
+    (which would orphan the real cached conn behind the swap and leak
+    background tasks into the test teardown). The behavior under test
+    is the exception path inside the sweep itself.
+    """
+    from relay_shell.sshpool import _ConnEntry
+
+    pool = _pool(tmp_path)
+    try:
+        # Seed the cache with a real connection so close_all() can
+        # release it through the normal path; we only swap the entry
+        # under test, not the real conn1.
+        await pool.connect("127.0.0.1", **_ck(ssh_port))
+
+        class _BadConn:
+            def is_closed(self) -> bool:
+                raise RuntimeError("internal error")
+
+            def close(self) -> None:
+                raise RuntimeError("close failed")
+
+        bad_key = "bad@127.0.0.1:9999"
+        pool._conns[bad_key] = _ConnEntry(conn=_BadConn())  # type: ignore[arg-type]
+        assert bad_key in pool._conns
+
+        await pool._sweep_conns()
+
+        # The defensive branch evicted the bad entry; the real
+        # connection survived (is_closed() returns False).
+        assert bad_key not in pool._conns
+        assert len(pool._conns) == 1
+    finally:
+        await pool.close_all()

@@ -168,7 +168,8 @@ Tests: `tests/test_sessions.py`, `tests/test_tool_wrappers.py`.
 
 ### `server_info`
 Version, transport, policy mode, effective limits, audit path and degraded
-flag, SSH defaults, inventory size. Tier 0.
+flag, SSH defaults (known-hosts mode, connect/keepalive/idle timeouts),
+inventory size. Tier 0.
 
 Tests: `tests/test_tool_wrappers.py`, `tests/test_stdio_e2e.py`.
 

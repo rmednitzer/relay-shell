@@ -6,6 +6,55 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `RELAY_SHELL_SSH_IDLE_TIMEOUT` (default 1800s) drops a cached SSH
+  connection that has not been used for that many seconds the next
+  time `SshPool.connect()` is consulted. Mirrors the shape of
+  `SessionRegistry._sweep`: opportunistic sweeping on every connect,
+  no always-on background task. A value of `0` disables idle eviction
+  (closed connections are still purged on the next sweep so a
+  re-connect attempt does not return a dead handle). Long-running
+  deployments that fan out across a large host inventory should leave
+  the reaper on so the pool does not accumulate idle handles to hosts
+  it will not contact again. `server_info.ssh` now reports
+  `connect_timeout`, `keepalive`, and `idle_timeout` alongside the
+  existing `known_hosts_default` / `inventory_hosts` / `ssh_config`
+  fields. Closes runbook §5.1 C-001.
+- Property-based tests for `truncate` (UTF-8 boundary safety, prefix
+  invariant, marker presence) live in `tests/test_util.py` next to
+  the hand-picked cases; ~300 examples per property keeps the default
+  `pytest` run under a second. Closes runbook §5.3 T-005.
+- Regression tests pinning the `[session ... ended]` and
+  `[session ... ended, exit=N]` marker shape that closed sessions
+  return via `session_recv`. Client renderers grep for these markers;
+  the tests freeze both branches so a future refactor cannot silently
+  change either string. Closes runbook §5.3 T-003.
+- Fault-injection test for `close_forward()` when the underlying
+  listener's `close()` / `wait_closed()` raise: the pool's
+  `contextlib.suppress(Exception)` swallows the failure and the tool
+  still returns the structured `closed forward {fid}` message and
+  drops the handle from the registry. Closes runbook §5.3 T-004.
+- Drift-prevention tests asserting the registered tool set equals the
+  set documented in `docs/tools.md`, the README capability tables,
+  and the `_INSTRUCTIONS` string at the bottom of `server.py`. A
+  missed update on any of the four fails a PR rather than ships
+  silently. Closes runbook §5.1 C-002 / C-004.
+
+### Changed
+
+- `Relay.connect_kwargs` accepts an optional `connect_timeout` keyword;
+  the `ssh_check` and `ssh_fanout` wrappers no longer hand-roll the
+  dict literal to inject the probe-level timeout. Zero / negative
+  overlays are dropped so `SshPool.connect` falls back to
+  `settings.ssh_connect_timeout` (the historical default). Closes
+  runbook §5.1 C-003.
+- `_INSTRUCTIONS` (the FastMCP server hint string) spells out
+  `ssh_forward_list` / `ssh_forward_close` instead of the
+  `ssh_forward(/list/close)` shorthand, so the C-004 drift-prevention
+  test can see every registered tool by name. The protocol-level
+  overview is otherwise unchanged.
+
 ## [0.1.0] - 2026-05-25
 
 ### Added

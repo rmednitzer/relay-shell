@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,14 @@ class ForwardHandle:
     listen_port: int
     target: str
     listener: Any
+
+
+@dataclass
+class _ConnEntry:
+    """Cached SSH connection plus the monotonic time it was last used."""
+
+    conn: Any
+    last_used: float = field(default_factory=time.monotonic)
 
 
 class SshProcessTransport:
@@ -100,9 +109,34 @@ class SshProcessTransport:
 class SshPool:
     settings: Any
     inventory: Inventory
-    _conns: dict[str, Any] = field(default_factory=dict)
+    _conns: dict[str, _ConnEntry] = field(default_factory=dict)
     _forwards: dict[str, ForwardHandle] = field(default_factory=dict)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    async def _sweep_conns(self) -> None:
+        """Evict closed or idle connections from the cache.
+
+        Mirrors the shape of ``SessionRegistry._sweep`` — opportunistic
+        sweeping on every ``connect()`` rather than an always-on
+        background task. ``ssh_idle_timeout=0`` disables idle eviction
+        (closed connections are still purged so a re-connect attempt
+        does not return a dead handle).
+        """
+        timeout = float(getattr(self.settings, "ssh_idle_timeout", 0) or 0)
+        now = time.monotonic()
+        doomed: list[Any] = []
+        async with self._lock:
+            for key in list(self._conns):
+                entry = self._conns[key]
+                try:
+                    closed = entry.conn.is_closed()
+                except Exception:  # noqa: BLE001 - defensive: treat as closed
+                    closed = True
+                if closed or (timeout > 0 and now - entry.last_used > timeout):
+                    doomed.append(self._conns.pop(key).conn)
+        for conn in doomed:
+            with contextlib.suppress(Exception):
+                conn.close()
 
     def _known_hosts_arg(self, mode: str) -> object:
         if mode not in _KNOWN_HOSTS_MODES:
@@ -145,10 +179,12 @@ class SshPool:
         mode = (known_hosts or spec.known_hosts or self.settings.ssh_known_hosts).lower()
         key = _conn_key(spec.hostname, eff_user or None, eff_port or None)
 
+        await self._sweep_conns()
         async with self._lock:
-            cached = self._conns.get(key)
-            if cached is not None and not cached.is_closed():
-                return cached
+            entry = self._conns.get(key)
+            if entry is not None and not entry.conn.is_closed():
+                entry.last_used = time.monotonic()
+                return entry.conn
 
         opts: dict[str, Any] = {
             "known_hosts": self._known_hosts_arg(mode),
@@ -173,7 +209,7 @@ class SshPool:
             await self._persist_host_key(conn, spec.hostname)
 
         async with self._lock:
-            self._conns[key] = conn
+            self._conns[key] = _ConnEntry(conn=conn)
         return conn
 
     async def run(
@@ -326,12 +362,12 @@ class SshPool:
     async def close_all(self) -> None:
         async with self._lock:
             forwards = list(self._forwards.values())
-            conns = list(self._conns.values())
+            entries = list(self._conns.values())
             self._forwards.clear()
             self._conns.clear()
         for handle in forwards:
             with contextlib.suppress(Exception):
                 handle.listener.close()
-        for conn in conns:
+        for entry in entries:
             with contextlib.suppress(Exception):
-                conn.close()
+                entry.conn.close()

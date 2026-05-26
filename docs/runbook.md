@@ -466,26 +466,27 @@ and clearer code, not to land a refactor for its own sake.
 
 ### 5.1 Consolidation candidates
 
-- **C-001 Connection-cache TTL.** `SshPool._conns` has no idle eviction.
-  Long-running deployments accumulate connections to hosts they will not
-  contact again. Add an idle reaper or a max-cache-size LRU; mirror the
-  shape of `SessionRegistry._sweep` for consistency.
-- **C-002 Single source of truth for the tool list.** Today the set lives
-  in `server.py` (definitions), `tests/test_server.py::_EXPECTED`
-  (contract), `docs/tools.md` (docs), and the README capability tables.
-  Either generate the docs and the test set from a list module, or accept
-  the duplication and add a CI check that the four are equal.
-- **C-003 Unify `connect_kwargs` plumbing.** Every SSH tool builds the
-  same dict in `server.py` via `Relay.connect_kwargs`. Move the optional
-  `connect_timeout` overlay into the same helper so the
-  `ssh_check`-internal extension is not a special case.
-- **C-004 `_INSTRUCTIONS` lives next to the tool list.** The constant at
-  the bottom of `server.py` lists tools by hand. Generate it from the
-  registered tool names so it can never drift.
 - **C-005 `Inventory` field naming.** `Settings.ssh_config` (config path)
   is passed into `Inventory(ssh_config_path=...)` and surfaces as
   `ssh_config_file` on the same object. Settle on one name across the
   three sites.
+
+Closed (do not re-add):
+
+- **C-001** `SshPool` gained an idle reaper. `RELAY_SHELL_SSH_IDLE_TIMEOUT`
+  (default 1800s) drops a cached connection that has not been used for
+  that many seconds the next time `connect()` is consulted; mirrors the
+  shape of `SessionRegistry._sweep`. `0` disables idle eviction (closed
+  connections are still purged). `server_info.ssh` reports the live value.
+- **C-002** The four sources of truth (registered tools, `_EXPECTED`,
+  `docs/tools.md`, README capability tables) are pinned by tests in
+  `tests/test_server.py` — any drift fails a PR.
+- **C-003** `Relay.connect_kwargs` accepts an optional `connect_timeout`
+  keyword; `ssh_check` and `ssh_fanout` use it via the helper. Zero /
+  negative overlays drop the key so the pool's settings default fires.
+- **C-004** `_INSTRUCTIONS` is asserted to mention every registered tool
+  in `tests/test_server.py::test_server_instructions_mentions_every_tool`;
+  the test catches drift on add or rename.
 
 ### 5.2 Refactor candidates
 
@@ -509,13 +510,21 @@ and clearer code, not to land a refactor for its own sake.
 
 ### 5.3 Tests to add (gap analysis)
 
-- **T-003** No test asserts the `session_recv` "ended" message shape. The
-  registry produces `[session ... ended, exit=N]`; a regex test would
-  freeze that contract.
-- **T-004** No test covers `ssh_forward` close on connection drop. Add a
-  fixture variant that closes the SSH server mid-forward.
-- **T-005** No property-based test for `truncate` (UTF-8 boundary safety
-  on arbitrary input). One `hypothesis` strategy would harden it.
+(All currently listed items closed. New entries land here when a gap
+shows up during an audit pass.)
+
+Closed (do not re-add):
+
+- **T-003** `tests/test_sessions.py::test_session_recv_ended_message_shape_with_exit`
+  and `..._without_exit` pin both branches of the closed-session
+  sentinel (`[session ... ended, exit=N]` and `[session ... ended]`).
+- **T-004** `tests/test_ssh_integration.py::test_close_forward_swallows_listener_close_exception`
+  injects a listener whose `close()` / `wait_closed()` raise; the
+  pool's `contextlib.suppress(Exception)` swallows the failure and the
+  tool still returns `closed forward {fid}`.
+- **T-005** `tests/test_util.py` carries four hypothesis-driven
+  properties for `truncate`: valid UTF-8 output, passthrough below the
+  byte budget, marker presence above it, and bytewise prefix safety.
 
 ---
 
