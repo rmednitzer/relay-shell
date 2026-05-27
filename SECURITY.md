@@ -63,6 +63,11 @@ These are **required**, not optional, for any non-local deployment:
 5. Ship the audit log off-host and alert on gaps.
 6. Keep the host patched; treat compromise of the MCP client or transport
    as equivalent to compromise of the service account.
+7. If `RELAY_SHELL_POLICY_DENY` / `RELAY_SHELL_POLICY_ALLOW` are set,
+   review the regex for catastrophic backtracking. The pattern is compiled
+   with stdlib `re` (no timeout) and matched on every tool call on the
+   asyncio event loop; a pathological pattern is a self-inflicted DoS.
+   Prefer simple, anchored, atomic-group-free literals.
 
 ### Residual risk
 
@@ -102,3 +107,14 @@ gain *beyond the documented service-account posture*, transport handling.
 Out of scope: the documented unsandboxed full-access posture itself, and the
 ability of a correctly authenticated, policy-permitted caller to run
 commands - that is the intended function.
+
+### MCP resource reads — note on admission
+
+`relay-shell://inventory*` and `relay-shell://ssh-config` resource reads
+are audit-logged (tier 0, `tool="resource:<name>"`) but are NOT subject
+to `RELAY_SHELL_POLICY_MODE` or `RELAY_SHELL_POLICY_DENY`. The data they
+expose is the same `ssh_hosts` / `ssh_config_file` metadata a Tier-0
+tool already returns in any mode, so admission-controlling resources
+separately would be defense without depth. If a deployment needs to
+refuse the resource surface, restrict the MCP transport (e.g. tighter
+`RELAY_SHELL_EDGE_CLIENT_CIDRS`) rather than the policy layer.

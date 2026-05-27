@@ -8,8 +8,11 @@ stdout/stdin for JSON-RPC, so a stray stdout write would corrupt the stream.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextlib
 import json
 import logging
+import signal
 import sys
 from pathlib import Path
 
@@ -103,13 +106,14 @@ def _check_config() -> int:
         return 2
     try:
         # build_server registers every tool and (for http+auth) constructs
-        # the OAuth provider. Both validate the side-effecting parts of the
-        # config (audit path open, ssh_config parse, OAuth state dir).
-        build_server(settings)
-        # build_server holds the Relay internally; instantiate one alongside
-        # so we can inspect the audit sink's degraded flag. The instantiation
-        # is cheap and benign (audit file is opened append-only).
-        relay = Relay(settings)
+        # the OAuth provider, validating audit path, ssh_config parse, and
+        # the OAuth state dir as side effects of construction. The Relay
+        # built inside is exposed as `mcp.relay` so we can read the audit
+        # degraded flag here without opening the audit file a second time.
+        server = build_server(settings)
+        relay: Relay | None = getattr(server, "relay", None)
+        if relay is None:  # defensive — build_server is expected to set it
+            relay = Relay(settings)
     except Exception as exc:  # noqa: BLE001
         print(f"relay_shell: build_server failed: {exc}", file=sys.stderr)
         return 2
@@ -185,12 +189,32 @@ def _verify_deploy(
     return 0 if report.ok else 2
 
 
+def _install_sigterm_handler() -> None:
+    """Convert SIGTERM into a KeyboardInterrupt so the shutdown finally
+    block in ``main`` runs.
+
+    systemd's ``systemctl stop`` and container orchestrators deliver
+    SIGTERM by default. Python's default SIGTERM handler terminates the
+    process without raising, which would skip ``relay.sessions.shutdown()``
+    and ``relay.ssh.close_all()`` and leave long-running PTY children and
+    SSH forwards behind. Re-raising as KeyboardInterrupt threads through
+    the same path Ctrl-C uses.
+    """
+
+    def _on_sigterm(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    with contextlib.suppress(ValueError):  # main thread only
+        signal.signal(signal.SIGTERM, _on_sigterm)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Build and run the server. Returns a process exit code."""
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 
     _configure_logging()
+    _install_sigterm_handler()
 
     if args.verify_deploy:
         return _verify_deploy(args.templates_dir, args.install_prefix, args.json_out)
@@ -212,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
         settings.policy_mode,
         settings.audit_path,
     )
+    exit_code = 0
     try:
         if settings.transport == "http":
             server.run(transport="streamable-http")
@@ -219,11 +244,25 @@ def main(argv: list[str] | None = None) -> int:
             server.run(transport="stdio")
     except KeyboardInterrupt:
         log.info("relay_shell stopped (interrupt)")
-        return 0
     except Exception as exc:  # noqa: BLE001
         log.error("relay_shell exited with error: %s", exc)
-        return 1
-    return 0
+        exit_code = 1
+    finally:
+        # Graceful shutdown: tear down live PTY sessions and the SSH
+        # connection cache + forwards so long-running children are reaped
+        # instead of waiting on GC / process exit.
+        relay: Relay | None = getattr(server, "relay", None)
+        if relay is not None:
+            with contextlib.suppress(Exception):
+                asyncio.run(_shutdown(relay))
+    return exit_code
+
+
+async def _shutdown(relay: Relay) -> None:
+    with contextlib.suppress(Exception):
+        await relay.sessions.shutdown()
+    with contextlib.suppress(Exception):
+        await relay.ssh.close_all()
 
 
 if __name__ == "__main__":

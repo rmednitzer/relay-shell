@@ -45,6 +45,110 @@ async def test_shell_script_wrapper(settings: Settings) -> None:
     assert "first" in out and "second" in out
 
 
+# --- boundary-contract tests: env_json reaches policy + audit (F-1) ---
+#
+# Pre-fix shell_script and shell_spawn built policy_text from the
+# script/command only, dropping env_json. A RELAY_SHELL_POLICY_DENY
+# pattern matching only env content (LD_PRELOAD, PATH=, ...) would not
+# fire and the audit record would lose the env. These tests pin the
+# fix: env_json must reach both the admission probe and the audit args,
+# matching the shape shell_exec already had.
+
+
+async def test_shell_script_env_json_in_policy_text(tmp_path: Path) -> None:
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        policy_mode="open",
+        policy_deny=r"LD_PRELOAD",
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+    )
+    mcp = build_server(settings)
+    content, _ = await mcp.call_tool(
+        "shell_script",
+        {"script": "echo hello", "env_json": '{"LD_PRELOAD": "/tmp/x.so"}'},
+    )
+    out = _text(content)
+    assert "DENIED" in out, (
+        f"shell_script env_json must reach policy_text; got {out!r}. "
+        "Pre-fix policy_text was script only, so a deny pattern matching "
+        "only env content didn't fire."
+    )
+
+
+async def test_shell_script_env_json_in_audit_args(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(path),
+        policy_mode="open",
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+    )
+    mcp = build_server(settings)
+    await mcp.call_tool(
+        "shell_script",
+        {"script": "echo ok", "env_json": '{"MY_VAR": "value"}'},
+    )
+    rec = json.loads(path.read_text(encoding="utf-8").strip())
+    assert "env_json" in rec["args"], (
+        f"shell_script must record env_json in audit args; got {rec['args']!r}"
+    )
+    # cwd defaulted to "" but is now present alongside env_json for parity
+    # with shell_exec.
+    assert "cwd" in rec["args"]
+
+
+async def test_shell_spawn_env_json_in_policy_text(tmp_path: Path) -> None:
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        policy_mode="open",
+        policy_deny=r"LD_PRELOAD",
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+    )
+    mcp = build_server(settings)
+    content, _ = await mcp.call_tool(
+        "shell_spawn",
+        {"command": "/bin/sh", "env_json": '{"LD_PRELOAD": "/tmp/x.so"}'},
+    )
+    out = _text(content)
+    assert "DENIED" in out, (
+        f"shell_spawn env_json must reach policy_text; got {out!r}. "
+        "Pre-fix policy_text was command only."
+    )
+
+
+async def test_shell_spawn_env_json_in_audit_args(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(path),
+        policy_mode="open",
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+    )
+    mcp = build_server(settings)
+    content, _ = await mcp.call_tool(
+        "shell_spawn",
+        {"command": "/bin/sh", "env_json": '{"MY_VAR": "value"}'},
+    )
+    # Best-effort cleanup so the registry doesn't carry a live PTY across
+    # tests; the audit record we care about is already written.
+    sid_text = _text(content)
+    if "session " in sid_text:
+        sid = sid_text.split("session ", 1)[1].split()[0]
+        await mcp.call_tool("session_kill", {"session_id": sid})
+
+    rec = json.loads(path.read_text(encoding="utf-8").strip().splitlines()[0])
+    assert "env_json" in rec["args"], (
+        f"shell_spawn must record env_json in audit args; got {rec['args']!r}"
+    )
+    assert "cwd" in rec["args"]
+
+
 # --- session lifecycle (covers shell_spawn + session_*) ---------------
 
 

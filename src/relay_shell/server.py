@@ -292,11 +292,23 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         prepended so failures abort early.
         """
         t = app.clamp_timeout(timeout)
+        # policy_text mirrors shell_exec: every byte the executor will see
+        # must also be visible to the deny list. The script body becomes the
+        # interpreter's stdin; env_json shapes the process environment
+        # (e.g. LD_PRELOAD, PATH) and would otherwise bypass admission.
+        policy_text = "\n".join(part for part in (script, env_json) if part)
         return await app.run(
             tool="shell_script",
             ctx=ctx,
-            audit_args={"interpreter": interpreter, "strict": strict, "script": script},
-            policy_text=script,
+            audit_args={
+                "interpreter": interpreter,
+                "strict": strict,
+                "script": script,
+                "timeout": t,
+                "cwd": cwd,
+                "env_json": env_json,
+            },
+            policy_text=policy_text,
             max_output=65536,
             work=lambda: run_script(
                 script,
@@ -340,11 +352,20 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                 None,
             )
 
+        # policy_text mirrors shell_exec: env_json shapes the spawned PTY's
+        # environment (LD_PRELOAD, PATH, ...) and must be visible to the
+        # deny list, not just the executor.
+        policy_text = "\n".join(part for part in (command, env_json) if part)
         return await app.run(
             tool="shell_spawn",
             ctx=ctx,
-            audit_args={"command": command or "/bin/bash", "size": f"{cols}x{rows}"},
-            policy_text=command,
+            audit_args={
+                "command": command or "/bin/bash",
+                "size": f"{cols}x{rows}",
+                "cwd": cwd,
+                "env_json": env_json,
+            },
+            policy_text=policy_text,
             max_output=4096,
             work=_work,
         )
@@ -1034,6 +1055,15 @@ def build_server(settings: Settings | None = None) -> FastMCP:
     # tool name prefixed with "resource:") so the operator sees what context
     # the model is pulling in.
     #
+    # Resource reads ALSO bypass `Policy.check`: `RELAY_SHELL_POLICY_DENY`
+    # and `RELAY_SHELL_POLICY_MODE=readonly|guarded` do NOT apply to
+    # resource URIs. This is deliberate — the data exposed here is the same
+    # `ssh_hosts` / `ssh_config_file` metadata a Tier-0 tool already returns
+    # in any mode, so admission-controlling resources separately would be
+    # defense without depth. Documented in SECURITY.md §Scope. If a
+    # deployment ever needs to refuse a specific resource, route it through
+    # `Relay.run` with a `policy_text` that names the resource.
+    #
     # The audit `tool` field is kept STABLE per resource (no user-controlled
     # data interpolated): the host parameter for the templated resource is
     # carried in `args` instead, so `redact_args` can scrub embedded secrets
@@ -1113,6 +1143,12 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         _audit_resource_read("ssh-config", body)
         return body
 
+    # Expose the constructed Relay so `__main__` can wire graceful shutdown
+    # (sessions + ssh pool teardown) and `--check-config` can read the audit
+    # degraded flag without constructing a second Relay (which would open
+    # the audit log twice and double-load the inventory). The attribute is
+    # private-flavored but stable enough to depend on within the package.
+    mcp.relay = app  # type: ignore[attr-defined]
     return mcp
 
 

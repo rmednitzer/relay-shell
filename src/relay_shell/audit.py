@@ -85,6 +85,13 @@ class AuditLogger:
         self._log.setLevel(logging.INFO)
         self._log.propagate = False
         for handler in list(self._log.handlers):
+            # Close before removing so the prior WatchedFileHandler releases
+            # its file descriptor deterministically instead of waiting on
+            # the next GC pass. Re-initializing AuditLogger on the same
+            # process-global logger (--check-config, tests) used to leak
+            # one fd per construction.
+            with contextlib.suppress(Exception):
+                handler.close()
             self._log.removeHandler(handler)
 
         sink: logging.Handler

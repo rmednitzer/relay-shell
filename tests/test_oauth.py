@@ -5,6 +5,7 @@ These run fully offline against the installed mcp SDK models.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import stat
 from pathlib import Path
@@ -208,3 +209,126 @@ async def test_exchange_authorization_code_consumes_code(tmp_path: Path) -> None
     assert token.access_token
     # Code must be one-shot.
     assert await p.load_authorization_code(client, code.code) is None
+
+
+async def test_register_client_concurrent_no_lost_update(tmp_path: Path) -> None:
+    """F-4 regression: concurrent register_client calls don't lose updates.
+
+    Pre-fix the ``_Store.save`` was atomic for disk consistency but the
+    load -> modify -> save sequence in ``register_client`` (and the other
+    read-modify-write paths) had no cross-coroutine serialization. Two
+    concurrent calls could both load() the same state, modify their own
+    copy, and the second save() would lose the first's write.
+
+    Under the buggy interleaving 20 concurrent registrations would
+    typically persist a handful of clients; the lock guarantees all 20.
+    """
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path, single_client=False)
+
+    async def register(cid: str) -> None:
+        info = OAuthClientInformationFull(
+            client_id=cid,
+            redirect_uris=[f"https://example.com/cb/{cid}"],
+        )
+        await p.register_client(info)
+
+    await asyncio.gather(*[register(f"client-{i}") for i in range(20)])
+
+    stored = p._clients.load()
+    assert len(stored) == 20, (
+        f"Concurrent register_client lost updates: expected 20 clients persisted, "
+        f"got {len(stored)}. Lost: {set(f'client-{i}' for i in range(20)) - set(stored)}."
+    )
+
+
+async def test_exchange_authorization_code_is_single_use_under_race(tmp_path: Path) -> None:
+    """Two concurrent exchanges of the same code: exactly one succeeds.
+
+    Pre-fix ``exchange_authorization_code`` did ``codes.pop(..., None)``
+    without checking the return value, so a second concurrent caller
+    would silently mint a token from a code the first call had already
+    consumed. The in-lock revalidation now refuses the second exchange.
+    The losing caller receives ``TokenError(error="invalid_grant")``
+    (renders as OAuth invalid_grant by the MCP token handler), not a
+    bare ``ValueError`` that would surface as HTTP 500.
+    """
+    import time as _time
+
+    from mcp.server.auth.provider import AuthorizationCode, TokenError
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path)
+    client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
+    code = AuthorizationCode(
+        code="race-code",
+        scopes=["mcp:tools"],
+        expires_at=float(int(_time.time()) + 600),
+        client_id="client-a",
+        code_challenge="",
+        redirect_uri="https://x/cb",  # type: ignore[arg-type]
+        redirect_uri_provided_explicitly=True,
+    )
+    p._codes.save(
+        {
+            code.code: {
+                "code": code.code,
+                "client_id": code.client_id,
+                "scopes": list(code.scopes),
+                "expires_at": int(code.expires_at),
+                "code_challenge": code.code_challenge,
+                "redirect_uri": str(code.redirect_uri),
+                "redirect_uri_provided_explicitly": True,
+            }
+        }
+    )
+
+    results = await asyncio.gather(
+        p.exchange_authorization_code(client, code),
+        p.exchange_authorization_code(client, code),
+        return_exceptions=True,
+    )
+    successes = [r for r in results if not isinstance(r, BaseException)]
+    failures = [r for r in results if isinstance(r, BaseException)]
+    assert len(successes) == 1, (
+        f"Authorization code must be one-shot under concurrent exchange; "
+        f"got {len(successes)} successful exchanges."
+    )
+    assert len(failures) == 1
+    assert isinstance(failures[0], TokenError)
+    assert failures[0].error == "invalid_grant"
+
+
+async def test_exchange_refresh_token_is_single_use_under_race(tmp_path: Path) -> None:
+    """Two concurrent exchanges of the same refresh token: exactly one succeeds.
+
+    Same shape as the authorization-code race fix: ``exchange_refresh_token``
+    used to ``pop(..., None)`` without checking, letting a second caller
+    mint a token from an already-rotated refresh. The losing caller now
+    receives ``TokenError(error="invalid_grant")``.
+    """
+    from mcp.server.auth.provider import TokenError
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path)
+    issued = p._issue("client-a", ["mcp:tools"])
+    assert issued.refresh_token is not None
+    client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
+    refresh = await p.load_refresh_token(client, issued.refresh_token)
+    assert refresh is not None
+
+    results = await asyncio.gather(
+        p.exchange_refresh_token(client, refresh, ["mcp:tools"]),
+        p.exchange_refresh_token(client, refresh, ["mcp:tools"]),
+        return_exceptions=True,
+    )
+    successes = [r for r in results if not isinstance(r, BaseException)]
+    failures = [r for r in results if isinstance(r, BaseException)]
+    assert len(successes) == 1, (
+        f"Refresh token must be one-shot under concurrent exchange; "
+        f"got {len(successes)} successful rotations."
+    )
+    assert len(failures) == 1
+    assert isinstance(failures[0], TokenError)
+    assert failures[0].error == "invalid_grant"
