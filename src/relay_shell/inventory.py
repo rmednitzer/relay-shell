@@ -128,7 +128,7 @@ def _load_inventory_file(path: Path) -> dict[str, HostSpec]:
 
 @dataclass
 class Inventory:
-    ssh_config_path: str
+    ssh_config: str
     inventory_path: str
     _hosts: dict[str, HostSpec] = field(default_factory=dict)
     # Raw ssh_config parse retained alongside the merged map so
@@ -137,7 +137,7 @@ class Inventory:
     _ssh_config_hosts: dict[str, HostSpec] = field(default_factory=dict)
 
     def load(self) -> Inventory:
-        ssh_config_hosts = _parse_ssh_config(_expand(self.ssh_config_path))
+        ssh_config_hosts = _parse_ssh_config(_expand(self.ssh_config))
         merged = dict(ssh_config_hosts)
         if self.inventory_path:
             merged.update(_load_inventory_file(_expand(self.inventory_path)))
@@ -147,7 +147,17 @@ class Inventory:
 
     @property
     def ssh_config_file(self) -> str | None:
-        p = _expand(self.ssh_config_path)
+        """Resolved ssh_config path, or None when no file exists there.
+
+        The constructor argument ``ssh_config`` is the raw input path
+        (typically ``~/.ssh/config``). This property is the expanded
+        form **iff** the file is present on disk; consumers that need
+        a guaranteed-readable path (``sshpool``, ``server_info``, the
+        ``ssh-config`` MCP resource) use this view rather than the raw
+        field so an absent file is a single ``None`` check instead of a
+        late-bound ``FileNotFoundError``.
+        """
+        p = _expand(self.ssh_config)
         return str(p) if p.is_file() else None
 
     def ssh_config_aliases(self) -> list[str]:
