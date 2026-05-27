@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import signal
 import sys
 from pathlib import Path
 
@@ -188,12 +189,32 @@ def _verify_deploy(
     return 0 if report.ok else 2
 
 
+def _install_sigterm_handler() -> None:
+    """Convert SIGTERM into a KeyboardInterrupt so the shutdown finally
+    block in ``main`` runs.
+
+    systemd's ``systemctl stop`` and container orchestrators deliver
+    SIGTERM by default. Python's default SIGTERM handler terminates the
+    process without raising, which would skip ``relay.sessions.shutdown()``
+    and ``relay.ssh.close_all()`` and leave long-running PTY children and
+    SSH forwards behind. Re-raising as KeyboardInterrupt threads through
+    the same path Ctrl-C uses.
+    """
+
+    def _on_sigterm(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    with contextlib.suppress(ValueError):  # main thread only
+        signal.signal(signal.SIGTERM, _on_sigterm)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Build and run the server. Returns a process exit code."""
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 
     _configure_logging()
+    _install_sigterm_handler()
 
     if args.verify_deploy:
         return _verify_deploy(args.templates_dir, args.install_prefix, args.json_out)

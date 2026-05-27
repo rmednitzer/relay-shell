@@ -241,3 +241,88 @@ async def test_register_client_concurrent_no_lost_update(tmp_path: Path) -> None
         f"Concurrent register_client lost updates: expected 20 clients persisted, "
         f"got {len(stored)}. Lost: {set(f'client-{i}' for i in range(20)) - set(stored)}."
     )
+
+
+async def test_exchange_authorization_code_is_single_use_under_race(tmp_path: Path) -> None:
+    """Two concurrent exchanges of the same code: exactly one succeeds.
+
+    Pre-fix ``exchange_authorization_code`` did ``codes.pop(..., None)``
+    without checking the return value, so a second concurrent caller
+    would silently mint a token from a code the first call had already
+    consumed. The in-lock revalidation now refuses the second exchange.
+    """
+    import time as _time
+
+    from mcp.server.auth.provider import AuthorizationCode
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path)
+    client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
+    code = AuthorizationCode(
+        code="race-code",
+        scopes=["mcp:tools"],
+        expires_at=float(int(_time.time()) + 600),
+        client_id="client-a",
+        code_challenge="",
+        redirect_uri="https://x/cb",  # type: ignore[arg-type]
+        redirect_uri_provided_explicitly=True,
+    )
+    p._codes.save(
+        {
+            code.code: {
+                "code": code.code,
+                "client_id": code.client_id,
+                "scopes": list(code.scopes),
+                "expires_at": int(code.expires_at),
+                "code_challenge": code.code_challenge,
+                "redirect_uri": str(code.redirect_uri),
+                "redirect_uri_provided_explicitly": True,
+            }
+        }
+    )
+
+    results = await asyncio.gather(
+        p.exchange_authorization_code(client, code),
+        p.exchange_authorization_code(client, code),
+        return_exceptions=True,
+    )
+    successes = [r for r in results if not isinstance(r, BaseException)]
+    failures = [r for r in results if isinstance(r, BaseException)]
+    assert len(successes) == 1, (
+        f"Authorization code must be one-shot under concurrent exchange; "
+        f"got {len(successes)} successful exchanges."
+    )
+    assert len(failures) == 1
+    assert isinstance(failures[0], ValueError)
+    assert "already used" in str(failures[0]).lower() or "already" in str(failures[0]).lower()
+
+
+async def test_exchange_refresh_token_is_single_use_under_race(tmp_path: Path) -> None:
+    """Two concurrent exchanges of the same refresh token: exactly one succeeds.
+
+    Same shape as the authorization-code race fix: ``exchange_refresh_token``
+    used to ``pop(..., None)`` without checking, letting a second caller
+    mint a token from an already-rotated refresh.
+    """
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path)
+    issued = p._issue("client-a", ["mcp:tools"])
+    assert issued.refresh_token is not None
+    client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
+    refresh = await p.load_refresh_token(client, issued.refresh_token)
+    assert refresh is not None
+
+    results = await asyncio.gather(
+        p.exchange_refresh_token(client, refresh, ["mcp:tools"]),
+        p.exchange_refresh_token(client, refresh, ["mcp:tools"]),
+        return_exceptions=True,
+    )
+    successes = [r for r in results if not isinstance(r, BaseException)]
+    failures = [r for r in results if isinstance(r, BaseException)]
+    assert len(successes) == 1, (
+        f"Refresh token must be one-shot under concurrent exchange; "
+        f"got {len(successes)} successful rotations."
+    )
+    assert len(failures) == 1
+    assert isinstance(failures[0], ValueError)

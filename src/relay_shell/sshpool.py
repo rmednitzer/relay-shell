@@ -203,7 +203,12 @@ class SshPool:
                 self._pending[key] = own_future
         if own_future is None:
             assert other_future is not None
-            return await other_future
+            # Shield so a waiter's cancellation doesn't propagate into the
+            # single-flight future and poison it for every other waiter
+            # and the owner task. ``task.cancel()`` calls
+            # ``self._fut_waiter.cancel()``, which without the shield
+            # would cancel the shared future.
+            return await asyncio.shield(other_future)
 
         opts: dict[str, Any] = {
             "known_hosts": self._known_hosts_arg(mode),
@@ -235,6 +240,17 @@ class SshPool:
             if not own_future.done():
                 own_future.set_exception(exc)
             raise
+        # The connect succeeded. Before caching, check whether the
+        # in-flight future was cancelled out from under us (only
+        # ``close_all`` does this today). If so, discard the connection
+        # rather than caching it after the registry was cleared, and
+        # surface the cancellation to our caller.
+        if own_future.cancelled():
+            with contextlib.suppress(Exception):
+                conn.close()
+            async with self._lock:
+                self._pending.pop(key, None)
+            raise asyncio.CancelledError("SshPool was closed while connecting")
         async with self._lock:
             self._conns[key] = _ConnEntry(conn=conn)
             self._pending.pop(key, None)
@@ -251,47 +267,42 @@ class SshPool:
         max_output_bytes: int | None = None,
     ) -> tuple[str, int | None]:
         conn = await self.connect(target, **connect_kwargs)
-        if max_output_bytes is None or max_output_bytes <= 0:
-            # High-level path: asyncssh's conn.run cancels the underlying
-            # process if the outer wait_for trips.
-            try:
-                result = await asyncio.wait_for(
-                    conn.run(command, check=False, encoding="utf-8", errors="replace"),
-                    timeout,
-                )
-            except TimeoutError:
-                return (f"[TIMEOUT after {timeout}s]", None)
-            out = (result.stdout or "") + (result.stderr or "")
-            code = result.exit_status
-            return (str(out), int(code) if isinstance(code, int) else None)
+        # Both code paths now use the same explicit-create_process +
+        # terminate-on-timeout cleanup so a TimeoutError never leaves a
+        # remote process parked on the SSH connection. The bounded path
+        # additionally caps the kept bytes; the unbounded path keeps
+        # everything received.
+        cap = max_output_bytes if (max_output_bytes is not None and max_output_bytes > 0) else None
 
-        # Bounded-output path: drain manually with explicit cleanup so a
-        # timeout cannot leave a remote process parked on the connection.
         out_parts: list[bytes] = []
         err_parts: list[bytes] = []
         out_seen = 0
         err_seen = 0
-        cap = max_output_bytes
+        out_kept = [0]
+        err_kept = [0]
 
-        async def _drain(stream: Any, parts: list[bytes], seen: int) -> int:
-            kept = 0
+        async def _drain(stream: Any, parts: list[bytes], seen: int, kept: list[int]) -> int:
             while True:
                 chunk = await stream.read(65536)
                 if not chunk:
                     return seen
                 seen += len(chunk)
-                budget = cap - kept
-                if budget > 0:
-                    piece = chunk[:budget]
-                    parts.append(piece)
-                    kept += len(piece)
+                if cap is None:
+                    parts.append(chunk)
+                    kept[0] += len(chunk)
+                else:
+                    budget = cap - kept[0]
+                    if budget > 0:
+                        piece = chunk[:budget]
+                        parts.append(piece)
+                        kept[0] += len(piece)
 
         proc = await conn.create_process(command, encoding=None)
         try:
             out_seen, err_seen = await asyncio.wait_for(
                 asyncio.gather(
-                    _drain(proc.stdout, out_parts, out_seen),
-                    _drain(proc.stderr, err_parts, err_seen),
+                    _drain(proc.stdout, out_parts, out_seen, out_kept),
+                    _drain(proc.stderr, err_parts, err_seen, err_kept),
                 ),
                 timeout,
             )
@@ -311,7 +322,7 @@ class SshPool:
         out = b"".join(out_parts).decode("utf-8", "replace") + b"".join(err_parts).decode(
             "utf-8", "replace"
         )
-        if out_seen + err_seen > cap:
+        if cap is not None and out_seen + err_seen > cap:
             out = truncate(out, cap)
         code = proc.exit_status
         return (str(out), int(code) if isinstance(code, int) else None)

@@ -127,3 +127,68 @@ async def test_connect_failure_clears_inflight_slot(
     conn = await pool.connect("h1.example")
     assert conn is not None
     assert attempts == 2
+
+
+class _TrackingConn:
+    """Conn variant that records ``close()`` calls."""
+
+    def __init__(self) -> None:
+        self._closed = False
+        self.close_count = 0
+
+    def is_closed(self) -> bool:
+        return self._closed
+
+    def close(self) -> None:
+        self._closed = True
+        self.close_count += 1
+
+
+async def test_close_all_during_connect_discards_conn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``close_all`` while an owner's ``asyncssh.connect`` is in flight
+    cancels the in-flight future. The owner must NOT cache the
+    completed connection (the registry has been cleared) and must NOT
+    call ``set_result`` on the cancelled future. It should close the
+    connection and surface ``CancelledError``.
+
+    Pre-fix the owner reached ``own_future.set_result(conn)`` on a
+    cancelled future, raising ``InvalidStateError`` while leaking the
+    connection.
+    """
+    connect_gate = asyncio.Event()
+    tracking: list[_TrackingConn] = []
+
+    async def fake_connect(*_args: object, **_kwargs: object) -> _TrackingConn:
+        await connect_gate.wait()
+        conn = _TrackingConn()
+        tracking.append(conn)
+        return conn
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    pool = _make_pool(tmp_path)
+
+    # Start the connect; it will park at connect_gate.
+    task = asyncio.create_task(pool.connect("h1.example"))
+    # Yield once so the task reaches the await.
+    await asyncio.sleep(0)
+
+    # Trigger close_all while the owner is mid-connect. This cancels the
+    # in-flight future on the pending slot.
+    await pool.close_all()
+
+    # Release the fake connect so the owner sees it succeed, then has to
+    # decide what to do with a now-cancelled future.
+    connect_gate.set()
+
+    with pytest.raises((asyncio.CancelledError, BaseException)):
+        await task
+
+    # The completed connection must have been closed (not cached) since
+    # close_all already cleared the registry.
+    assert len(tracking) == 1
+    assert tracking[0].close_count == 1, (
+        "owner must close the just-completed connection when the in-flight "
+        "future was cancelled by close_all"
+    )
