@@ -1070,12 +1070,24 @@ def build_server(settings: Settings | None = None) -> FastMCP:
     # and tool-name cardinality stays bounded for downstream audit consumers.
 
     def _audit_resource_read(name: str, body: str, args: dict[str, Any] | None = None) -> None:
+        tool_label = f"resource:{name}"
         app.audit.record(
-            tool=f"resource:{name}",
+            tool=tool_label,
             args=redact_args(args or {}),
             output=body,
             exit_code=None,
             tier=0,
+        )
+        # Tick the same counter tool calls use, with the same
+        # tool/tier/mode/outcome label set, so a flood of resource reads
+        # is visible on /metrics instead of being audit-only. Cardinality
+        # is bounded by the three registered resource names
+        # (resource:inventory, resource:inventory_host, resource:ssh-config).
+        app.metrics.inc_tool_call(
+            tool=tool_label,
+            tier=0,
+            mode=app.settings.policy_mode,
+            outcome="ok",
         )
 
     # Bound every resource payload to the same cap tools observe via
