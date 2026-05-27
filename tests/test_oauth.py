@@ -250,10 +250,13 @@ async def test_exchange_authorization_code_is_single_use_under_race(tmp_path: Pa
     without checking the return value, so a second concurrent caller
     would silently mint a token from a code the first call had already
     consumed. The in-lock revalidation now refuses the second exchange.
+    The losing caller receives ``TokenError(error="invalid_grant")``
+    (renders as OAuth invalid_grant by the MCP token handler), not a
+    bare ``ValueError`` that would surface as HTTP 500.
     """
     import time as _time
 
-    from mcp.server.auth.provider import AuthorizationCode
+    from mcp.server.auth.provider import AuthorizationCode, TokenError
     from mcp.shared.auth import OAuthClientInformationFull
 
     p = _provider(tmp_path)
@@ -293,8 +296,8 @@ async def test_exchange_authorization_code_is_single_use_under_race(tmp_path: Pa
         f"got {len(successes)} successful exchanges."
     )
     assert len(failures) == 1
-    assert isinstance(failures[0], ValueError)
-    assert "already used" in str(failures[0]).lower() or "already" in str(failures[0]).lower()
+    assert isinstance(failures[0], TokenError)
+    assert failures[0].error == "invalid_grant"
 
 
 async def test_exchange_refresh_token_is_single_use_under_race(tmp_path: Path) -> None:
@@ -302,8 +305,10 @@ async def test_exchange_refresh_token_is_single_use_under_race(tmp_path: Path) -
 
     Same shape as the authorization-code race fix: ``exchange_refresh_token``
     used to ``pop(..., None)`` without checking, letting a second caller
-    mint a token from an already-rotated refresh.
+    mint a token from an already-rotated refresh. The losing caller now
+    receives ``TokenError(error="invalid_grant")``.
     """
+    from mcp.server.auth.provider import TokenError
     from mcp.shared.auth import OAuthClientInformationFull
 
     p = _provider(tmp_path)
@@ -325,4 +330,5 @@ async def test_exchange_refresh_token_is_single_use_under_race(tmp_path: Path) -
         f"got {len(successes)} successful rotations."
     )
     assert len(failures) == 1
-    assert isinstance(failures[0], ValueError)
+    assert isinstance(failures[0], TokenError)
+    assert failures[0].error == "invalid_grant"

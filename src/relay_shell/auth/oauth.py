@@ -27,6 +27,7 @@ from mcp.server.auth.provider import (
     AuthorizationParams,
     OAuthAuthorizationServerProvider,
     RefreshToken,
+    TokenError,
     construct_redirect_uri,
 )
 from mcp.server.auth.settings import (
@@ -200,13 +201,20 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                 # Race: two concurrent token requests both loaded the same
                 # code; the first removed it, the second finds it gone.
                 # An authorization code is one-shot per RFC 6749 §4.1.2;
-                # refuse rather than double-issue.
-                raise ValueError("authorization code already used or expired")
+                # refuse via TokenError so the MCP token handler renders
+                # an OAuth ``invalid_grant`` response (HTTP 400), not 500.
+                raise TokenError(
+                    error="invalid_grant",
+                    error_description="authorization code already used or expired",
+                )
             if record.get("client_id") != (client.client_id or ""):
                 # Defense in depth: ``load_authorization_code`` already
                 # validates the client, but re-check here in case a future
                 # caller skips that step.
-                raise ValueError("authorization code does not belong to this client")
+                raise TokenError(
+                    error="invalid_grant",
+                    error_description="authorization code does not belong to this client",
+                )
             self._codes.save(codes)
             scopes = list(authorization_code.scopes or _SCOPES)
             # _issue is sync and does its own load/save on tokens.json; the
@@ -291,11 +299,18 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             if record is None:
                 # Race: two concurrent refresh requests both loaded the
                 # same token; the first rotated it, the second finds it
-                # gone. Refuse to mint a new token from an already-
-                # consumed refresh (otherwise rotation isn't single-use).
-                raise ValueError("refresh token already used or expired")
+                # gone. Refuse via TokenError (rendered as OAuth
+                # ``invalid_grant`` HTTP 400 by the MCP token handler)
+                # so rotation stays single-use.
+                raise TokenError(
+                    error="invalid_grant",
+                    error_description="refresh token already used or expired",
+                )
             if record.get("client_id") != (client.client_id or ""):
-                raise ValueError("refresh token does not belong to this client")
+                raise TokenError(
+                    error="invalid_grant",
+                    error_description="refresh token does not belong to this client",
+                )
             self._tokens.save(tokens)
             effective = list(scopes or refresh_token.scopes or _SCOPES)
             return self._issue(client.client_id or "", effective)

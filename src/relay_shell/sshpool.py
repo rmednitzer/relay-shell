@@ -235,8 +235,12 @@ class SshPool:
         except BaseException as exc:
             # Including CancelledError: clear the in-flight slot so a
             # subsequent caller can retry, and propagate to any waiter.
+            # Only pop OUR slot — if close_all racing replaced us with a
+            # fresh future for a new caller, leave that future for its
+            # owner.
             async with self._lock:
-                self._pending.pop(key, None)
+                if self._pending.get(key) is own_future:
+                    self._pending.pop(key, None)
             if not own_future.done():
                 own_future.set_exception(exc)
             raise
@@ -249,11 +253,13 @@ class SshPool:
             with contextlib.suppress(Exception):
                 conn.close()
             async with self._lock:
-                self._pending.pop(key, None)
+                if self._pending.get(key) is own_future:
+                    self._pending.pop(key, None)
             raise asyncio.CancelledError("SshPool was closed while connecting")
         async with self._lock:
             self._conns[key] = _ConnEntry(conn=conn)
-            self._pending.pop(key, None)
+            if self._pending.get(key) is own_future:
+                self._pending.pop(key, None)
         own_future.set_result(conn)
         return conn
 
@@ -297,15 +303,27 @@ class SshPool:
                         parts.append(piece)
                         kept[0] += len(piece)
 
-        proc = await conn.create_process(command, encoding=None)
-        try:
-            out_seen, err_seen = await asyncio.wait_for(
-                asyncio.gather(
-                    _drain(proc.stdout, out_parts, out_seen, out_kept),
-                    _drain(proc.stderr, err_parts, err_seen, err_kept),
-                ),
-                timeout,
+        proc: Any | None = None
+
+        async def _open_and_drain() -> tuple[int, int]:
+            # ``create_process`` is the first remote-side await: a server
+            # that accepts the TCP/SSH connection but stalls on session/
+            # process creation must still be bounded by ``timeout``, not
+            # by waiting for the remote to ever respond. Including it in
+            # the same wait_for envelope keeps ``ssh_exec(timeout=...)``
+            # honest end-to-end.
+            nonlocal proc
+            proc = await conn.create_process(command, encoding=None)
+            return await asyncio.gather(
+                _drain(proc.stdout, out_parts, out_seen, out_kept),
+                _drain(proc.stderr, err_parts, err_seen, err_kept),
             )
+
+        try:
+            out_seen, err_seen = await asyncio.wait_for(_open_and_drain(), timeout)
+            # _open_and_drain set proc before returning the gather result;
+            # the assert narrows the Optional for the type checker.
+            assert proc is not None
             # wait_closed needs its own bound: drains hitting EOF normally
             # means the remote is exiting, but a misbehaving peer could
             # still hold the channel open. 5s is generous for a clean reap.
@@ -314,10 +332,13 @@ class SshPool:
             # Terminate so the remote process doesn't park on the SSH
             # connection until the connection itself dies, then bound the
             # post-terminate wait so cleanup itself can't hang either.
-            with contextlib.suppress(Exception):
-                proc.terminate()
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(proc.wait_closed(), 2)
+            # ``proc`` may be None if the timeout fired during
+            # create_process; in that case there is nothing local to clean up.
+            if proc is not None:
+                with contextlib.suppress(Exception):
+                    proc.terminate()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(proc.wait_closed(), 2)
             return (f"[TIMEOUT after {timeout}s]", None)
         out = b"".join(out_parts).decode("utf-8", "replace") + b"".join(err_parts).decode(
             "utf-8", "replace"
