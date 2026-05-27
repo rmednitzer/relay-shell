@@ -13,11 +13,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from relay_shell.verifier import (
     DEFAULT_PAIRS,
+    Pair,
     Status,
     resolve_templates_dir,
     verify_deploy,
+    verify_pair,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -194,3 +198,39 @@ def test_cli_verify_deploy_json(tmp_path: Path) -> None:
     names = {f["name"]: f["status"] for f in payload["findings"]}
     assert names["systemd-unit"] == "MISSING"
     assert names["logrotate"] == "OK"
+
+
+def test_verify_pair_returns_missing_when_read_text_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-R1 regression: ``verify_pair`` returns a structured Finding
+    instead of raising when ``read_text`` fails after ``is_file()``
+    returned True (TOCTOU between the existence check and the read, or
+    a permission-denied that only fires on open). ``verify_deploy``'s
+    contract is "never raises into the caller"; this pins it.
+    """
+    tpl_dir = tmp_path / "templates"
+    tpl_dir.mkdir()
+    (tpl_dir / "service").write_text("hello\n", encoding="utf-8")
+    # Mirror the chroot-style layout the verifier uses: install_path
+    # "/etc/service" rebases under ``install_prefix`` to
+    # ``install_prefix/etc/service``.
+    install_prefix = tmp_path / "root"
+    install_file = install_prefix / "etc" / "service"
+    install_file.parent.mkdir(parents=True)
+    install_file.write_text("hello\n", encoding="utf-8")
+
+    real_read_text = Path.read_text
+
+    def fake_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == install_file:
+            raise PermissionError("simulated read failure after is_file() passed")
+        return real_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+    pair = Pair(name="t", template_rel="service", install_path="/etc/service")
+    finding = verify_pair(pair, tpl_dir, install_prefix)
+
+    assert finding.status is Status.MISSING, f"got {finding.status}: {finding.detail}"
+    assert "could not read" in finding.detail, finding.detail

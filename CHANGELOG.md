@@ -46,6 +46,13 @@ All notable changes to this project are documented here. The format follows
   (`deploy/install*.sh`, `Caddyfile`, `systemd/`), and CI/governance
   manifests to `@rmednitzer`. Advisory until paired with branch
   protection requiring CODEOWNERS review (follow-up).
+- MCP resource reads (`relay-shell://inventory*`, `ssh-config`) now
+  tick the `relay_shell_tool_calls_total` Prometheus counter with
+  `tool=resource:<name>`, `tier=0`, `mode=<policy-mode>`,
+  `outcome=ok`. Resource cardinality is bounded by the three
+  registered URIs, so the counter stays low-cardinality; a flood of
+  resource reads is now visible on `/metrics` instead of being
+  audit-only. (Phase-2 F-13)
 
 ### Changed
 
@@ -103,6 +110,18 @@ All notable changes to this project are documented here. The format follows
   Each re-init (`--check-config`, multi-AuditLogger tests) used to
   leak one open fd until the next GC pass. Regression test in
   `tests/test_audit.py`.
+- `sessions.py` module docstring corrected: the lost-wakeup invariant
+  is enforced by the single-threaded asyncio event loop, not by
+  ``_sink`` acquiring the buffer lock (it never did). Documents the
+  actual property and the condition under which it would no longer
+  hold (reader moved off the event loop). (Phase-2 F-10)
+- `verifier.verify_pair` now reads templates and installed files with
+  explicit `encoding="utf-8"` and returns a structured `Finding`
+  (status `MISSING`, detail `could not read: <err>`) if `read_text`
+  raises after `is_file()` returned True. Closes a TOCTOU
+  permission-denied window where `verify_deploy`'s "never raises"
+  contract would have been violated. Regression test in
+  `tests/test_verifier.py`. (Phase-2 F-14, F-R1)
 
 ### Security
 
@@ -133,6 +152,16 @@ All notable changes to this project are documented here. The format follows
   from the `@release/v1` branch reference (which follows a moving
   branch) to the SHA of `v1.13.0`. Dependabot keeps updating SHA +
   comment together as new tags ship.
+- `release.yml` build job now produces a Sigstore-signed in-toto
+  build-provenance attestation via `actions/attest-build-provenance`
+  (SHA-pinned). Closes the SLSA v1.2 Build Track L3 gap identified in
+  the Phase-3 cross-check: PyPI OIDC trusted publishing already gave
+  L2, and this step adds a verifier-checkable provenance record in
+  Sigstore's public transparency log linking the workflow run +
+  release commit to every artifact under `dist/`. Job-level
+  `permissions: id-token: write, attestations: write, contents: read`
+  was added with an explicit `contents: read` to avoid widening the
+  inherited workflow scope.
 
 ## [0.1.0] - 2026-05-25
 

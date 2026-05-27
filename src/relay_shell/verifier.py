@@ -149,8 +149,23 @@ def verify_pair(pair: Pair, templates_dir: Path, install_prefix: Path | None) ->
             status=Status.MISSING,
             detail=f"{install_path} does not exist",
         )
-    template = tpl_path.read_text()
-    installed = install_path.read_text()
+    try:
+        # Pin UTF-8: drift detection is byte-exact and the default
+        # locale encoding varies across hosts. Wrap the reads so a
+        # TOCTOU between ``is_file()`` above and these reads (or a
+        # permission-denied after the check) becomes a structured
+        # Finding rather than a raise - ``verify_deploy``'s contract
+        # is "never raises into the caller".
+        template = tpl_path.read_text(encoding="utf-8")
+        installed = install_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return Finding(
+            name=pair.name,
+            template=str(tpl_path),
+            install_path=str(install_path),
+            status=Status.MISSING,
+            detail=f"could not read: {exc}",
+        )
     if pair.leader and installed.startswith(pair.leader):
         installed = installed[len(pair.leader) :].lstrip("\n")
     if installed == template:

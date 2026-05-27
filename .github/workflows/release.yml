@@ -124,6 +124,15 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      # Sigstore OIDC + attestation publishing for the SLSA v1.2 Build
+      # Track L3 provenance attestation produced below. Job-level
+      # `permissions:` REPLACES the workflow-level `contents: read`
+      # default, so keep `contents: read` explicit (we don't need any
+      # broader write).
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
@@ -150,6 +159,17 @@ jobs:
         run: |
           pip install twine
           twine check dist/*
+
+      - name: Generate SLSA Build Provenance attestation
+        # Produces a Sigstore-signed in-toto attestation linking the
+        # workflow run + commit SHA to every artifact under dist/.
+        # Closes the SLSA v1.2 Build Track L3 gap (Phase-3 cross-check):
+        # PyPI OIDC trusted publishing already provides L2; this step
+        # adds a verifier-checkable provenance record in Sigstore's
+        # public transparency log.
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661  # v3
+        with:
+          subject-path: 'dist/*'
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7

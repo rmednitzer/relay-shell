@@ -11,9 +11,16 @@ Design choices for reliability:
   lifetime reaping. Memory cannot grow without bound.
 * Opportunistic sweeping on every create/list call, so a dead or idle session
   is reclaimed without a fragile always-on background task.
-* ``recv`` clears its wakeup event *under the buffer lock* immediately before
-  awaiting, and the reader sets it *under the same lock* after appending, so
-  there is no lost-wakeup race.
+* ``recv`` clears its wakeup event *under the buffer lock* immediately
+  before awaiting. The reader callback (``_sink``) runs on the asyncio
+  event loop as a synchronous ``add_reader`` callback, so its
+  buffer/event mutations are atomic with respect to other coroutines by
+  virtue of the single-threaded event loop - they cannot interleave with
+  a ``recv`` task. The lost-wakeup invariant therefore holds without
+  ``_sink`` re-acquiring the buffer lock; the loop scheduler guarantees
+  serialization, not the lock. If a future refactor moves the reader
+  off the event loop (e.g. a dedicated thread), ``_sink`` will need to
+  acquire ``sess._lock`` explicitly to preserve this invariant.
 * A reader task per session ends naturally on EOF; failures are contained and
   mark the session closed rather than propagating.
 """
