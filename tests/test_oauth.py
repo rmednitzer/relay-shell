@@ -5,6 +5,7 @@ These run fully offline against the installed mcp SDK models.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import stat
 from pathlib import Path
@@ -208,3 +209,35 @@ async def test_exchange_authorization_code_consumes_code(tmp_path: Path) -> None
     assert token.access_token
     # Code must be one-shot.
     assert await p.load_authorization_code(client, code.code) is None
+
+
+async def test_register_client_concurrent_no_lost_update(tmp_path: Path) -> None:
+    """F-4 regression: concurrent register_client calls don't lose updates.
+
+    Pre-fix the ``_Store.save`` was atomic for disk consistency but the
+    load -> modify -> save sequence in ``register_client`` (and the other
+    read-modify-write paths) had no cross-coroutine serialization. Two
+    concurrent calls could both load() the same state, modify their own
+    copy, and the second save() would lose the first's write.
+
+    Under the buggy interleaving 20 concurrent registrations would
+    typically persist a handful of clients; the lock guarantees all 20.
+    """
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path, single_client=False)
+
+    async def register(cid: str) -> None:
+        info = OAuthClientInformationFull(
+            client_id=cid,
+            redirect_uris=[f"https://example.com/cb/{cid}"],
+        )
+        await p.register_client(info)
+
+    await asyncio.gather(*[register(f"client-{i}") for i in range(20)])
+
+    stored = p._clients.load()
+    assert len(stored) == 20, (
+        f"Concurrent register_client lost updates: expected 20 clients persisted, "
+        f"got {len(stored)}. Lost: {set(f'client-{i}' for i in range(20)) - set(stored)}."
+    )

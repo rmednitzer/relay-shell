@@ -163,6 +163,30 @@ def test_tail_bounded_by_requested_lines_not_file_size(tmp_path: Path) -> None:
     assert len(out.encode()) < 4_000  # tail is small regardless
 
 
+def test_audit_logger_closes_prior_handler_on_reinit(tmp_path: Path) -> None:
+    """F-7 regression: re-init releases the prior WatchedFileHandler's fd.
+
+    The audit logger is process-global (``logging.getLogger("relay_shell.audit")``);
+    re-initializing previously called ``removeHandler`` without ``close()``,
+    leaking one open fd per construction (visible from
+    ``--check-config`` and any test that builds multiple AuditLoggers).
+    """
+    path = tmp_path / "a.jsonl"
+    log1 = AuditLogger(str(path))
+    handler1 = log1._log.handlers[0]
+    # Force at least one write so the WatchedFileHandler opens its stream
+    # (some Python versions open lazily on first emit).
+    log1.record(tool="t", args={}, output="x", exit_code=0, tier=0)
+    assert handler1.stream is not None
+
+    # Re-init the same process-global logger.
+    AuditLogger(str(path))
+
+    # FileHandler.close() sets self.stream = None; the assertion pins the
+    # contract that the prior handler is closed, not just removed.
+    assert handler1.stream is None
+
+
 def test_audit_cef_format(tmp_path: Path) -> None:
     path = tmp_path / "audit.cef"
     log = AuditLogger(str(path), fmt="cef")

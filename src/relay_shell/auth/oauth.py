@@ -12,6 +12,7 @@ as a crashed transport, so reconstruction is defensive.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
@@ -109,6 +110,12 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         self._access_ttl = access_ttl
         self._refresh_ttl = refresh_ttl
         self._code_ttl = code_ttl
+        # Single per-provider lock serializes every read-modify-write
+        # against the three JSON stores. The atomic `tmp.replace` inside
+        # ``_Store.save`` guarantees disk consistency for one writer; this
+        # lock guarantees cross-coroutine consistency under concurrent
+        # HTTP-transport traffic (token rotation, register-client, revoke).
+        self._lock = asyncio.Lock()
 
     # --- clients ---
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
@@ -124,31 +131,33 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         cid = client_info.client_id or ""
         if not cid:
             raise ValueError("client_id is required")
-        clients = self._clients.load()
-        if self._single_client and clients and cid not in clients:
-            raise ValueError("Dynamic client registration is closed (single-client lockdown).")
-        clients[cid] = json.loads(client_info.model_dump_json())
-        self._clients.save(clients)
+        async with self._lock:
+            clients = self._clients.load()
+            if self._single_client and clients and cid not in clients:
+                raise ValueError("Dynamic client registration is closed (single-client lockdown).")
+            clients[cid] = json.loads(client_info.model_dump_json())
+            self._clients.save(clients)
 
     # --- authorization codes ---
     async def authorize(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
         code = secrets.token_urlsafe(48)
-        codes = self._codes.load()
-        codes[code] = {
-            "code": code,
-            "client_id": client.client_id or "",
-            "scopes": list(getattr(params, "scopes", None) or _SCOPES),
-            "expires_at": _now() + self._code_ttl,
-            "code_challenge": getattr(params, "code_challenge", ""),
-            "redirect_uri": str(params.redirect_uri),
-            "redirect_uri_provided_explicitly": bool(
-                getattr(params, "redirect_uri_provided_explicitly", True)
-            ),
-            "resource": getattr(params, "resource", None),
-        }
-        self._codes.save(codes)
+        async with self._lock:
+            codes = self._codes.load()
+            codes[code] = {
+                "code": code,
+                "client_id": client.client_id or "",
+                "scopes": list(getattr(params, "scopes", None) or _SCOPES),
+                "expires_at": _now() + self._code_ttl,
+                "code_challenge": getattr(params, "code_challenge", ""),
+                "redirect_uri": str(params.redirect_uri),
+                "redirect_uri_provided_explicitly": bool(
+                    getattr(params, "redirect_uri_provided_explicitly", True)
+                ),
+                "resource": getattr(params, "resource", None),
+            }
+            self._codes.save(codes)
         return construct_redirect_uri(
             str(params.redirect_uri), code=code, state=getattr(params, "state", None)
         )
@@ -170,24 +179,29 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
-        codes = self._codes.load()
-        rec = codes.get(authorization_code)
-        if not rec or rec.get("client_id") != (client.client_id or ""):
-            return None
-        if int(rec.get("expires_at", 0)) < _now():
-            codes.pop(authorization_code, None)
-            self._codes.save(codes)
-            return None
-        return self._build_auth_code(rec)
+        async with self._lock:
+            codes = self._codes.load()
+            rec = codes.get(authorization_code)
+            if not rec or rec.get("client_id") != (client.client_id or ""):
+                return None
+            if int(rec.get("expires_at", 0)) < _now():
+                codes.pop(authorization_code, None)
+                self._codes.save(codes)
+                return None
+            return self._build_auth_code(rec)
 
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
-        codes = self._codes.load()
-        codes.pop(authorization_code.code, None)
-        self._codes.save(codes)
-        scopes = list(authorization_code.scopes or _SCOPES)
-        return self._issue(client.client_id or "", scopes)
+        async with self._lock:
+            codes = self._codes.load()
+            codes.pop(authorization_code.code, None)
+            self._codes.save(codes)
+            scopes = list(authorization_code.scopes or _SCOPES)
+            # _issue is sync and does its own load/save on tokens.json; the
+            # caller's lock covers both stores atomically from a concurrent
+            # coroutine's view.
+            return self._issue(client.client_id or "", scopes)
 
     # --- tokens ---
     def _issue(self, client_id: str, scopes: list[str]) -> OAuthToken:
@@ -216,23 +230,24 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         )
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        tokens = self._tokens.load()
-        rec = tokens.get(token)
-        if not rec:
-            return None
-        if int(rec.get("expires_at", 0)) < _now():
-            tokens.pop(token, None)
-            self._tokens.save(tokens)
-            return None
-        try:
-            return AccessToken(
-                token=rec["token"],
-                client_id=rec["client_id"],
-                scopes=rec["scopes"],
-                expires_at=int(rec["expires_at"]),
-            )
-        except Exception:  # noqa: BLE001
-            return None
+        async with self._lock:
+            tokens = self._tokens.load()
+            rec = tokens.get(token)
+            if not rec:
+                return None
+            if int(rec.get("expires_at", 0)) < _now():
+                tokens.pop(token, None)
+                self._tokens.save(tokens)
+                return None
+            try:
+                return AccessToken(
+                    token=rec["token"],
+                    client_id=rec["client_id"],
+                    scopes=rec["scopes"],
+                    expires_at=int(rec["expires_at"]),
+                )
+            except Exception:  # noqa: BLE001
+                return None
 
     async def load_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: str
@@ -258,18 +273,20 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         refresh_token: RefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
-        tokens = self._tokens.load()
-        tokens.pop(_REFRESH_PREFIX + refresh_token.token, None)
-        self._tokens.save(tokens)
-        effective = list(scopes or refresh_token.scopes or _SCOPES)
-        return self._issue(client.client_id or "", effective)
+        async with self._lock:
+            tokens = self._tokens.load()
+            tokens.pop(_REFRESH_PREFIX + refresh_token.token, None)
+            self._tokens.save(tokens)
+            effective = list(scopes or refresh_token.scopes or _SCOPES)
+            return self._issue(client.client_id or "", effective)
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
-        tokens = self._tokens.load()
-        raw = getattr(token, "token", "")
-        tokens.pop(raw, None)
-        tokens.pop(_REFRESH_PREFIX + raw, None)
-        self._tokens.save(tokens)
+        async with self._lock:
+            tokens = self._tokens.load()
+            raw = getattr(token, "token", "")
+            tokens.pop(raw, None)
+            tokens.pop(_REFRESH_PREFIX + raw, None)
+            self._tokens.save(tokens)
 
 
 def build_auth_settings(issuer: str) -> AuthSettings:

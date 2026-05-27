@@ -65,9 +65,64 @@ All notable changes to this project are documented here. The format follows
   fed from. The `ssh_config_file` property (resolved-iff-exists) is
   unchanged in semantics and gained a docstring distinguishing the
   two views. Closes runbook §5.1 C-005.
+- `build_server(settings)` attaches the constructed `Relay` to the
+  returned `FastMCP` as `mcp.relay`. `__main__._check_config` now
+  reads the audit-degraded flag from there instead of constructing a
+  second `Relay` (which previously double-opened the audit file and
+  double-loaded the inventory); the graceful-shutdown path in `main()`
+  reads from the same attribute.
+
+### Fixed
+
+- `SshPool.connect` is now single-flight on the cache key: two
+  concurrent callers for the same `user@host:port` await one
+  underlying `asyncssh.connect` instead of dialling twice and
+  silently leaking the losing connection. The in-flight future is
+  cleared on success and on failure (including cancellation) so a
+  retry after a transient error re-dials cleanly. Regression tests in
+  `tests/test_sshpool_unit.py`.
+- `SshPool.run` terminates the remote process on `TimeoutError` and
+  bounds `proc.wait_closed()` with its own 5-second deadline (2s on
+  the post-terminate cleanup). Previously a timeout left the remote
+  `create_process` parked on the SSH connection until the connection
+  itself died, and `wait_closed()` was unbounded.
+- `FileOAuthProvider` now serializes every read-modify-write against
+  `clients.json` / `codes.json` / `tokens.json` with an
+  `asyncio.Lock`. Concurrent HTTP-transport register-client, token
+  issuance, refresh rotation, and revoke no longer lost-update each
+  other. The atomic `tmp+replace` in `_Store.save` already covered
+  disk consistency for one writer; the lock closes cross-coroutine
+  consistency. Regression test in `tests/test_oauth.py`.
+- `__main__.main()` runs `relay.sessions.shutdown()` and
+  `relay.ssh.close_all()` in a `finally` block after the transport
+  exits. Long-running PTY sessions and SSH forwards are now reaped on
+  `SIGTERM`/`KeyboardInterrupt` instead of relying on GC / process
+  exit.
+- `AuditLogger.__init__` closes the prior `WatchedFileHandler` before
+  removing it from the process-global `relay_shell.audit` logger.
+  Each re-init (`--check-config`, multi-AuditLogger tests) used to
+  leak one open fd until the next GC pass. Regression test in
+  `tests/test_audit.py`.
 
 ### Security
 
+- `shell_script` and `shell_spawn` tool wrappers now include `env_json`
+  in `policy_text` (mirroring `shell_exec`) and in `audit_args`. An
+  operator `RELAY_SHELL_POLICY_DENY` pattern matching only env content
+  (e.g. `LD_PRELOAD`) now denies the call; the audit record carries
+  `env_json` through `redact_args`. Paired regression tests in
+  `tests/test_tool_wrappers.py`.
+- Documented (`SECURITY.md` §Scope) that MCP resource reads
+  (`relay-shell://inventory*`, `relay-shell://ssh-config`) are
+  audit-logged but not subject to `RELAY_SHELL_POLICY_MODE` /
+  `RELAY_SHELL_POLICY_DENY`. The exposed data matches a Tier-0 tool's;
+  admission-control the transport CIDR allowlist or refuse the resource
+  list entirely if needed.
+- Documented (`SECURITY.md` §Deployment requirements) that operator-
+  supplied `RELAY_SHELL_POLICY_DENY` / `_ALLOW` patterns are compiled
+  with stdlib `re` without timeout and run on the event loop; a
+  catastrophic-backtracking pattern is a self-inflicted DoS. Operators
+  should prefer simple anchored literals.
 - All GitHub Actions across `ci.yml`, `codeql.yml`,
   `dependency-review.yml`, `nightly-fuzz.yml`, `release.yml`, and
   `sbom.yml` are now pinned by 40-character commit SHA with a trailing

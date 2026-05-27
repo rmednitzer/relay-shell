@@ -111,6 +111,11 @@ class SshPool:
     inventory: Inventory
     _conns: dict[str, _ConnEntry] = field(default_factory=dict)
     _forwards: dict[str, ForwardHandle] = field(default_factory=dict)
+    # In-flight connect() futures keyed by user@host:port so two concurrent
+    # callers for the same target dedupe to a single underlying
+    # ``asyncssh.connect``. Without this, both would miss the cache, both
+    # would dial, and the second would silently leak the first connection.
+    _pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def _sweep_conns(self) -> None:
@@ -180,11 +185,25 @@ class SshPool:
         key = _conn_key(spec.hostname, eff_user or None, eff_port or None)
 
         await self._sweep_conns()
+        # Cache lookup + single-flight claim happen together under the lock.
+        # If another coroutine is already connecting to the same key, it
+        # owns the inflight future and we await it. Otherwise we claim the
+        # slot ourselves with a fresh future and do the connect outside
+        # the lock so other hosts are not blocked.
+        other_future: asyncio.Future[Any] | None = None
+        own_future: asyncio.Future[Any] | None = None
         async with self._lock:
             entry = self._conns.get(key)
             if entry is not None and not entry.conn.is_closed():
                 entry.last_used = time.monotonic()
                 return entry.conn
+            other_future = self._pending.get(key)
+            if other_future is None:
+                own_future = asyncio.get_running_loop().create_future()
+                self._pending[key] = own_future
+        if own_future is None:
+            assert other_future is not None
+            return await other_future
 
         opts: dict[str, Any] = {
             "known_hosts": self._known_hosts_arg(mode),
@@ -204,12 +223,22 @@ class SshPool:
         if cfg:
             opts["config"] = [cfg]
 
-        conn = await asyncssh.connect(spec.hostname, **opts)
-        if mode == "accept-new":
-            await self._persist_host_key(conn, spec.hostname)
-
+        try:
+            conn = await asyncssh.connect(spec.hostname, **opts)
+            if mode == "accept-new":
+                await self._persist_host_key(conn, spec.hostname)
+        except BaseException as exc:
+            # Including CancelledError: clear the in-flight slot so a
+            # subsequent caller can retry, and propagate to any waiter.
+            async with self._lock:
+                self._pending.pop(key, None)
+            if not own_future.done():
+                own_future.set_exception(exc)
+            raise
         async with self._lock:
             self._conns[key] = _ConnEntry(conn=conn)
+            self._pending.pop(key, None)
+        own_future.set_result(conn)
         return conn
 
     async def run(
@@ -222,36 +251,43 @@ class SshPool:
         max_output_bytes: int | None = None,
     ) -> tuple[str, int | None]:
         conn = await self.connect(target, **connect_kwargs)
-        if not max_output_bytes or max_output_bytes <= 0:
-            max_output_bytes = None
-        try:
-            if max_output_bytes is None:
+        if max_output_bytes is None or max_output_bytes <= 0:
+            # High-level path: asyncssh's conn.run cancels the underlying
+            # process if the outer wait_for trips.
+            try:
                 result = await asyncio.wait_for(
                     conn.run(command, check=False, encoding="utf-8", errors="replace"),
                     timeout,
                 )
-                out = (result.stdout or "") + (result.stderr or "")
-                code = result.exit_status
-                return (str(out), int(code) if isinstance(code, int) else None)
-            out_parts: list[bytes] = []
-            err_parts: list[bytes] = []
-            out_seen = 0
-            err_seen = 0
+            except TimeoutError:
+                return (f"[TIMEOUT after {timeout}s]", None)
+            out = (result.stdout or "") + (result.stderr or "")
+            code = result.exit_status
+            return (str(out), int(code) if isinstance(code, int) else None)
 
-            async def _drain(stream: Any, parts: list[bytes], seen: int) -> int:
-                kept = 0
-                while True:
-                    chunk = await stream.read(65536)
-                    if not chunk:
-                        return seen
-                    seen += len(chunk)
-                    budget = max_output_bytes - kept
-                    if budget > 0:
-                        piece = chunk[:budget]
-                        parts.append(piece)
-                        kept += len(piece)
+        # Bounded-output path: drain manually with explicit cleanup so a
+        # timeout cannot leave a remote process parked on the connection.
+        out_parts: list[bytes] = []
+        err_parts: list[bytes] = []
+        out_seen = 0
+        err_seen = 0
+        cap = max_output_bytes
 
-            proc = await conn.create_process(command, encoding=None)
+        async def _drain(stream: Any, parts: list[bytes], seen: int) -> int:
+            kept = 0
+            while True:
+                chunk = await stream.read(65536)
+                if not chunk:
+                    return seen
+                seen += len(chunk)
+                budget = cap - kept
+                if budget > 0:
+                    piece = chunk[:budget]
+                    parts.append(piece)
+                    kept += len(piece)
+
+        proc = await conn.create_process(command, encoding=None)
+        try:
             out_seen, err_seen = await asyncio.wait_for(
                 asyncio.gather(
                     _drain(proc.stdout, out_parts, out_seen),
@@ -259,16 +295,26 @@ class SshPool:
                 ),
                 timeout,
             )
-            await proc.wait_closed()
-            out = b"".join(out_parts).decode("utf-8", "replace") + b"".join(err_parts).decode(
-                "utf-8", "replace"
-            )
-            if out_seen + err_seen > max_output_bytes:
-                out = truncate(out, max_output_bytes)
-            code = proc.exit_status
-            return (str(out), int(code) if isinstance(code, int) else None)
+            # wait_closed needs its own bound: drains hitting EOF normally
+            # means the remote is exiting, but a misbehaving peer could
+            # still hold the channel open. 5s is generous for a clean reap.
+            await asyncio.wait_for(proc.wait_closed(), 5)
         except TimeoutError:
+            # Terminate so the remote process doesn't park on the SSH
+            # connection until the connection itself dies, then bound the
+            # post-terminate wait so cleanup itself can't hang either.
+            with contextlib.suppress(Exception):
+                proc.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(proc.wait_closed(), 2)
             return (f"[TIMEOUT after {timeout}s]", None)
+        out = b"".join(out_parts).decode("utf-8", "replace") + b"".join(err_parts).decode(
+            "utf-8", "replace"
+        )
+        if out_seen + err_seen > cap:
+            out = truncate(out, cap)
+        code = proc.exit_status
+        return (str(out), int(code) if isinstance(code, int) else None)
 
     async def open_process(
         self,
@@ -363,8 +409,13 @@ class SshPool:
         async with self._lock:
             forwards = list(self._forwards.values())
             entries = list(self._conns.values())
+            pending = list(self._pending.values())
             self._forwards.clear()
             self._conns.clear()
+            self._pending.clear()
+        for fut in pending:
+            if not fut.done():
+                fut.cancel()
         for handle in forwards:
             with contextlib.suppress(Exception):
                 handle.listener.close()
