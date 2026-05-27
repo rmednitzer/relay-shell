@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 
 import pytest
@@ -64,5 +65,58 @@ async def test_closed_session_reports_exit() -> None:
             if "ended" in seen or "done" in seen:
                 break
         assert "done" in seen or "ended" in seen
+    finally:
+        await reg.shutdown()
+
+
+async def test_session_recv_ended_message_shape_with_exit() -> None:
+    """Pin the exact wire shape of the ``ended`` sentinel when exit_code is known.
+
+    Client renderers grep for this marker; if the format ever drifts they
+    stop highlighting closed sessions and operators lose the visual cue.
+    Freeze the shape (leading newline, bracket pair, ``exit=N`` field).
+    Both branches (with/without exit) live next to each other in
+    ``SessionRegistry.recv`` so a single refactor could silently break
+    either; test both.
+    """
+    reg = SessionRegistry(8, 60, 65536)
+    pattern = re.compile(r"^\n\[session [A-Za-z0-9_\-]+ ended, exit=-?\d+\]$")
+    try:
+        sid = await _spawn(reg, ["/bin/sh", "-c", "exit 0"])
+        sess = reg._sessions[sid]
+        # Drain any preamble so we hit the closed-buffer branch.
+        for _ in range(40):
+            await reg.recv(sid, timeout=0.2, max_bytes=4096)
+            if sess.closed and not sess.buffer:
+                break
+        # Pin both branches at the public API by forcing exit_code
+        # directly. This bypasses the timing dance of waiting for the
+        # OS to set returncode on the asyncio.subprocess.Process; the
+        # branch we are testing is "closed and exit_code is not None"
+        # vs "closed and exit_code is None" — the source of exit_code
+        # is irrelevant to the wire-format contract.
+        sess.exit_code = 7
+        out = await reg.recv(sid, timeout=0.1, max_bytes=4096)
+        assert pattern.match(out), f"unexpected ended shape: {out!r}"
+        assert out == f"\n[session {sid} ended, exit=7]"
+    finally:
+        await reg.shutdown()
+
+
+async def test_session_recv_ended_message_shape_without_exit() -> None:
+    """When ``exit_code`` is None at teardown, the marker omits the exit field."""
+    reg = SessionRegistry(8, 60, 65536)
+    pattern = re.compile(r"^\n\[session [A-Za-z0-9_\-]+ ended\]$")
+    try:
+        sid = await _spawn(reg, ["/bin/sh", "-c", "exit 0"])
+        sess = reg._sessions[sid]
+        for _ in range(40):
+            await reg.recv(sid, timeout=0.2, max_bytes=4096)
+            if sess.closed and not sess.buffer:
+                break
+        sess.exit_code = None
+        out = await reg.recv(sid, timeout=0.1, max_bytes=4096)
+        assert pattern.match(out), f"unexpected ended shape: {out!r}"
+        assert out == f"\n[session {sid} ended]"
     finally:
         await reg.shutdown()

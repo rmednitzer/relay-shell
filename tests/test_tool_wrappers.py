@@ -267,3 +267,58 @@ async def test_server_info_reports_documented_fields(settings: Settings) -> None
         "max_sessions",
     ):
         assert limit in info["limits"], f"server_info.limits missing {limit}"
+    # The SSH substructure now reports the connection-pool knobs so
+    # operators can diff the live posture against their env file
+    # without re-deriving the values from RELAY_SHELL_* env names.
+    for ssh_key in (
+        "known_hosts_default",
+        "inventory_hosts",
+        "ssh_config",
+        "connect_timeout",
+        "keepalive",
+        "idle_timeout",
+    ):
+        assert ssh_key in info["ssh"], f"server_info.ssh missing {ssh_key}"
+
+
+# --- connect_kwargs helper (closes C-003) ----------------------------
+
+
+def test_connect_kwargs_omits_connect_timeout_by_default(settings: Settings) -> None:
+    """Without an overlay, connect_kwargs returns the historical shape.
+
+    SshPool.connect already falls back to settings.ssh_connect_timeout
+    when the dict has no ``connect_timeout`` key, so omitting it from
+    the helper keeps the audit-record args minimal.
+    """
+    from relay_shell.server import Relay
+
+    relay = Relay(settings)
+    ck = relay.connect_kwargs("alice", 2222, "/tmp/k", "strict", "bastion")
+    assert ck == {
+        "user": "alice",
+        "port": 2222,
+        "key_path": "/tmp/k",
+        "known_hosts": "strict",
+        "jump": "bastion",
+    }
+
+
+def test_connect_kwargs_overlays_connect_timeout(settings: Settings) -> None:
+    """Positive overlay is injected; SshPool.connect honors it over settings."""
+    from relay_shell.server import Relay
+
+    relay = Relay(settings)
+    ck = relay.connect_kwargs("", 0, "", "", "", connect_timeout=7)
+    assert ck["connect_timeout"] == 7
+
+
+def test_connect_kwargs_zero_overlay_falls_through(settings: Settings) -> None:
+    """A zero/negative overlay is dropped so the pool's settings default fires."""
+    from relay_shell.server import Relay
+
+    relay = Relay(settings)
+    ck_zero = relay.connect_kwargs("", 0, "", "", "", connect_timeout=0)
+    ck_neg = relay.connect_kwargs("", 0, "", "", "", connect_timeout=-1)
+    assert "connect_timeout" not in ck_zero
+    assert "connect_timeout" not in ck_neg

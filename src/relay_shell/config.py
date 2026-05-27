@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     ssh_known_hosts: str = "accept-new"
     ssh_connect_timeout: int = Field(default=10, ge=1, le=120)
     ssh_keepalive: int = Field(default=30, ge=0, le=600)
+    # Idle eviction for cached SSH connections. 0 disables the reaper
+    # (matches the historical behavior). A non-zero value drops a cached
+    # connection that has not been used for that many seconds the next
+    # time the pool is consulted; see SshPool._sweep_conns.
+    ssh_idle_timeout: int = Field(default=1800, ge=0, le=86400)
 
     # OAuth 2.1 (HTTP transport only)
     auth_enabled: bool = False

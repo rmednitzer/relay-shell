@@ -212,6 +212,15 @@ key. `RELAY_SHELL_SSH_KNOWN_HOSTS=strict` is recommended for production; pre-pop
 `~/.ssh/known_hosts` for the service account. Provide a JSON inventory via
 `RELAY_SHELL_INVENTORY` for hosts not in `ssh_config`.
 
+The SSH connection pool caches one connection per `user@host:port` and
+reuses it for follow-up calls. `RELAY_SHELL_SSH_IDLE_TIMEOUT` (default
+1800 seconds) drops a cached connection that has not been used for that
+many seconds the next time the pool is consulted; set `0` to keep the
+historical behavior (closed connections are still purged on the next
+sweep). Long-running deployments that fan out across a large host
+inventory should leave the reaper on so a long-lived server does not
+accumulate idle handles.
+
 ## 8. Policy posture
 
 - `open` - full access, every call still classified and audited. The

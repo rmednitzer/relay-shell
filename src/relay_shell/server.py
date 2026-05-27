@@ -183,15 +183,33 @@ class Relay:
         return final
 
     def connect_kwargs(
-        self, user: str, port: int, key_path: str, known_hosts: str, jump: str
+        self,
+        user: str,
+        port: int,
+        key_path: str,
+        known_hosts: str,
+        jump: str,
+        connect_timeout: int = 0,
     ) -> dict[str, Any]:
-        return {
+        """Build the dict that ``SshPool.connect`` accepts as ``**kwargs``.
+
+        ``connect_timeout`` is an optional overlay for tools like
+        ``ssh_check`` and ``ssh_fanout`` that probe many hosts at once
+        and want a tighter per-host bound than ``settings.ssh_connect_timeout``.
+        A zero overlay means "fall back to the server-wide default" —
+        the same semantics ``SshPool.connect`` already implements, so
+        callers do not have to special-case it.
+        """
+        ck: dict[str, Any] = {
             "user": user,
             "port": port,
             "key_path": key_path,
             "known_hosts": known_hosts,
             "jump": jump,
         }
+        if connect_timeout > 0:
+            ck["connect_timeout"] = connect_timeout
+        return ck
 
 
 def build_server(settings: Settings | None = None) -> FastMCP:
@@ -654,16 +672,9 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             if not names:
                 return ("[no hosts configured; pass hosts= or add an inventory]", None)
             tmo = clamp(timeout, 1, 60)
+            ck = app.connect_kwargs("", 0, "", "", "", connect_timeout=tmo)
             lines: list[str] = []
             for name in names:
-                ck: dict[str, Any] = {
-                    "user": "",
-                    "port": 0,
-                    "key_path": "",
-                    "known_hosts": "",
-                    "jump": "",
-                    "connect_timeout": tmo,
-                }
                 try:
                     out, code = await app.ssh.run(name, "echo ok", timeout=tmo, connect_kwargs=ck)
                     ok = code == 0 and "ok" in out
@@ -749,15 +760,9 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             remaining = max(agg_budget - envelope_overhead, 0)
             per_host_budget = max(128, remaining // max(len(names), 1))
 
+            ck = app.connect_kwargs("", 0, "", "", "", connect_timeout=tmo)
+
             async def _run_one(name: str) -> dict[str, Any]:
-                ck = {
-                    "user": "",
-                    "port": 0,
-                    "key_path": "",
-                    "known_hosts": "",
-                    "jump": "",
-                    "connect_timeout": tmo,
-                }
                 async with sem:
                     try:
                         out, code = await app.ssh.run(
@@ -963,6 +968,9 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                     "known_hosts_default": cfg.ssh_known_hosts,
                     "inventory_hosts": len(app.inventory.hosts()),
                     "ssh_config": app.inventory.ssh_config_file,
+                    "connect_timeout": cfg.ssh_connect_timeout,
+                    "keepalive": cfg.ssh_keepalive,
+                    "idle_timeout": cfg.ssh_idle_timeout,
                 },
             }
             return (json.dumps(info, indent=2), None)
@@ -1112,11 +1120,12 @@ _INSTRUCTIONS = """\
 relay-shell - shell and SSH operations.
 
 Local: shell_exec (one-shot), shell_script (multi-line), shell_spawn (PTY).
-SSH:   ssh_exec, ssh_spawn, ssh_upload/ssh_download, ssh_forward(/list/close),
-       ssh_check, ssh_hosts, ssh_keyscan (pre-populate known_hosts),
-       ssh_fanout (parallel exec across a host list).
-PTY sessions (local or ssh) are driven by session_send / session_recv /
-session_resize / session_kill / session_list.
+SSH:   ssh_exec, ssh_spawn, ssh_upload, ssh_download, ssh_forward,
+       ssh_forward_list, ssh_forward_close, ssh_check, ssh_hosts,
+       ssh_keyscan (pre-populate known_hosts), ssh_fanout (parallel exec
+       across a host list).
+PTY sessions (local or ssh) are driven by session_send, session_recv,
+session_resize, session_kill, session_list.
 Diagnostics: server_info reports limits and policy mode; audit_tail
 returns the last N audit records.
 
