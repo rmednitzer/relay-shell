@@ -1,0 +1,48 @@
+# CODEOWNERS for relay-shell.
+#
+# These rules auto-request review from the listed owner when matching
+# paths change. Without branch protection requiring CODEOWNERS review
+# (Settings -> Branches on github.com), these requests are advisory.
+#
+# The trust-boundary list mirrors docs/runbook.md §3.3; keep the two in
+# sync when adding or removing a security-sensitive surface.
+
+# Default owner: everything routes here unless a more specific rule below wins.
+*                                       @rmednitzer
+
+# Trust boundary (runbook §3.3): policy admission, audit pipeline,
+# secret redaction, the central Relay.run() body, and the auth provider.
+/src/relay_shell/audit.py               @rmednitzer
+/src/relay_shell/redaction.py           @rmednitzer
+/src/relay_shell/policy.py              @rmednitzer
+/src/relay_shell/patterns.py            @rmednitzer
+/src/relay_shell/server.py              @rmednitzer
+/src/relay_shell/metrics.py             @rmednitzer
+/src/relay_shell/verifier.py            @rmednitzer
+/src/relay_shell/auth/                  @rmednitzer
+
+# Deploy + edge: systemd unit, hardening drop-in, Caddyfile (CIDR + headers),
+# installers that write EnvironmentFiles. Any change here lands a
+# privileged-execution artifact on a host.
+/deploy/install.sh                      @rmednitzer
+/deploy/install-edge.sh                 @rmednitzer
+/deploy/Caddyfile                       @rmednitzer
+/deploy/systemd/                        @rmednitzer
+/deploy/logrotate/                      @rmednitzer
+
+# CI / supply chain: workflow definitions, Dependabot config, release
+# automation, SBOM generation.
+/.github/                               @rmednitzer
+/.github/workflows/                     @rmednitzer
+/.github/dependabot.yml                 @rmednitzer
+/.github/CODEOWNERS                     @rmednitzer
+
+# Project + governance manifests.
+/pyproject.toml                         @rmednitzer
+/requirements.txt                       @rmednitzer
+/SECURITY.md                            @rmednitzer
+/CODE_OF_CONDUCT.md                     @rmednitzer
+/CONTRIBUTING.md                        @rmednitzer
+/AGENTS.md                              @rmednitzer
+/CLAUDE.md                              @rmednitzer
+/docs/adr/                              @rmednitzer

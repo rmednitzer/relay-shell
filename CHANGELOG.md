@@ -40,6 +40,12 @@ All notable changes to this project are documented here. The format follows
   and the `_INSTRUCTIONS` string at the bottom of `server.py`. A
   missed update on any of the four fails a PR rather than ships
   silently. Closes runbook §5.1 C-002 / C-004.
+- `.github/CODEOWNERS` routes review on trust-boundary paths
+  (`audit.py`, `redaction.py`, `policy.py`, `patterns.py`, `server.py`,
+  `verifier.py`, `metrics.py`, `auth/`), deployment artifacts
+  (`deploy/install*.sh`, `Caddyfile`, `systemd/`), and CI/governance
+  manifests to `@rmednitzer`. Advisory until paired with branch
+  protection requiring CODEOWNERS review (follow-up).
 
 ### Changed
 
@@ -54,6 +60,24 @@ All notable changes to this project are documented here. The format follows
   `ssh_forward(/list/close)` shorthand, so the C-004 drift-prevention
   test can see every registered tool by name. The protocol-level
   overview is otherwise unchanged.
+- `Inventory` constructor parameter renamed from `ssh_config_path` to
+  `ssh_config` so the field name matches `Settings.ssh_config` it is
+  fed from. The `ssh_config_file` property (resolved-iff-exists) is
+  unchanged in semantics and gained a docstring distinguishing the
+  two views. Closes runbook §5.1 C-005.
+
+### Security
+
+- All GitHub Actions across `ci.yml`, `codeql.yml`,
+  `dependency-review.yml`, `nightly-fuzz.yml`, `release.yml`, and
+  `sbom.yml` are now pinned by 40-character commit SHA with a trailing
+  `# vN` comment indicating the semver tag at pin time. Removes the
+  tag-rewrite class of supply-chain attack and aligns with the
+  OpenSSF Scorecard `Pinned-Dependencies` check and the GitHub Actions
+  security-hardening guide. `pypa/gh-action-pypi-publish` migrated
+  from the `@release/v1` branch reference (which follows a moving
+  branch) to the SHA of `v1.13.0`. Dependabot keeps updating SHA +
+  comment together as new tags ship.
 
 ## [0.1.0] - 2026-05-25
 

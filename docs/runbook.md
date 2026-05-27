@@ -695,8 +695,10 @@ floor is now 90%, baseline ~92%.)
 
 ### 7.3 Operations + observability
 
-- **B-014 (P3)** Add an `RELAY_SHELL_AUDIT_FORMAT=jsonl|cef|leef` knob for
-  operators whose SIEMs only accept CEF/LEEF. Default stays JSONL.
+(Items in this category are tracked here as they land; the queue is
+currently empty. B-014 closed by PR #47 — `RELAY_SHELL_AUDIT_FORMAT`
+shipped with `jsonl`/`cef`/`leef` formatters in
+`src/relay_shell/audit.py`.)
 
 ### 7.4 Docs and contribution
 
