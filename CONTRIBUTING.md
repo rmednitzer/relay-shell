@@ -97,6 +97,7 @@ short version:
 | Add or change a module       | `docs/architecture.md` module table                                                    |
 | Add a runtime dependency     | `requirements.txt` (pinned) + a justification in the PR body                           |
 | Change audit-record fields   | `docs/architecture.md` request lifecycle, `tests/test_audit.py`, runbook §2.3          |
+| Change a redaction/tier pattern | `src/relay_shell/patterns.py` (bump `PATTERNS_VERSION`), paired over-scrub/under-scrub (redaction) or positive/near-miss (policy) tests in `tests/test_patterns.py`, runbook §6.4 (policy heuristics) / §6.5 (redaction rules) |
 
 If the PR adds a new `.md` file, also add a §8 entry to the runbook so
 the next maintainer knows what "done" means for that file.
