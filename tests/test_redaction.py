@@ -129,3 +129,35 @@ def test_redact_args_preserves_non_strings() -> None:
     assert out["b"] is True
     assert out["x"] is None
     assert out["lst"] == [1, 2]
+
+
+# Stripe / GitLab token shapes are recognised by GitHub secret-scanning
+# push protection, which would block this file from being pushed. Assemble
+# the synthetic fixtures from parts so no contiguous token literal appears
+# in the source while `redact` still sees the identical value.
+_GOOGLE = "AIzaSyD-1234567890abcdefghijklmnopqrstuv"
+_STRIPE = "sk_live_" + "0123456789abcdefABCDEFgh"
+_GLPAT = "glpat-" + "ABCDEF1234567890abcd"
+_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N"
+
+
+def test_redact_provider_tokens_arriving_bare_in_args() -> None:
+    # The realistic leak path: a secret arrives bare in a tool argument
+    # (a JSON request body, a config blob, a flag the CLI-flag list does
+    # not name) rather than behind a known `--password`/`Bearer` prefix.
+    # The structurally-anchored provider patterns are the safety net.
+    body = f'{{"google": "{_GOOGLE}", "stripe": "{_STRIPE}", "id_token": "{_JWT}"}}'
+    out = redact(body)
+    for leaked in (_GOOGLE, _STRIPE, "eyJzdWIiOiIxMjM0NTY3ODkwIn0"):
+        assert leaked not in out, leaked
+    # The surrounding JSON keys (non-secret structure) survive so the
+    # audit record stays useful.
+    assert '"google"' in out and '"stripe"' in out and '"id_token"' in out
+
+
+def test_redact_args_scrubs_nested_provider_tokens() -> None:
+    # End-to-end through redact_args: a token nested in a list inside a
+    # dict (the shape audit args take) is still scrubbed.
+    out = redact_args({"env": {"keys": [_GLPAT]}})
+    assert _GLPAT not in out["env"]["keys"][0]
+    assert "[REDACTED]" in out["env"]["keys"][0]

@@ -20,6 +20,18 @@ covering the common ``mysql -psecret`` shape. Operators putting DB
 passwords on the command line should still prefer ``--password=...``,
 the interactive ``-p`` (no value), or ``~/.my.cnf`` instead.
 
+Beyond those syntaxes, a set of *structurally anchored* provider token
+shapes is collapsed wherever they appear - a bare token in a JSON body or
+a log line, not just behind a known prefix. These track the canonical
+secret-scanning rulesets (gitleaks / GitHub secret scanning): GitHub PAT
+and ``gh[pousr]_`` tokens, OpenAI ``sk-`` (including the
+``sk-proj-``/``sk-svcacct-``/``sk-admin-`` prefixes), AWS access key ids,
+Slack ``xox*`` tokens, Google API keys (``AIza``) and OAuth tokens
+(``ya29.``), Stripe ``sk_``/``rk_`` keys, GitLab ``glpat-`` tokens, npm
+``npm_`` tokens, PyPI ``pypi-`` upload tokens, and JWTs. The anchor is the
+prefix and a length floor, never the value's character class, so the rule
+survives a provider rotating its alphabet.
+
 The compiled regex tables live in :mod:`relay_shell.patterns` so a security
 reviewer can audit "added a pattern" as a one-file diff.
 """

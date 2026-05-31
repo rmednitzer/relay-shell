@@ -52,7 +52,18 @@ __all__ = [
 # v3: Authorization-header bare form no longer consumes arbitrary shell
 #     control operators; this preserves audit fidelity for command-style
 #     input while keeping quoted/JSON and comma-separated auth schemes.
-PATTERNS_VERSION = "3"
+# v4: REDACTION_PATTERNS gained the common structurally-anchored provider
+#     secret shapes that the prefix patterns miss when a secret arrives
+#     bare (in a JSON body, a log line, or a flag not in the CLI list):
+#     Google API key (AIza), Google OAuth access token (ya29.), Stripe
+#     secret/restricted keys (sk_/rk_ live/test/prod), GitLab PAT
+#     (glpat-), npm token (npm_), PyPI upload token (pypi-AgE...), and
+#     JWTs (ey<hdr>.ey<payload>.<sig>). The OpenAI `sk-` shape was
+#     widened to also cover the project/service prefixes
+#     (sk-proj-/sk-svcacct-/sk-admin-) that internal hyphens previously
+#     defeated. Anchors and length bounds track the canonical
+#     secret-scanning rulesets (gitleaks / GitHub secret scanning).
+PATTERNS_VERSION = "4"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -129,18 +140,57 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 # --- Redaction: whole-match (collapse the entire match to the placeholder) ---
 
+# Provider token shapes are *structurally* anchored (a fixed prefix and a
+# length floor), not anchored on the secret's character class - the
+# character class evolves, the structure does not (see the redaction
+# module docstring and runbook §6.5). Anchors and length bounds track the
+# canonical secret-scanning rulesets so this set stays comparable to what
+# gitleaks / GitHub secret scanning detect:
+#   https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+# These run as whole-match collapses: a provider token has no useful
+# non-secret prefix to preserve, so the entire match becomes the
+# placeholder. They are the safety net for secrets that arrive *bare* -
+# in a JSON body, a log line, or a flag the CLI-flag prefix patterns do
+# not name - which the prefix patterns alone would miss.
 REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     # PEM / OpenSSH private key blocks
     re.compile(
         r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
         re.DOTALL,
     ),
-    # Common provider token shapes
+    # GitHub: classic/fine-grained PAT, plus the gh[pousr]_ token family
+    # (personal, OAuth, user-to-server, server-to-server, refresh).
     re.compile(r"\bgith(?:ub)?_pat_[A-Za-z0-9_]+"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
-    re.compile(r"\bsk-[A-Za-z0-9]{16,}"),
+    # OpenAI: classic `sk-...` plus the project / service-account / admin
+    # prefixes (sk-proj-, sk-svcacct-, sk-admin-) whose internal hyphen
+    # defeated a bare `sk-[A-Za-z0-9]{16,}`.
+    re.compile(r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9]{16,}"),
+    # AWS access key id.
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    # Slack token family (bot/user/app/refresh/legacy).
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
+    # Google API key (AIza + 35) and OAuth 2.0 access token (ya29.<...>).
+    # The length floor is the canonical 35; the run is greedy (>=) so the
+    # whole token collapses rather than leaving a trailing character when
+    # a key is one char longer than the reference fixture.
+    re.compile(r"\bAIza[A-Za-z0-9_\-]{35,}"),
+    re.compile(r"\bya29\.[A-Za-z0-9_\-]{20,}"),
+    # Stripe secret (sk_) and restricted (rk_) keys, test/live/prod.
+    re.compile(r"\b(?:sk|rk)_(?:test|live|prod)_[A-Za-z0-9]{10,99}"),
+    # GitLab personal/project/group access token.
+    re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}"),
+    # npm automation/access token.
+    re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"),
+    # PyPI upload token (the AgEIcHlwaS5vcmc macaroon header is base64 of
+    # "pypi.org" and is a near-unique structural anchor).
+    re.compile(r"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{16,}"),
+    # JSON Web Token: two `ey...` base64url segments (the JWT header and
+    # payload both begin `{"`, which base64url-encodes to `ey`) plus an
+    # optional signature segment. Bearer-prefixed JWTs are already caught
+    # by REDACTION_PREFIX_PATTERNS; this collapses a bare JWT (id_token in
+    # a JSON body, an --jwt-style flag the prefix list does not name).
+    re.compile(r"\bey[A-Za-z0-9_\-]{17,}\.ey[A-Za-z0-9_\-]{17,}(?:\.[A-Za-z0-9_\-]{10,})?"),
 )
 
 

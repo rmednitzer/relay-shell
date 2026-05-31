@@ -150,6 +150,10 @@ samples = [
   'export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789',
   '--password \"top secret pass\" --host db',
   '-----BEGIN OPENSSH PRIVATE KEY-----\\nAAAA\\n-----END OPENSSH PRIVATE KEY-----',
+  # Bare provider tokens (no --flag / Bearer prefix) — must still redact:
+  '{\"k\": \"AIzaSyD-1234567890abcdefghijklmnopqrstuv\"}',  # Google API key
+  'export NPM_TOKEN=npm_abcdefghijklmnopqrstuvwxyz0123456789',  # npm token
+  'id_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N',  # JWT
 ]
 for s in samples: print(redact(s))
 "
