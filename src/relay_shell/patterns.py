@@ -60,9 +60,11 @@ __all__ = [
 #     (glpat-), npm token (npm_), PyPI upload token (pypi-AgE...), and
 #     JWTs (ey<hdr>.ey<payload>.<sig>). The OpenAI `sk-` shape was
 #     widened to also cover the project/service prefixes
-#     (sk-proj-/sk-svcacct-/sk-admin-) that internal hyphens previously
-#     defeated. Anchors and length bounds track the canonical
-#     secret-scanning rulesets (gitleaks / GitHub secret scanning).
+#     (sk-proj-/sk-svcacct-/sk-admin-, with URL-safe tails). Anchors track
+#     the canonical secret-scanning rulesets (gitleaks / GitHub secret
+#     scanning); every body runs unbounded from its length floor and admits
+#     the token's full alphabet (ya29 dots, OpenAI URL-safe separators) so a
+#     match always collapses the *whole* token rather than leaving a tail.
 PATTERNS_VERSION = "4"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
@@ -162,35 +164,47 @@ REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     # (personal, OAuth, user-to-server, server-to-server, refresh).
     re.compile(r"\bgith(?:ub)?_pat_[A-Za-z0-9_]+"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
-    # OpenAI: classic `sk-...` plus the project / service-account / admin
-    # prefixes (sk-proj-, sk-svcacct-, sk-admin-) whose internal hyphen
-    # defeated a bare `sk-[A-Za-z0-9]{16,}`.
-    re.compile(r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9]{16,}"),
-    # AWS access key id.
+    # OpenAI keys. Two rules by design: the classic `sk-<alnum>` body is
+    # kept narrow (alphanumeric only) so kebab-case identifiers such as
+    # `sk-build-step` are not over-scrubbed; the project / service-account
+    # / admin formats carry URL-safe opaque tails that legitimately contain
+    # `_` and `-`, so their body admits those separators and runs unbounded
+    # — otherwise the redactor would stop at the first separator and leave
+    # the remainder of the key in the audit log.
+    re.compile(r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_\-]{16,}"),
+    re.compile(r"\bsk-[A-Za-z0-9]{16,}"),
+    # AWS access key id (fixed-length AKIA + 16).
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     # Slack token family (bot/user/app/refresh/legacy).
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
     # Google API key (AIza + 35) and OAuth 2.0 access token (ya29.<...>).
-    # The length floor is the canonical 35; the run is greedy (>=) so the
-    # whole token collapses rather than leaving a trailing character when
-    # a key is one char longer than the reference fixture.
+    # Both run unbounded from the length floor so the whole token collapses
+    # rather than leaving a tail. The ya29 body admits `.`: these access
+    # tokens are opaque and carry additional dots, so stopping at the first
+    # one would strand the remainder of the credential.
     re.compile(r"\bAIza[A-Za-z0-9_\-]{35,}"),
-    re.compile(r"\bya29\.[A-Za-z0-9_\-]{20,}"),
+    re.compile(r"\bya29\.[A-Za-z0-9._\-]{20,}"),
     # Stripe secret (sk_) and restricted (rk_) keys, test/live/prod.
-    re.compile(r"\b(?:sk|rk)_(?:test|live|prod)_[A-Za-z0-9]{10,99}"),
+    # Unbounded body so a longer (future) key collapses whole.
+    re.compile(r"\b(?:sk|rk)_(?:test|live|prod)_[A-Za-z0-9]{10,}"),
     # GitLab personal/project/group access token.
     re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}"),
-    # npm automation/access token.
-    re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"),
+    # npm automation/access token (>=36-char body, unbounded so a longer
+    # token collapses whole instead of failing a fixed-length boundary).
+    re.compile(r"\bnpm_[A-Za-z0-9]{36,}"),
     # PyPI upload token (the AgEIcHlwaS5vcmc macaroon header is base64 of
     # "pypi.org" and is a near-unique structural anchor).
     re.compile(r"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{16,}"),
     # JSON Web Token: two `ey...` base64url segments (the JWT header and
     # payload both begin `{"`, which base64url-encodes to `ey`) plus an
-    # optional signature segment. Bearer-prefixed JWTs are already caught
-    # by REDACTION_PREFIX_PATTERNS; this collapses a bare JWT (id_token in
-    # a JSON body, an --jwt-style flag the prefix list does not name).
-    re.compile(r"\bey[A-Za-z0-9_\-]{17,}\.ey[A-Za-z0-9_\-]{17,}(?:\.[A-Za-z0-9_\-]{10,})?"),
+    # optional signature segment. The header floor stays high (a real JWT
+    # header is always >=17 chars) as the strong anchor against false
+    # positives, while the payload / signature floors are low so a *compact*
+    # JWT with a small claim set (e.g. `{"sub":"1"}`) is still redacted.
+    # Bearer-prefixed JWTs are already caught by REDACTION_PREFIX_PATTERNS;
+    # this collapses a bare JWT (an id_token in a JSON body, an --jwt-style
+    # flag the prefix list does not name).
+    re.compile(r"\bey[A-Za-z0-9_\-]{17,}\.ey[A-Za-z0-9_\-]{8,}(?:\.[A-Za-z0-9_\-]{8,})?"),
 )
 
 
