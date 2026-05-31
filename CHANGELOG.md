@@ -69,6 +69,16 @@ All notable changes to this project are documented here. The format follows
   `### 6.4` heading in the runbook (the release recipe was renumbered to
   §6.6) so the §6.4 cross-references resolve unambiguously. No code or
   behavior change.
+- Documentation-consistency follow-up (runbook §8): corrected a stale
+  `fail_under=85` inline comment in the §4.3 coverage recipe to `90`
+  (the floor moved to 90 in B-022 and the §4.3 header already read 90;
+  only the recipe comment lagged), and added a runbook §8.20 inventory
+  entry for the `audit/<date>-engagement.md` assurance packs.
+  `audit/2026-05-27-engagement.md` had landed in #60 without the
+  "a new `.md` file gets a §8 entry" cross-reference that
+  `CONTRIBUTING.md` requires; §8.20 now records the frozen-record
+  convention and how the packs relate to ADR 0005 validation passes.
+  No code or behavior change.
 - `Relay.connect_kwargs` accepts an optional `connect_timeout` keyword;
   the `ssh_check` and `ssh_fanout` wrappers no longer hand-roll the
   dict literal to inject the probe-level timeout. Zero / negative
