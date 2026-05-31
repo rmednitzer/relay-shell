@@ -65,7 +65,10 @@ All notable changes to this project are documented here. The format follows
   maintenance note so it stays self-maintaining across future passes;
   and aligned `CLAUDE.md`'s trusted-reference list with `AGENTS.md` by
   adding the OWASP Secrets Management Cheat Sheet (the canonical source
-  behind the redaction control). No code or behavior change.
+  behind the redaction control). Also fixed a pre-existing duplicate
+  `### 6.4` heading in the runbook (the release recipe was renumbered to
+  §6.6) so the §6.4 cross-references resolve unambiguously. No code or
+  behavior change.
 - `Relay.connect_kwargs` accepts an optional `connect_timeout` keyword;
   the `ssh_check` and `ssh_fanout` wrappers no longer hand-roll the
   dict literal to inject the probe-level timeout. Zero / negative
@@ -263,7 +266,7 @@ All notable changes to this project are documented here. The format follows
   if PyPI was briefly down; the publish step passes `skip-existing:
   true` so the re-run is idempotent. The per-release procedure
   (version bump + sign-tag + push) is documented in
-  `docs/runbook.md` §6.4. Closes B-005.
+  `docs/runbook.md` §6.6. Closes B-005.
 - Property-based fuzz suite for `redact` and `classify` (the audit /
   policy primitives). 13 hypothesis-driven invariants: `redact` is
   idempotent, never raises, preserves text without secret shape, kills

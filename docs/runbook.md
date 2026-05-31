@@ -625,7 +625,7 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
    level scenarios). The `test_redact_cli_flag_does_not_eat_next_flag`
    family is the model.
 
-### 6.4 Cut a release (PyPI via OIDC trusted publishing)
+### 6.6 Cut a release (PyPI via OIDC trusted publishing)
 
 The release path is driven by `.github/workflows/release.yml`. It runs
 on any `v*` tag push (and on `workflow_dispatch` with an existing tag
