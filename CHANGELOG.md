@@ -125,6 +125,24 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- Argument redaction now collapses the common structurally-anchored
+  provider secret shapes when they arrive *bare* in an audited argument
+  (a JSON body, a log line, or a flag the CLI-flag prefix list does not
+  name), closing the gap where only `--password`/`Bearer`-prefixed or
+  GitHub/OpenAI/AWS/Slack tokens were scrubbed: Google API key (`AIza`),
+  Google OAuth token (`ya29.`), Stripe `sk_`/`rk_` keys, GitLab
+  `glpat-`, npm `npm_`, PyPI `pypi-`, and JWTs (`ey<hdr>.ey<payload>`).
+  The OpenAI `sk-` shape was widened to also cover the
+  `sk-proj-`/`sk-svcacct-`/`sk-admin-` prefixes whose internal hyphen
+  previously broke the match. Anchors and length floors track the
+  canonical secret-scanning rulesets (gitleaks / GitHub secret
+  scanning); each shape is structure-anchored (prefix + length floor),
+  never anchored on the value's character class. `PATTERNS_VERSION`
+  bumped `"3"` → `"4"`. Paired over-scrub / under-scrub tests in
+  `tests/test_patterns.py` and a bare-in-args scenario in
+  `tests/test_redaction.py`; `redact` idempotency and the no-leak
+  invariant verified on every new shape. Surfaced as finding F-004 in
+  the ADR 0005 2026-05-31 validation outcome.
 - `shell_script` and `shell_spawn` tool wrappers now include `env_json`
   in `policy_text` (mirroring `shell_exec`) and in `audit_args`. An
   operator `RELAY_SHELL_POLICY_DENY` pattern matching only env content

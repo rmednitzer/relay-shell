@@ -142,14 +142,21 @@ in `open`.
 ```bash
 python -c "
 from relay_shell.redaction import redact
+# Provider-token samples are assembled from prefix + body at runtime so this
+# runbook never ships a contiguous secret-shaped literal (same reason
+# tests/test_patterns.py uses _synth); redact() still sees the joined value.
 samples = [
   'Authorization: Bearer abcdef123456',
   'curl -H \"Authorization: Bearer eyJabc.def\" https://api/...',
   'mysql -uroot -pleaked-pw -h db',
   'ssh -p22 user@host',                       # MUST NOT redact -p22
-  'export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+  'export GITHUB_TOKEN=' + 'ghp_' + 'abcdefghijklmnopqrstuvwxyz0123456789',
   '--password \"top secret pass\" --host db',
   '-----BEGIN OPENSSH PRIVATE KEY-----\\nAAAA\\n-----END OPENSSH PRIVATE KEY-----',
+  # Bare provider tokens (no --flag / Bearer prefix) — must still redact:
+  '{\"k\": \"' + 'AIza' + 'SyD-1234567890abcdefghijklmnopqrstuv\"}',  # Google API key
+  'export NPM_TOKEN=' + 'npm_' + 'abcdefghijklmnopqrstuvwxyz0123456789',  # npm token
+  'id_token=' + 'eyJhbGciOiJIUzI1NiJ9.' + 'eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N',  # JWT
 ]
 for s in samples: print(redact(s))
 "

@@ -4,7 +4,7 @@
 
 **Status:** v0.1.0 · Python 3.12 / 3.13 / 3.14 · transports: `stdio` and
 `streamable-http` · MCP SDK `mcp==1.27.1` · last validated against
-upstream surfaces on 2026-05-24
+upstream surfaces on 2026-05-31
 ([ADR 0005](docs/adr/0005-codebase-validation.md)).
 
 A highly reliable, maximally capable [Model Context Protocol](https://modelcontextprotocol.io)

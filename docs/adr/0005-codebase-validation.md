@@ -95,6 +95,47 @@ No security findings. No capability regressions. The trust boundary
 described in ADR 0002 and the admission semantics described in ADR 0003
 still hold byte-for-byte against the current code.
 
+## Validation outcome (2026-05-31)
+
+Re-ran steps 1-4 against the same pinned surfaces. The gates and the
+upstream contract are still green:
+
+- 21 MCP tools registered, matching `tests/test_server.py::_EXPECTED`
+  and `docs/tools.md`; 3 MCP resources registered.
+- `ruff check`, `ruff format --check`, `mypy --strict` clean.
+- `pytest -q` — 250 passed, 13 deselected (up from 195/244 as the
+  redaction-coverage tests below landed; the `fuzz` marker is
+  nightly-only by design). `pytest -m fuzz` — 13 property invariants
+  pass, including `redact` idempotency on the new shapes.
+- `coverage` — 92% with subprocess collection (floor 90%);
+  `patterns.py` and `redaction.py` at 100%.
+- Every upstream symbol in step 3 still resolves on `mcp==1.27.1` /
+  `asyncssh` 2.23.0 (FastMCP kwargs, `Context` ids, the nine OAuth
+  provider methods, `AuthorizationParams` fields, the eight
+  `asyncssh.connect` option kwargs, `OAuthToken` fields).
+
+Step 4 surfaced one security finding against the *redaction* sample
+set, fixed in the same PR:
+
+| ID    | Severity | Subject                                                                                                                                                                                                                                  | Resolution |
+|-------|----------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|
+| F-004 | P2       | The whole-match `REDACTION_PATTERNS` set covered GitHub / OpenAI(`sk-`) / AWS(`AKIA`) / Slack(`xox*`) but missed several of the most common structurally-anchored secret shapes when they arrive *bare* in an audited argument (a JSON body, a log line, a flag the CLI-flag prefix list does not name): Google API key (`AIza`), Google OAuth token (`ya29.`), Stripe `sk_`/`rk_` keys, GitLab `glpat-`, npm `npm_`, PyPI `pypi-`, and JWTs. The OpenAI `sk-` shape also missed the `sk-proj-`/`sk-svcacct-`/`sk-admin-` prefixes (an internal hyphen broke the run). Secret leakage into the audit log is in `SECURITY.md` §Scope. | Added the seven shapes and widened the OpenAI prefix in `src/relay_shell/patterns.py`; anchors and length floors track the canonical secret-scanning rulesets (gitleaks / GitHub secret scanning). `PATTERNS_VERSION` bumped `"3"` → `"4"`. Paired over-scrub / under-scrub tests in `tests/test_patterns.py` (lines under `test_openai_project_and_service_keys` through `test_registry_and_jwt_shapes_positive_and_negative`) and a bare-in-args scenario in `tests/test_redaction.py`. `redaction.py` docstring and `SECURITY.md` redaction bullet updated. |
+
+PR review (Copilot + Codex) further hardened the F-004 fix before merge:
+the provider-token bodies were made to run unbounded from their length
+floor and to admit each token's full alphabet (Google OAuth `ya29.` dots,
+OpenAI `sk-proj-`/`sk-svcacct-`/`sk-admin-` URL-safe separators), and the
+JWT rule's payload/signature floor was lowered so a compact JWT with a
+small claim set is still redacted. The intent in every case is the same:
+a match must collapse the *whole* token, never leave a tail, and never
+miss a valid-but-compact credential. Regression fixtures pinning each
+edge live in `tests/test_patterns.py`.
+
+No capability regressions; no change to policy admission, the audit
+record schema, or any tool's response shape. The trust boundary
+(ADR 0002) and tier semantics (ADR 0003) are unchanged — this pass
+hardened a compensating control, it did not move the boundary.
+
 ## Consequences
 
 - The runbook §2 audit pass is now grounded in a concrete, repeatable

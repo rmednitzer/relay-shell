@@ -32,8 +32,14 @@ that a persuaded model still cannot exceed the operator-defined envelope:
   Fluent Bit, and `systemd-journal-remote` recipes.
 - **Secret redaction.** Audited arguments are scrubbed for bearer tokens,
   API keys, private-key blocks, `Authorization` headers, long-name CLI
-  flags (both `--password` and single-dash `-token=` forms), and
-  URL-embedded credentials before logging. The compact short-form
+  flags (both `--password` and single-dash `-token=` forms),
+  URL-embedded credentials, and a set of structurally-anchored provider
+  token shapes (Google `AIza`/`ya29.`, Stripe `sk_`/`rk_`, GitLab
+  `glpat-`, npm `npm_`, PyPI `pypi-`, GitHub `gh*_`, OpenAI `sk-`, AWS
+  `AKIA`, Slack `xox*`, and JWTs) that are collapsed even when they
+  arrive bare in a JSON body or log line. Anchors track the canonical
+  secret-scanning rulesets; each is keyed on prefix + length, never on
+  the value's character class. The compact short-form
   `-p<value>` is intentionally redacted only for MySQL-family commands
   (`mysql`, `mariadb-dump`, `mycli`, ...) because `-p` is overloaded
   elsewhere (`ssh -p22`, `nmap -p1-1000`); operators putting passwords

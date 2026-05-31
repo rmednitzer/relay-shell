@@ -19,6 +19,20 @@ import re
 
 from relay_shell import patterns, policy, redaction
 
+
+def _synth(prefix: str, body: str) -> str:
+    """Assemble a secret-*shaped* fixture from parts.
+
+    Some provider token shapes (Stripe ``sk_live_``/``rk_live_``, GitLab
+    ``glpat-``) are recognised by GitHub secret-scanning *push protection*,
+    which would block this test file from being pushed even though the
+    values are synthetic. Concatenating prefix + body at runtime means no
+    contiguous token literal ever appears in the source bytes the scanner
+    sees, while ``redact`` still receives the identical assembled value.
+    """
+    return prefix + body
+
+
 # --- Shape: tables compile and the executors consume them ---
 
 
@@ -247,6 +261,87 @@ def test_provider_token_shapes_positive_and_negative() -> None:
     # Negative: a too-short look-alike does not trigger.
     assert "ghp_short" in redaction.redact("ghp_short")
     assert "AKIASHORT" in redaction.redact("AKIASHORT")
+
+
+def test_openai_project_and_service_keys() -> None:
+    # The bare `sk-[A-Za-z0-9]{16,}` shape missed the project / service /
+    # admin prefixes because the internal hyphen broke the run. Each must
+    # now collapse whole. Assert the full token is gone, not a fragment.
+    for tok in (
+        "sk-abcdefghijklmnopqrstuvwx",  # classic (unchanged behavior)
+        "sk-proj-abcdefghijklmnopqrstuvwxyz1234",
+        "sk-svcacct-abcdefghijklmnopqrstuvwxyz12",
+        "sk-admin-abcdefghijklmnopqrstuvwxyz1234",
+        # URL-safe opaque tail: the project/service body legitimately
+        # contains `_` and `-`. A regression to an alnum-only tail would
+        # stop at the first separator and leave the rest in the log.
+        "sk-proj-abc_def-ghijklmnopqrstuvwxyz1234567890",
+    ):
+        out = redaction.redact(tok)
+        assert tok not in out, tok
+        assert out == "[REDACTED]", tok
+    # Negative: a hyphenated identifier that merely starts `sk-` is not a
+    # key (the run is broken by hyphens before the length floor is met).
+    assert "sk-build-step" in redaction.redact("sk-build-step")
+
+
+def test_google_secret_shapes_positive_and_negative() -> None:
+    # Google API key (AIza + 35) and OAuth access token (ya29.<...>).
+    api = "AIzaSyD-1234567890abcdefghijklmnopqrstuv"
+    assert redaction.redact(api) == "[REDACTED]"
+    oauth = "ya29.A0ARrdaM-abcdefghijklmnop1234567890"
+    out = redaction.redact(oauth)
+    assert "A0ARrdaM" not in out
+    assert "[REDACTED]" in out
+    # ya29 tokens are opaque and carry additional dots in the body; the
+    # whole token must collapse, not just the run up to the next dot.
+    dotted = "ya29.A0ARrdaMabcdefghijklmnop.1234567890abcdefghijklmnop"
+    out_dotted = redaction.redact(dotted)
+    assert "1234567890abcdefghijklmnop" not in out_dotted
+    assert out_dotted == "[REDACTED]"
+    # Negative: the bare prefixes without a long value are left intact.
+    assert "AIza" in redaction.redact("the AIza prefix alone")
+    assert "ya29 release" in redaction.redact("ya29 release notes")
+
+
+def test_stripe_keys_positive_and_negative() -> None:
+    for tok in (
+        _synth("sk_live_", "0123456789abcdefABCDEFgh"),
+        _synth("sk_test_", "0123456789abcdefABCDEFgh"),
+        _synth("rk_live_", "51HCs0123456789abcdefABCDEF"),
+        # Over-long body: an upper bound would have left a tail. The run is
+        # unbounded so even a 110-char value collapses whole.
+        _synth("sk_live_", "A" * 110),
+    ):
+        assert redaction.redact(tok) == "[REDACTED]", tok
+    # Negative: `pk_live_` (publishable, not secret) and a non-Stripe
+    # `sk_` word are not in scope; the env qualifier is required.
+    assert "sk_local_thing" in redaction.redact("sk_local_thing")
+
+
+def test_registry_and_jwt_shapes_positive_and_negative() -> None:
+    # GitLab PAT, npm token, PyPI upload token.
+    assert redaction.redact(_synth("glpat-", "ABCDEF1234567890abcd")) == "[REDACTED]"
+    assert redaction.redact("npm_abcdefghijklmnopqrstuvwxyz0123456789") == "[REDACTED]"
+    # Longer-than-reference npm token still collapses whole (unbounded body).
+    assert redaction.redact("npm_" + "a" * 44) == "[REDACTED]"
+    pypi = "pypi-AgEIcHlwaS5vcmcCABCDEFxyz1234567890abcd"
+    assert redaction.redact(pypi) == "[REDACTED]"
+    # JWT: header.payload.signature; both leading segments start `ey`.
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N"
+    out = redaction.redact(jwt)
+    assert "eyJzdWIiOiIxMjM0NTY3ODkwIn0" not in out
+    assert "[REDACTED]" in out
+    # Compact JWT with a small claim set: the payload segment is short
+    # (`{"sub":"1"}`) but the token is still a bearer credential and must
+    # be redacted (the header floor is the anchor, not the payload length).
+    compact = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dozjgNryP4J3jVmNHl0w5N"
+    out_compact = redaction.redact(compact)
+    assert "eyJzdWIiOiIxIn0" not in out_compact
+    assert "[REDACTED]" in out_compact
+    # Negatives: short look-alikes / a dotted version string do not trigger.
+    assert "glpat-short" in redaction.redact("glpat-short")
+    assert "app.eyeball.v2" in redaction.redact("app.eyeball.v2")
 
 
 # --- Policy: positive (classifies high) + negative (near-miss stays low) ---
