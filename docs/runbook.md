@@ -390,7 +390,7 @@ export COVERAGE_PROCESS_START=$(pwd)/pyproject.toml
 coverage erase
 coverage run -m pytest -q
 coverage combine
-coverage report           # uses fail_under=85 from [tool.coverage.report]
+coverage report           # uses fail_under=90 from [tool.coverage.report]
 coverage html && xdg-open htmlcov/index.html
 ```
 
@@ -957,6 +957,28 @@ plan lands in the same PR.)
   file; if its path changes, update both. The enforcement-reporting
   channel must match `SECURITY.md`'s reporting channel so reporters
   have a single trust path to remember.
+
+### 8.20 `audit/<date>-engagement.md` (assurance engagement packs)
+
+- Keep: each dated engagement pack as a **frozen, point-in-time
+  record**. It captures the repository at the HEAD it names
+  (`audit/2026-05-27-engagement.md` is pinned to `823bd743`), the
+  findings table, their disposition, and the PRs that closed them. Do
+  not retro-edit a landed pack to match later state — like the ADR 0005
+  outcome paragraphs, it records an *event*, not a living document.
+- Add: a new `audit/YYYY-MM-DD-engagement.md` per subsequent
+  engagement; do not overwrite a prior one. The pack is the broader
+  assurance counterpart to an ADR 0005 validation pass — ADR 0005
+  records the terse four-step upstream-surface check per pass, an
+  engagement pack records a full audit / review / harden engagement
+  (backlog disposition, findings by severity, cross-cutting standards
+  posture, execution log).
+- Remove: nothing.
+- Cross-checks: every finding marked fixed must name the PR that closed
+  it so the pack reconciles against the merged history without
+  `git blame`. Any finding left open (e.g. F-G2 branch protection on
+  `main`) must reappear in the next pack's outstanding-risks section
+  until it is closed.
 
 ---
 
