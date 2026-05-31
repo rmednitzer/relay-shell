@@ -867,11 +867,13 @@ by the same checklist.
 
 ### 8.12a `docs/adr/0005-codebase-validation.md`
 
-- Keep: the validation methodology (steps 1-4), the 2026-05-24
-  outcome paragraph, and the rejected-alternatives section.
+- Keep: the validation methodology (steps 1-4), every dated outcome
+  paragraph (2026-05-24, 2026-05-31, ...), and the rejected-alternatives
+  section.
 - Add on each subsequent validation pass: a new outcome paragraph
   + findings table dated to the pass. Do not overwrite prior dates;
-  the ADR is a running record of validation events.
+  the ADR is a running record of validation events. Refresh the ADR
+  index subject in `docs/adr/README.md` so it names every pass.
 - Cross-checks: every finding row must reference the file + line the
   drift lived at and the same PR's resolution (so the audit trail is
   recoverable without `git blame`).

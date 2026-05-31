@@ -56,6 +56,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Documentation-consistency pass (runbook §8): added a "change a
+  redaction/tier pattern" row to the `CONTRIBUTING.md` documentation-
+  moves-with-code table (bump `PATTERNS_VERSION`, paired tests in
+  `tests/test_patterns.py`); refreshed the ADR-index subject for ADR
+  0005 in `docs/adr/README.md` to name both the 2026-05-24 and
+  2026-05-31 validation passes; generalized the runbook §8.12a
+  maintenance note so it stays self-maintaining across future passes;
+  and aligned `CLAUDE.md`'s trusted-reference list with `AGENTS.md` by
+  adding the OWASP Secrets Management Cheat Sheet (the canonical source
+  behind the redaction control). No code or behavior change.
 - `Relay.connect_kwargs` accepts an optional `connect_timeout` keyword;
   the `ssh_check` and `ssh_fanout` wrappers no longer hand-roll the
   dict literal to inject the probe-level timeout. Zero / negative
