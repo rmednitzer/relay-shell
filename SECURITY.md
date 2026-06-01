@@ -29,7 +29,12 @@ that a persuaded model still cannot exceed the operator-defined envelope:
   disk (`chattr +a`) and ship it off-host; the bundled logrotate config
   preserves the attribute across rotation. See
   [`docs/audit-shipper.md`](docs/audit-shipper.md) for worked Vector,
-  Fluent Bit, and `systemd-journal-remote` recipes.
+  Fluent Bit, and `systemd-journal-remote` recipes. Optionally set
+  `RELAY_SHELL_AUDIT_CHAIN=true` for a per-record hash chain
+  (`docs/adr/0007-audit-hash-chain.md`) so any in-place edit, insertion,
+  deletion, or reorder is detectable with `relay-shell --verify-audit` —
+  in-record tamper-evidence that does not depend on the filesystem
+  attribute the residual-risk attacker below can clear.
 - **Secret redaction.** Audited arguments are scrubbed for bearer tokens,
   API keys, private-key blocks, `Authorization` headers, long-name CLI
   flags (both `--password` and single-dash `-token=` forms),

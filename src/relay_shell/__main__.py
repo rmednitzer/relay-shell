@@ -16,6 +16,7 @@ import signal
 import sys
 from pathlib import Path
 
+from .audit import verify_chain
 from .config import get_settings
 from .server import Relay, build_server
 from .verifier import Status, verify_deploy
@@ -83,10 +84,34 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--verify-audit",
+        action="store_true",
+        help=(
+            "Verify the tamper-evident hash chain of an audit jsonl file "
+            "(RELAY_SHELL_AUDIT_CHAIN=true). Exits 0 if the chain is intact "
+            "(or the log carries no chained records), 2 if any record was "
+            "inserted, deleted, reordered, or edited. Reads "
+            "RELAY_SHELL_AUDIT_PATH unless --audit-path overrides it."
+        ),
+    )
+    parser.add_argument(
+        "--audit-path",
+        type=str,
+        default=None,
+        help=(
+            "Override the audit file for --verify-audit. Default: the "
+            "configured RELAY_SHELL_AUDIT_PATH. Useful for verifying a "
+            "rotated or shipped-off-host copy."
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         dest="json_out",
-        help=("Emit machine-readable output for --verify-deploy (ignored for other subcommands)."),
+        help=(
+            "Emit machine-readable output for --verify-deploy / --verify-audit "
+            "(ignored for other subcommands)."
+        ),
     )
     return parser
 
@@ -189,6 +214,47 @@ def _verify_deploy(
     return 0 if report.ok else 2
 
 
+def _verify_audit(audit_path: str | None, json_out: bool) -> int:
+    """Verify the audit hash chain and print a report.
+
+    Returns 0 if the chain is intact (or the log has no chained records),
+    2 if a break is found. ``verify_chain`` never raises; a missing file is
+    reported as OK-with-no-records, an unreadable file as a break.
+    """
+    path = audit_path
+    if path is None:
+        try:
+            path = get_settings().audit_path
+        except Exception as exc:  # noqa: BLE001
+            print(f"relay_shell: invalid configuration: {exc}", file=sys.stderr)
+            return 2
+
+    result = verify_chain(path)
+    if json_out:
+        print(
+            json.dumps(
+                {
+                    "ok": result.ok,
+                    "path": path,
+                    "records": result.records,
+                    "start_seq": result.start_seq,
+                    "broken_at": result.broken_at,
+                    "reason": result.reason,
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(result.reason)
+        summary = (
+            "relay-shell: verify-audit OK"
+            if result.ok
+            else f"relay-shell: verify-audit FAILED (line {result.broken_at})"
+        )
+        print(summary, file=sys.stderr)
+    return 0 if result.ok else 2
+
+
 def _install_sigterm_handler() -> None:
     """Convert SIGTERM into a KeyboardInterrupt so the shutdown finally
     block in ``main`` runs.
@@ -218,6 +284,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.verify_deploy:
         return _verify_deploy(args.templates_dir, args.install_prefix, args.json_out)
+
+    if args.verify_audit:
+        return _verify_audit(args.audit_path, args.json_out)
 
     if args.check_config:
         return _check_config()

@@ -204,6 +204,33 @@ on-host log is evidence only until the host is compromised. See
 [`docs/audit-shipper.md`](audit-shipper.md) for worked examples using
 Vector, Fluent Bit, and `journalctl` → `systemd-journal-remote`.
 
+### 6a. Tamper-evident chain (optional)
+
+`chattr +a` and off-host shipping protect the log, but neither makes a
+*single altered record* detectable, and the shipper has a flush window. Set
+`RELAY_SHELL_AUDIT_CHAIN=true` (requires `AUDIT_FORMAT=jsonl`) to add a
+per-record hash chain ([ADR 0007](adr/0007-audit-hash-chain.md)): each record
+carries `seq`, the previous record's `prev` hash, and its own `chain` hash, so
+any edit, insertion, deletion, or reorder is detectable by recomputation —
+including from the shipped copy, without trusting the relay host. Default off
+keeps the record byte-identical; `server_info.audit.chain` reports the live
+state.
+
+Enable it on a **freshly rotated** log so the chain runs from genesis with no
+leading legacy prefix. Verify the on-host log or a shipped copy:
+
+```bash
+relay-shell --verify-audit                         # uses RELAY_SHELL_AUDIT_PATH
+relay-shell --verify-audit --audit-path /path/to/shipped.jsonl --json
+# exit 0 = chain intact; exit 2 = a record was inserted / deleted / edited.
+```
+
+The chain is rotation-safe: the in-memory anchor carries it into the new file,
+so cross-rotation continuity is the prior file's last `chain` equalling the new
+file's first `prev` (printed as the verifier's start anchor). A restart that
+cannot read the tail starts a fresh chain at genesis — a visible `seq`-reset
+seam the verifier surfaces, never a silent gap.
+
 ## 7. SSH credential scoping
 
 The realized credential surface is whatever keys the service account can use.

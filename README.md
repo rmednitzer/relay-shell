@@ -4,7 +4,7 @@
 
 **Status:** v0.1.0 · Python 3.12 / 3.13 / 3.14 · transports: `stdio` and
 `streamable-http` · MCP SDK `mcp==1.27.1` · last validated against
-upstream surfaces on 2026-05-31
+upstream surfaces on 2026-06-01
 ([ADR 0005](docs/adr/0005-codebase-validation.md)).
 
 A highly reliable, maximally capable [Model Context Protocol](https://modelcontextprotocol.io)
@@ -150,6 +150,9 @@ Safety is achieved with **compensating controls**, not by crippling the tool:
 - **Audit** - every invocation appended as one JSON line with a SHA-256 hash
   of the output (never the output body), byte length, exit code, request and
   client id, and the assessed tier. Append-only on disk; rotation-safe handler.
+  Optional per-record hash chain (`RELAY_SHELL_AUDIT_CHAIN`,
+  [ADR 0007](docs/adr/0007-audit-hash-chain.md)) makes any edit, insertion,
+  deletion, or reorder detectable with `relay-shell --verify-audit`.
 - **Tiered authority** - every call is classified Tier 0..3
   ([`docs/adr/0003-tiered-authority.md`](docs/adr/0003-tiered-authority.md)).
   `RELAY_SHELL_POLICY_MODE` selects `open` (default), `guarded`, or `readonly`.

@@ -24,8 +24,9 @@ top. Status values:
 | [0002](0002-no-sandbox-full-access.md) | Unsandboxed, full-access posture | Accepted | 2026-05-19 | Why the executor runs without a meaningful internal sandbox - the project exists to give an MCP client real administrative power, so the safety story is compensating controls (audit, tier policy, redaction, bounds, deployment discipline) instead. |
 | [0003](0003-tiered-authority.md) | Tiered authority | Accepted | 2026-05-19 | The four-tier classification (read-only / reversible / stateful / irreversible) plus `open` / `guarded` / `readonly` admission modes that consume it. The deny list is enforced first in every mode. |
 | [0004](0004-edge-tls-automation.md) | Automated TLS at the edge | Accepted | 2026-05-20 | Why `deploy/install-edge.sh` provisions Caddy + ACME (Let's Encrypt) for the HTTP transport, and why certbot+cron and native TLS in the Python service were rejected. |
-| [0005](0005-codebase-validation.md) | Codebase validation against known-good sources | Accepted | 2026-05-24 | A repeatable validation pass against the upstream `mcp` / `asyncssh` / OAuth surfaces, the audit record schema, and the documented redaction / tier behavior. A running record that appends a dated outcome per pass: 2026-05-24 (three documentation-drift findings) and 2026-05-31 (F-004, redaction coverage for bare provider-token shapes). |
+| [0005](0005-codebase-validation.md) | Codebase validation against known-good sources | Accepted | 2026-05-24 | A repeatable validation pass against the upstream `mcp` / `asyncssh` / OAuth surfaces, the audit record schema, and the documented redaction / tier behavior. A running record that appends a dated outcome per pass: 2026-05-24 (three documentation-drift findings), 2026-05-31 (F-004, redaction coverage for bare provider-token shapes), and 2026-06-01 (F-005 C-005 runbook drift; the ADR 0007 audit hash-chain landed in the same pass). |
 | [0006](0006-seccomp-notify-audit-channel.md) | Syscall-level audit channel via seccomp-bpf notification mode | Proposed | 2026-05-24 | An audit-only seccomp-bpf channel (notify-mode, never blocking) that closes the audit gap on the child side of `asyncio.create_subprocess_*` without re-introducing a sandbox. Opt-in via `RELAY_SHELL_SECCOMP_NOTIFY`, Linux >= 5.5, narrow syscall set, additive audit-record shape. Design contract for the implementing PR; validation outcome lands at Acceptance. |
+| [0007](0007-audit-hash-chain.md) | Tamper-evident audit log via per-record hash chaining | Accepted | 2026-06-01 | An opt-in (`RELAY_SHELL_AUDIT_CHAIN`, default off), additive per-record hash chain (`seq`/`prev`/`chain`) that makes any edit, insertion, deletion, or reorder of the on-disk audit log detectable by recomputation — closing the integrity gap left by `chattr +a` + off-host shipping against the ADR 0002 residual-risk attacker. `jsonl` only; restart/rotation-safe; verified offline by `relay-shell --verify-audit` (a CLI verb, not an MCP tool). |
 
 ## When to write an ADR
 
@@ -43,7 +44,7 @@ runbook §6 has recipes per case.
 
 ## How to write one
 
-1. Number sequentially. Next free number is **0007**.
+1. Number sequentially. Next free number is **0008**.
 2. Filename pattern: `NNNN-short-slug.md`.
 3. Required header:
 

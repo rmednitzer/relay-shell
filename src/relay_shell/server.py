@@ -103,6 +103,7 @@ class Relay:
             settings.audit_path,
             also_stderr=settings.audit_stderr,
             fmt=settings.audit_format,
+            chain=settings.audit_chain,
         )
         self.policy = Policy(settings.policy_mode, settings.policy_deny, settings.policy_allow)
         self.inventory = Inventory(settings.ssh_config, settings.inventory).load()
@@ -984,7 +985,12 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                     "max_output_hard": cfg.max_output_hard,
                     "max_sessions": cfg.max_sessions,
                 },
-                "audit": {"path": app.audit.path, "degraded": app.audit.degraded},
+                "audit": {
+                    "path": app.audit.path,
+                    "degraded": app.audit.degraded,
+                    "format": app.audit.format,
+                    "chain": app.audit.chain,
+                },
                 "ssh": {
                     "known_hosts_default": cfg.ssh_known_hosts,
                     "inventory_hosts": len(app.inventory.hosts()),

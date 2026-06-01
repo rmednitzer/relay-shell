@@ -19,13 +19,15 @@ import json
 import logging
 import os
 import sys
+import threading
+from dataclasses import dataclass
 from logging.handlers import WatchedFileHandler
 from pathlib import Path
 from typing import Any
 
 from .util import now_iso, sha256_hex
 
-__all__ = ["AuditLogger"]
+__all__ = ["AuditLogger", "ChainResult", "verify_chain"]
 
 
 def _format_jsonl(entry: dict[str, Any]) -> str:
@@ -73,14 +75,195 @@ def _format_leef(entry: dict[str, Any]) -> str:
 _FORMATTERS = {"jsonl": _format_jsonl, "cef": _format_cef, "leef": _format_leef}
 
 
+# --- Tamper-evident hash chain (opt-in; see docs/adr/0007-audit-hash-chain.md) ---
+
+# Anchor for the first record of a from-scratch chain (seq 0). A rotated
+# file inherits its anchor from the last record of the prior file, carried
+# forward in that record's `chain` and the next record's `prev`.
+_CHAIN_GENESIS = "0" * 64
+
+
+def _chain_value(prev: str, entry_without_chain: dict[str, Any]) -> str:
+    """SHA-256 over the previous chain hash + the canonical record body.
+
+    The body is serialized with sorted keys and compact separators so the
+    value is independent of dict insertion order and of the on-disk
+    formatter: a verifier reconstructs the exact same input from a parsed
+    JSONL line by dropping the record's own ``chain`` field. Any edit,
+    insertion, deletion, or reordering of records breaks the recomputation
+    or the ``prev`` linkage downstream.
+    """
+    canonical = json.dumps(
+        entry_without_chain,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+        ensure_ascii=False,
+    )
+    return sha256_hex(prev + canonical)
+
+
+def _is_chained(rec: Any) -> bool:
+    """True if ``rec`` is a JSONL record carrying the three chain fields."""
+    return (
+        isinstance(rec, dict)
+        and isinstance(rec.get("seq"), int)
+        and isinstance(rec.get("prev"), str)
+        and isinstance(rec.get("chain"), str)
+    )
+
+
+@dataclass(frozen=True)
+class ChainResult:
+    """Outcome of :func:`verify_chain` over one on-disk audit file."""
+
+    ok: bool
+    records: int  # chained records verified
+    start_seq: int | None  # seq of the first chained record (anchor)
+    start_prev: str | None  # the first record's `prev` (cross-file anchor)
+    broken_at: int | None  # 1-based line number of the first break, else None
+    reason: str
+
+
+def verify_chain(path: str) -> ChainResult:
+    """Verify the hash chain of an audit ``jsonl`` file.
+
+    Walks the file once, skipping any leading legacy (unchained) records,
+    and verifies that from the first chained record to EOF the chain is
+    internally consistent: each ``seq`` increments by one, each ``prev``
+    equals the previous record's ``chain``, and each record's body
+    recomputes to its stated ``chain``. The first record's ``prev`` is the
+    anchor — genesis for a from-scratch log, or the last ``chain`` of the
+    prior rotation for a mid-chain file (verify continuity across
+    rotations by checking that seam manually). Never raises.
+    """
+    try:
+        p = Path(path).expanduser()
+        if not p.is_file():
+            return ChainResult(True, 0, None, None, None, f"audit file not found: {path}")
+    except Exception as exc:  # noqa: BLE001 - never raise from a verifier
+        return ChainResult(False, 0, None, None, None, f"cannot access audit file: {exc}")
+
+    records = 0
+    started = False
+    start_seq: int | None = None
+    start_prev: str | None = None
+    expected_seq = 0
+    expected_prev = _CHAIN_GENESIS
+    try:
+        with p.open("r", encoding="utf-8", errors="replace") as fh:
+            for lineno, raw in enumerate(fh, start=1):
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    if started:
+                        return ChainResult(
+                            False,
+                            records,
+                            start_seq,
+                            start_prev,
+                            lineno,
+                            f"line {lineno}: invalid JSON inside the chained region",
+                        )
+                    continue
+                if not _is_chained(rec):
+                    if started:
+                        return ChainResult(
+                            False,
+                            records,
+                            start_seq,
+                            start_prev,
+                            lineno,
+                            f"line {lineno}: record missing chain fields inside the chained region",
+                        )
+                    continue  # leading legacy / unchained record
+                if not started:
+                    started = True
+                    start_seq = expected_seq = rec["seq"]
+                    start_prev = expected_prev = rec["prev"]
+                    if rec["seq"] == 0 and rec["prev"] != _CHAIN_GENESIS:
+                        return ChainResult(
+                            False,
+                            records,
+                            start_seq,
+                            start_prev,
+                            lineno,
+                            f"line {lineno}: seq 0 must anchor to genesis",
+                        )
+                if rec["seq"] != expected_seq:
+                    return ChainResult(
+                        False,
+                        records,
+                        start_seq,
+                        start_prev,
+                        lineno,
+                        f"line {lineno}: expected seq {expected_seq}, found {rec['seq']}",
+                    )
+                if rec["prev"] != expected_prev:
+                    return ChainResult(
+                        False,
+                        records,
+                        start_seq,
+                        start_prev,
+                        lineno,
+                        f"line {lineno}: prev does not match the previous record's chain",
+                    )
+                body = {k: v for k, v in rec.items() if k != "chain"}
+                if _chain_value(rec["prev"], body) != rec["chain"]:
+                    return ChainResult(
+                        False,
+                        records,
+                        start_seq,
+                        start_prev,
+                        lineno,
+                        f"line {lineno}: record body does not match its chain hash (tampered)",
+                    )
+                records += 1
+                expected_prev = rec["chain"]
+                expected_seq += 1
+    except OSError as exc:
+        return ChainResult(False, records, start_seq, start_prev, None, f"read error: {exc}")
+
+    if not started:
+        return ChainResult(
+            True, 0, None, None, None, "no chained records found (empty or unchained log)"
+        )
+    return ChainResult(
+        True,
+        records,
+        start_seq,
+        start_prev,
+        None,
+        f"chain intact: {records} record(s) from seq {start_seq}",
+    )
+
+
 class AuditLogger:
     """Writes structured audit records. Construction never raises."""
 
-    def __init__(self, path: str, also_stderr: bool = False, fmt: str = "jsonl") -> None:
+    def __init__(
+        self,
+        path: str,
+        also_stderr: bool = False,
+        fmt: str = "jsonl",
+        chain: bool = False,
+    ) -> None:
         self.path = path
         self.degraded = False
         self.degraded_reason = ""
         self.format = fmt
+        # Tamper-evident chain state. Serialized by `_chain_lock` so the
+        # ordering invariant (seq monotonic, prev == previous chain) holds
+        # even if a future caller records from another thread (e.g. the
+        # seccomp-notify supervisor in ADR 0006). When `chain` is off the
+        # lock is never taken and the record path is byte-identical to v0.1.
+        self.chain = chain
+        self._chain_lock = threading.Lock()
+        self._seq = 0
+        self._prev = _CHAIN_GENESIS
         self._log = logging.getLogger("relay_shell.audit")
         self._log.setLevel(logging.INFO)
         self._log.propagate = False
@@ -118,6 +301,28 @@ class AuditLogger:
             echo.setFormatter(logging.Formatter("AUDIT %(message)s"))
             self._log.addHandler(echo)
 
+        if self.chain:
+            self._resume_chain()
+
+    def _resume_chain(self) -> None:
+        """Continue an existing chain across restarts and log rotation.
+
+        Reads the last on-disk record and resumes from its ``seq`` + ``chain``
+        so a restart does not reset the chain to genesis mid-stream.
+        Best-effort: a missing / empty / unchained / unparseable tail leaves
+        the chain at genesis (seq 0). That produces a *visible seam* a
+        verifier reports — a seq reset, never a silent gap. Never raises;
+        construction of the audit logger must not fail.
+        """
+        with contextlib.suppress(Exception):
+            last = self.tail(1).strip()
+            if not last:
+                return
+            rec = json.loads(last)
+            if _is_chained(rec):
+                self._seq = int(rec["seq"]) + 1
+                self._prev = str(rec["chain"])
+
     def record(
         self,
         *,
@@ -148,7 +353,21 @@ class AuditLogger:
         # Audit must never break a tool call.
         with contextlib.suppress(Exception):
             formatter = _FORMATTERS.get(self.format, _format_jsonl)
-            self._log.info(formatter(entry))
+            if self.chain:
+                # Append the chain fields (seq/prev), commit to them with a
+                # `chain` hash, and advance the in-memory anchor only after
+                # the line is emitted. If emit raises, the chain does not
+                # advance, so it stays consistent with what is on disk.
+                with self._chain_lock:
+                    entry["seq"] = self._seq
+                    entry["prev"] = self._prev
+                    chain = _chain_value(self._prev, entry)
+                    entry["chain"] = chain
+                    self._log.info(formatter(entry))
+                    self._seq += 1
+                    self._prev = chain
+            else:
+                self._log.info(formatter(entry))
 
     def tail(self, lines: int) -> str:
         """Return the last ``lines`` audit records as on-disk text lines.

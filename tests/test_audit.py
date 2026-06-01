@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-from relay_shell.audit import AuditLogger
+from relay_shell.audit import AuditLogger, verify_chain
 from relay_shell.util import sha256_hex
 
 
@@ -235,3 +235,176 @@ def test_audit_leef_escapes_tabs_and_delimiters(tmp_path: Path) -> None:
     line = path.read_text(encoding="utf-8").strip()
     assert 'args={"command":"printf \'a\\\\\\\\tb\\=c\'"}' in line
     assert "\ttool=shell_exec" in line
+
+
+# --- Tamper-evident hash chain (ADR 0007) -----------------------------------
+
+_GENESIS = "0" * 64
+
+
+def _write_chained(path: Path, n: int) -> list[dict]:
+    """Write ``n`` chained records and return them parsed, in order."""
+    log = AuditLogger(str(path), chain=True)
+    for i in range(n):
+        log.record(tool="t", args={"i": i}, output=f"o{i}", exit_code=0, tier=1)
+    return [json.loads(ln) for ln in path.read_text().strip().splitlines()]
+
+
+def _rewrite(path: Path, recs: list[dict]) -> None:
+    """Re-serialize a (possibly tampered) record list back to disk."""
+    with path.open("w", encoding="utf-8") as fh:
+        for r in recs:
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def test_chain_off_by_default_has_no_extra_fields(tmp_path: Path) -> None:
+    # Default (chain off) must stay byte-identical to v0.1: no seq/prev/chain.
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    assert log.chain is False
+    log.record(tool="shell_exec", args={"command": "id"}, output="ok", exit_code=0, tier=1)
+    rec = json.loads(path.read_text().strip())
+    assert "seq" not in rec
+    assert "prev" not in rec
+    assert "chain" not in rec
+
+
+def test_chain_emits_seq_prev_chain_with_genesis_anchor(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 3)
+    assert [r["seq"] for r in recs] == [0, 1, 2]
+    assert recs[0]["prev"] == _GENESIS
+    # Each record links to the previous record's chain hash.
+    assert all(recs[i]["prev"] == recs[i - 1]["chain"] for i in range(1, 3))
+
+
+def test_chain_record_still_hashes_output_not_body(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path), chain=True)
+    log.record(tool="t", args={}, output="CHAIN-SECRET-BODY", exit_code=0, tier=1)
+    text = path.read_text()
+    assert "CHAIN-SECRET-BODY" not in text
+    rec = json.loads(text.strip())
+    assert rec["output_sha256"] == sha256_hex("CHAIN-SECRET-BODY")
+
+
+def test_chain_resumes_across_reinit(tmp_path: Path) -> None:
+    # A restart continues the chain from the last on-disk record, not genesis.
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path), chain=True)
+    for i in range(2):
+        log.record(tool="t", args={"i": i}, output="x", exit_code=0, tier=1)
+    AuditLogger(str(path), chain=True).record(
+        tool="t", args={"i": 2}, output="x", exit_code=0, tier=1
+    )
+    recs = [json.loads(ln) for ln in path.read_text().strip().splitlines()]
+    assert [r["seq"] for r in recs] == [0, 1, 2]
+    assert recs[2]["prev"] == recs[1]["chain"]  # continued, not reset
+    assert verify_chain(str(path)).ok
+
+
+def test_verify_chain_intact(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    _write_chained(path, 5)
+    r = verify_chain(str(path))
+    assert r.ok
+    assert r.records == 5
+    assert r.start_seq == 0
+    assert r.broken_at is None
+
+
+def test_verify_chain_detects_record_edit(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 4)
+    recs[2]["args"]["i"] = 999  # edit a body; leave seq/prev/chain untouched
+    _rewrite(path, recs)
+    r = verify_chain(str(path))
+    assert not r.ok
+    assert r.broken_at == 3
+    assert "tampered" in r.reason
+
+
+def test_verify_chain_detects_chain_field_forgery(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 3)
+    recs[1]["chain"] = "f" * 64  # forge the stored chain directly
+    _rewrite(path, recs)
+    r = verify_chain(str(path))
+    assert not r.ok
+    assert r.broken_at == 2
+
+
+def test_verify_chain_detects_deletion(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 4)
+    del recs[1]  # excise a record; seq jumps and linkage breaks
+    _rewrite(path, recs)
+    assert not verify_chain(str(path)).ok
+
+
+def test_verify_chain_detects_reorder(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 4)
+    recs[1], recs[2] = recs[2], recs[1]
+    _rewrite(path, recs)
+    assert not verify_chain(str(path)).ok
+
+
+def test_verify_chain_seq0_must_anchor_genesis(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 1)
+    recs[0]["prev"] = "1" * 64  # a from-scratch chain must anchor to genesis
+    _rewrite(path, recs)
+    r = verify_chain(str(path))
+    assert not r.ok
+    assert "genesis" in r.reason
+
+
+def test_verify_chain_skips_leading_legacy_records(tmp_path: Path) -> None:
+    # Chaining enabled on an existing log: leading unchained lines are skipped.
+    path = tmp_path / "audit.jsonl"
+    AuditLogger(str(path)).record(tool="t", args={"i": -1}, output="x", exit_code=0, tier=1)
+    chained = AuditLogger(str(path), chain=True)
+    for i in range(2):
+        chained.record(tool="t", args={"i": i}, output="x", exit_code=0, tier=1)
+    r = verify_chain(str(path))
+    assert r.ok
+    assert r.records == 2
+    assert r.start_seq == 0
+
+
+def test_verify_chain_legacy_line_inside_region_is_a_break(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 3)
+    for key in ("chain", "seq", "prev"):
+        recs[1].pop(key)  # strip a record's chain fields mid-region
+    _rewrite(path, recs)
+    r = verify_chain(str(path))
+    assert not r.ok
+    assert "missing chain fields" in r.reason
+
+
+def test_verify_chain_garbage_line_in_region_is_a_break(tmp_path: Path) -> None:
+    # Inserting a non-JSON line into the chained region is a break, not a skip.
+    path = tmp_path / "audit.jsonl"
+    _write_chained(path, 2)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("this is not json\n")
+    r = verify_chain(str(path))
+    assert not r.ok
+    assert "invalid JSON" in r.reason
+
+
+def test_verify_chain_missing_file_is_ok_with_no_records(tmp_path: Path) -> None:
+    r = verify_chain(str(tmp_path / "never-created.jsonl"))
+    assert r.ok
+    assert r.records == 0
+
+
+def test_verify_chain_unchained_log_reports_no_records(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    AuditLogger(str(path)).record(tool="t", args={}, output="x", exit_code=0, tier=0)
+    r = verify_chain(str(path))
+    assert r.ok
+    assert r.records == 0
+    assert "no chained records" in r.reason
