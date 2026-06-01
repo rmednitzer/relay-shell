@@ -36,9 +36,11 @@ for record-stream *integrity*. That is the gap this ADR closes.
 The OWASP Logging Cheat Sheet (a trusted reference in `CLAUDE.md`) calls
 for log integrity protection precisely for this threat. The canonical
 construction is a hash chain: each record commits to the hash of the one
-before it, so any edit, insertion, deletion, or reorder is detectable by
-recomputation — even from the shipped copy, after the fact, without
-trusting the relay host.
+before it, so any edit, insertion, reorder, or interior deletion is
+detectable by recomputation — even from the shipped copy, after the fact,
+without trusting the relay host. (Truncation at the file's head or tail is
+the chain's known boundary; see "What the single-file chain proves" below
+for how the genesis anchor and the off-host copy cover it.)
 
 ## Decision
 
@@ -67,13 +69,20 @@ Add an **opt-in, additive** per-record hash chain to the audit log.
   `RELAY_SHELL_AUDIT_FORMAT=cef|leef` is **rejected at startup** (a config
   validation error, fail-fast per the `config` module contract). CEF/LEEF
   target a SIEM that owns integrity on its side.
-- **Restart- and rotation-safe.** On construction the logger reads the last
-  record and resumes from its `seq + 1` and `chain`. A missing / empty /
-  unchained / unparseable tail starts a fresh chain at genesis — a *visible
-  seam* (a `seq` reset) that a verifier surfaces, never a silent gap. After
-  logrotate moves the file, the in-memory anchor carries the chain into the
-  new file unbroken; cross-file continuity is the previous file's last
-  `chain` equalling the new file's first `prev`.
+- **Restart- and rotation-safe (while the process runs).** On construction
+  the logger reads the last record and resumes from its `seq + 1` and
+  `chain`. A missing / empty / unchained / unparseable tail starts a fresh
+  chain at genesis — a *visible seam* (a `seq` reset) that a verifier
+  surfaces, never a silent gap. While the process keeps running, rotation
+  preserves the chain: the in-memory anchor follows the file
+  (`WatchedFileHandler` reopens after a rename; `copytruncate` keeps the same
+  fd), so the new file continues the same `seq`/`chain`. A rotation
+  **immediately followed by a restart** — before any record lands in the
+  fresh empty file — re-anchors at genesis: resume reads the empty file and
+  starts a new genesis-anchored segment (seq restarts at 0). This is a
+  visible seam, not a silent gap; cross-segment continuity is the ordered
+  off-host stream's job (see "Limits" below), consistent with this ADR's
+  delegation of cross-file durability to off-host shipping.
 - **Ordering invariant under concurrency.** The `seq`/`prev` read-modify-write
   and the line emit are taken under one lock, so the chain stays
   monotonic and correctly linked even if a future caller records from
@@ -88,7 +97,40 @@ Add an **opt-in, additive** per-record hash chain to the audit log.
   model should drive, and keeping it off the tool surface avoids churning
   the 21-tool contract (`tests/test_server.py::_EXPECTED`). The verifier
   (`audit.verify_chain`) skips any leading legacy records, then requires a
-  contiguous valid chain to EOF; a `seq` 0 record must anchor to genesis.
+  contiguous valid chain to EOF; a `seq` 0 record must anchor to genesis,
+  and the result reports whether the verified region is genesis-`anchored`.
+  `--verify-audit --require-genesis` fails (exit 2) a log that is internally
+  valid but does not start at genesis — the head-truncation signal.
+
+## What the single-file chain proves (and what it does not)
+
+A keyless single-file chain proves the records from its first surviving one
+to its last are **unaltered, contiguous, and correctly ordered**. By
+recomputation it detects an **edit, insertion, reorder, or interior
+deletion** anywhere in that range. It does **not**, from one file in
+isolation, prove the boundaries:
+
+- **Head-truncation** (excising leading records, including `seq` 0): the
+  remaining records still form a valid sub-chain. Caught by the **genesis
+  anchor** — a log built from genesis but no longer starting at `seq` 0 /
+  genesis `prev` has had leading records removed. `--require-genesis` turns
+  this into a hard failure; `ChainResult.anchored` exposes it
+  programmatically. (A mid-stream rotation segment legitimately starts at
+  `seq > 0`, so this is opt-in, not the default.)
+- **Tail-truncation** (dropping the newest records): leaves a shorter but
+  valid prefix and is **not detectable from the file alone**. The defense is
+  the off-host copy, which holds the later records — the same off-host
+  shipping this ADR already designates as the durability/truncation control.
+  Adding an on-host high-water-mark would not change this: the residual-risk
+  attacker who can truncate the log can clear an on-host checkpoint too
+  (the same reason `chattr +a` is not sufficient). Tail-truncation is
+  out of scope for the in-file chain *by the same architectural choice* that
+  rejected external anchoring below.
+
+The user-facing claims (`SECURITY.md`, README, `--verify-audit` help,
+`docs/deployment.md` §6a, `docs/runbook.md` §2.3) are scoped to exactly
+this: edits / insertions / reorders / interior deletions + head-truncation
+in the file; tail-truncation and cross-file/durability off-host.
 
 ## Consequences
 
@@ -109,11 +151,15 @@ Add an **opt-in, additive** per-record hash chain to the audit log.
   three extra keys ride along. A SIEM that re-verifies the chain gains
   end-to-end tamper-evidence from the relay host to the sink.
 - Operational guidance: enable chaining on a **freshly rotated** log so the
-  chain runs from genesis with no leading legacy prefix. Verify a shipped
-  copy with `--verify-audit --audit-path`. Cross-rotation continuity is an
-  equality check on the seam (`prev` of file *N+1*'s first record ==
-  `chain` of file *N*'s last record), which the verifier prints as the
-  start anchor.
+  chain runs from genesis. Verify a shipped copy with
+  `--verify-audit --audit-path`, and `--require-genesis` for any log that
+  should be complete from the start. When the process ran across a rotation,
+  cross-rotation continuity is an equality check on the seam (`prev` of file
+  *N+1*'s first record == `chain` of file *N*'s last record), which the
+  verifier prints as the start anchor. When a restart fell between the
+  rotation and the next record, file *N+1* is a new genesis segment instead;
+  verify each genesis-anchored segment independently and rely on the ordered
+  off-host stream for continuity across segments.
 
 ## Rejected alternatives
 
@@ -164,20 +210,37 @@ four-step pass; full record in `docs/adr/0005-codebase-validation.md`
 §"Validation outcome (2026-06-01)" and `audit/2026-06-01-engagement.md`):
 
 - `ruff check`, `ruff format --check`, `mypy --strict` clean. `pytest -q` —
-  269 passed, 13 deselected (up from 250; +19 chain/config/CLI tests).
+  275 passed, 13 deselected (up from 250; +25 chain/config/CLI tests).
   `pytest -m fuzz` — 13 invariants pass. `coverage` — 92% with subprocess
-  collection (floor 90%); `config.py` 99%, `audit.py` 93%.
+  collection (floor 90%); `config.py` 99%, `audit.py` 95%.
 - 21 MCP tools and 3 resources unchanged — the chain adds a **CLI verb**,
   not a tool, so `tests/test_server.py::_EXPECTED` is untouched.
 - Behavior validation: a chained log emits `seq`/`prev`/`chain` with a
   genesis anchor and correct linkage; resumes seq across a simulated
   restart; `verify_chain` returns intact on a clean log and detects edit,
-  chain-field forgery, deletion, reorder, a garbage line, a non-genesis
-  seq-0 anchor, and a legacy line inside the region; default-off records
-  carry none of the three fields (byte-identical to v0.1); and
-  `audit_chain=true` with a non-`jsonl` format is rejected at startup. The
-  `--verify-audit` CLI returns 0 on an intact chain and 2 once a body is
-  edited.
+  chain-field forgery, interior deletion, reorder, a garbage line, a
+  non-genesis seq-0 anchor, and a legacy line inside the region; reports
+  `anchored=false` for a head-truncated log and `--require-genesis` fails
+  it; default-off records carry none of the three fields (byte-identical to
+  v0.1); and `audit_chain=true` with a non-`jsonl` format is rejected at
+  startup. The `--verify-audit` CLI returns 0 on an intact genesis chain, 2
+  on an edited body, and 2 on a head-truncated log under `--require-genesis`.
+
+### PR-review hardening
+
+Automated review (Copilot + Codex) plus the bundled `/security-review`
+converged on one substantive point: the initial draft **overclaimed**
+"any deletion is detectable". A keyless single-file chain cannot detect
+boundary truncation. The fix kept the architecture (no new sidecar, no
+external anchor — both rejected above) and instead (a) added the genesis
+anchor / `ChainResult.anchored` / `--require-genesis` so **head-truncation**
+is caught, (b) scoped **tail-truncation** and cross-file durability to the
+off-host stream in every user-facing claim, and (c) corrected the
+rotation-safety wording to distinguish rotation-while-running (chain
+continues) from rotation-then-restart (a new genesis segment). See the
+"What the single-file chain proves" section above. Regression tests pin
+head-truncation (`anchored=false`), tail-truncation (valid-prefix, the
+documented limitation), and the `--require-genesis` exit codes.
 
 No change to policy admission, tier semantics, the no-sandbox posture, or
 any tool's response shape. This pass hardened a compensating control

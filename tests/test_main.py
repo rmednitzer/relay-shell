@@ -116,6 +116,51 @@ def test_verify_audit_help_lists_the_flags() -> None:
     assert proc.returncode == 0
     assert "--verify-audit" in proc.stdout
     assert "--audit-path" in proc.stdout
+    assert "--require-genesis" in proc.stdout
+
+
+def test_verify_audit_require_genesis_flags_head_truncation(tmp_path: Path) -> None:
+    """Head-truncation: internally valid but not genesis-anchored.
+
+    Without --require-genesis it exits 0 (a mid-stream rotation segment is
+    legitimate) but warns; with --require-genesis it fails (exit 2).
+    """
+    import json
+
+    from relay_shell.audit import AuditLogger
+
+    audit = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(audit), chain=True)
+    for i in range(5):
+        log.record(tool="t", args={"i": i}, output="x", exit_code=0, tier=1)
+
+    # Excise the first two records (head-truncation).
+    lines = [x for x in audit.read_text().splitlines() if x.strip()]
+    audit.write_text("\n".join(lines[2:]) + "\n")
+
+    warned = _run_main(["--verify-audit", "--audit-path", str(audit)])
+    assert warned.returncode == 0
+    assert "does not start at genesis" in warned.stderr
+
+    strict = _run_main(
+        ["--verify-audit", "--audit-path", str(audit), "--require-genesis", "--json"]
+    )
+    assert strict.returncode == 2
+    payload = json.loads(strict.stdout)
+    assert payload["ok"] is False
+    assert payload["anchored"] is False
+    assert payload["chain_ok"] is True  # the chain itself is internally valid
+
+
+def test_verify_audit_require_genesis_passes_genesis_log(tmp_path: Path) -> None:
+    from relay_shell.audit import AuditLogger
+
+    audit = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(audit), chain=True)
+    for i in range(3):
+        log.record(tool="t", args={"i": i}, output="x", exit_code=0, tier=1)
+    ok = _run_main(["--verify-audit", "--audit-path", str(audit), "--require-genesis"])
+    assert ok.returncode == 0, ok.stderr
 
 
 def test_main_returns_two_on_invalid_config_without_check_flag(tmp_path: Path) -> None:

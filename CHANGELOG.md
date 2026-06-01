@@ -11,20 +11,25 @@ All notable changes to this project are documented here. The format follows
 - Tamper-evident audit log (opt-in). `RELAY_SHELL_AUDIT_CHAIN=true`
   (requires `RELAY_SHELL_AUDIT_FORMAT=jsonl`) appends a per-record hash
   chain — `seq`, the previous record's `prev` hash, and a `chain` hash
-  over the canonical record body — so any edit, insertion, deletion, or
-  reorder of the on-disk log is detectable by recomputation, including
-  from a shipped-off-host copy. The chain resumes across restarts and log
-  rotation by re-reading the last record; a restart that cannot read the
-  tail starts a visible genesis seam, never a silent gap. Verify with the
-  new `relay-shell --verify-audit [--audit-path PATH] [--json]` CLI verb
-  (exit 0 intact / 2 broken), mirroring `--check-config` /
-  `--verify-deploy`; it is a CLI verb, not an MCP tool, so the 21-tool
-  contract is unchanged. `server_info.audit` now also reports `format`
-  and `chain`. Default off keeps the record byte-identical to prior
+  over the canonical record body — so an edit, insertion, reorder, or
+  interior deletion of the on-disk log is detectable by recomputation,
+  including from a shipped-off-host copy. Head-truncation is caught by the
+  genesis anchor (`relay-shell --verify-audit --require-genesis` fails a log
+  that should start at genesis but does not); tail-truncation and cross-file
+  durability remain the off-host shipper's job, since a single file cannot
+  prove its own newest record is the true end. The chain resumes across
+  restarts and rotation while the process runs; a rotation immediately
+  followed by a restart re-anchors at genesis (a visible seam, not a silent
+  gap). Verify with `relay-shell --verify-audit [--audit-path PATH]
+  [--require-genesis] [--json]` (exit 0 intact / 2 broken), mirroring
+  `--check-config` / `--verify-deploy`; it is a CLI verb, not an MCP tool, so
+  the 21-tool contract is unchanged. `server_info.audit` now also reports
+  `format` and `chain`. Default off keeps the record byte-identical to prior
   releases. See [ADR 0007](docs/adr/0007-audit-hash-chain.md). Tests in
-  `tests/test_audit.py` (chain emit/resume + `verify_chain` tamper cases),
-  `tests/test_config.py` (the `jsonl`-required validator), and
-  `tests/test_main.py` (the CLI). Closes runbook §7.5 B-023.
+  `tests/test_audit.py` (chain emit/resume + `verify_chain` tamper /
+  head-truncation / tail-truncation cases), `tests/test_config.py` (the
+  `jsonl`-required validator), and `tests/test_main.py` (the CLI, incl.
+  `--require-genesis`). Closes runbook §7.5 B-023.
 - `RELAY_SHELL_SSH_IDLE_TIMEOUT` (default 1800s) drops a cached SSH
   connection that has not been used for that many seconds the next
   time `SshPool.connect()` is consulted. Mirrors the shape of

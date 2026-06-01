@@ -65,7 +65,7 @@ surfaces. Full terse record in ADR 0005 §"Validation outcome (2026-06-01)".
 | Step | Result | Tag |
 |---|---|---|
 | 1 Code index | 21 tools / 3 resources / 18 src / 25 test files, all cross-referenced sets equal | [V] |
-| 2 Quality gates | `ruff check` + `ruff format --check` + `mypy --strict` clean; `pytest -q` 269 passed / 13 deselected; `pytest -m fuzz` 13 passed; `coverage` 92% (floor 90%) | [V] |
+| 2 Quality gates | `ruff check` + `ruff format --check` + `mypy --strict` clean; `pytest -q` 275 passed / 13 deselected; `pytest -m fuzz` 13 passed; `coverage` 92% (floor 90%) | [V] |
 | 3 Upstream surface | `mcp==1.27.1` FastMCP kwargs, `Context` ids, 9 OAuth provider methods, `AuthorizationParams` / `OAuthToken` fields, 8 `asyncssh.connect` kwargs all resolve; `pydantic>=2.11` `model_validator` resolves | [V] |
 | 4 Behavior | audit-record schema intact, hash-not-body holds, tier + redaction samples match ADR 0003 / docs | [V] |
 
@@ -90,8 +90,11 @@ regression against the documented behavior.
 ## 5. Phase 3 — hardening: ADR 0007 audit hash chain
 
 **Decision** (confirmed with maintainer before code): add an opt-in,
-additive per-record hash chain to the audit log so any edit / insertion /
-deletion / reorder of the on-disk stream is detectable by recomputation.
+additive per-record hash chain to the audit log so an edit / insertion /
+reorder / interior deletion of the on-disk stream is detectable by
+recomputation, head-truncation by the genesis anchor, and tail-truncation
+by the off-host copy (PR review tightened the original "any deletion" claim
+— see §5.1).
 
 | Aspect | Choice | Why |
 |---|---|---|
@@ -99,7 +102,7 @@ deletion / reorder of the on-disk stream is detectable by recomputation.
 | Shape | additive `seq` / `prev` / `chain` trailing fields | off-host parsers built on the prior shape keep working (same promise as ADR 0006) |
 | Canonicalization | `SHA-256(prev ‖ json(record−chain, sort_keys))` | order- and formatter-independent; verifier reconstructs from a parsed line |
 | Format gate | `jsonl` only; chain + `cef`/`leef` rejected at startup | chain resume re-parses the last record; SIEM formats own integrity their side |
-| Restart / rotation | resume from last record's `seq+1` + `chain`; genesis seam on unreadable tail | rotation-safe; a reset is *visible*, never a silent gap |
+| Restart / rotation | resume from last record's `seq+1` + `chain`; genesis seam on unreadable tail | rotation-safe **while the process runs**; a rotate+restart re-anchors at genesis (a *visible* new segment, never a silent gap); cross-segment continuity is the off-host stream's job |
 | Concurrency | `seq`/`prev`/emit under one lock | ordering invariant holds if a future thread writes (ADR 0006 seccomp supervisor) |
 | Verification | `relay-shell --verify-audit [--audit-path] [--json]` (CLI verb, **not** a tool) | forensic/operator action; keeps the 21-tool contract (`_EXPECTED`) unchanged |
 
@@ -109,10 +112,12 @@ deletion / reorder of the on-disk stream is detectable by recomputation.
   (`jsonl`-required). `src/relay_shell/audit.py` — chain emit/resume,
   `_chain_value`, `ChainResult`, `verify_chain`. `src/relay_shell/server.py`
   — pass `chain=`, additive `server_info.audit.{format,chain}`.
-  `src/relay_shell/__main__.py` — `--verify-audit` / `--audit-path`.
-- Tests (+19): `test_audit.py` (15 — emit/resume + 9 `verify_chain` tamper
-  cases), `test_config.py` (3 — validator), `test_main.py` (2 — CLI),
-  `test_tool_wrappers.py` (server_info field assertions).
+  `src/relay_shell/__main__.py` — `--verify-audit` / `--audit-path` /
+  `--require-genesis`.
+- Tests (+25): `test_audit.py` (18 — emit/resume + `verify_chain` tamper,
+  head-truncation `anchored=false`, and tail-truncation cases),
+  `test_config.py` (3 — validator + defaults), `test_main.py` (4 — CLI incl.
+  `--require-genesis`), `test_tool_wrappers.py` (server_info field assertions).
 - Docs: ADR 0007 (new), ADR 0005 outcome, `docs/adr/README.md` index +
   next-free `0008`, `.env.example`, `docs/deployment.md` §6a,
   `docs/architecture.md`, `SECURITY.md`, `docs/tools.md`, `docs/runbook.md`
@@ -126,10 +131,12 @@ Closes runbook §7.5 **B-023**.
 |---|---|---|
 | In-place edit of a record body | `chain` recompute mismatch at that line | [V] |
 | Forged `chain` field | recompute mismatch | [V] |
-| Deleted record | `seq` gap + `prev` linkage break at the next line | [V] |
+| Interior deletion | `seq` gap + `prev` linkage break at the next line | [V] |
 | Reordered records | `seq` / linkage mismatch | [V] |
 | Garbage line spliced into the region | JSON-decode break | [V] |
-| Truncate-and-rewrite a clean chain from a host **holding no signing key** | NOT defended — out of scope; the off-host shipped prefix pins the hashes, and HMAC/Merkle anchoring is the recorded next step in ADR 0007 §"Rejected alternatives" | [I] |
+| **Head-truncation** (excise leading records incl. `seq` 0) | `anchored=false`; `--verify-audit --require-genesis` fails (exit 2). Added in PR review after Codex/security-agent flagged the initial overclaim. | [V] |
+| **Tail-truncation** (drop the newest records) | NOT detectable from the single file (valid prefix remains) — caught by the off-host copy, which holds the later records. Scoped to off-host by the same architectural choice (ADR 0007) that rejected external anchoring. The user-facing claims were corrected to stop promising blanket "deletion" detection. | [V] |
+| Truncate-and-rewrite from a host **holding no signing key** | NOT defended — out of scope; off-host shipped prefix pins the hashes; HMAC/Merkle anchoring is the recorded next step in ADR 0007 §"Rejected alternatives" | [I] |
 
 ---
 
@@ -139,9 +146,9 @@ Closes runbook §7.5 **B-023**.
 |---|---|
 | `ruff check .` / `ruff format --check .` | clean **[V]** |
 | `mypy` (`--strict`) | clean, 18 source files **[V]** |
-| `pytest -q` | 269 passed, 13 deselected **[V]** |
+| `pytest -q` | 275 passed, 13 deselected **[V]** |
 | `pytest -m fuzz` | 13 passed **[V]** |
-| `coverage` (subprocess collection) | 92% total (floor 90%); `config.py` 99%, `audit.py` 93%, `patterns/redaction/policy.py` 100% **[V]** |
+| `coverage` (subprocess collection) | 92% total (floor 90%); `config.py` 99%, `audit.py` 95%, `patterns/redaction/policy.py` 100% **[V]** |
 
 Existing CI workflows unchanged this engagement; no new CI axis required
 (the chain is exercised by `pytest`, not a new job).
@@ -200,7 +207,7 @@ stronger:
 - 1 hardening gap closed (G-1) via [ADR 0007](../docs/adr/0007-audit-hash-chain.md):
   opt-in tamper-evident audit hash chain + `relay-shell --verify-audit`,
   default-off and additive (no posture change, trust boundary unmoved).
-- 19 new regression tests anchoring the chain and the config validator.
+- 25 new regression tests anchoring the chain, the genesis-anchor / head-truncation handling, and the config validator.
 - Backlog reconciled: B-023 closed; F-6 promoted into runbook §7.1.
 
 No further work is queued without an explicit follow-up request. The single

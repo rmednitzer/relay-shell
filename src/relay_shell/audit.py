@@ -90,8 +90,10 @@ def _chain_value(prev: str, entry_without_chain: dict[str, Any]) -> str:
     value is independent of dict insertion order and of the on-disk
     formatter: a verifier reconstructs the exact same input from a parsed
     JSONL line by dropping the record's own ``chain`` field. Any edit,
-    insertion, deletion, or reordering of records breaks the recomputation
-    or the ``prev`` linkage downstream.
+    insertion, interior deletion, or reordering of records breaks the
+    recomputation or the ``prev`` linkage downstream. (Head/tail truncation
+    of the file is a separate concern handled by the genesis anchor and the
+    off-host copy — see :func:`verify_chain` and ADR 0007.)
     """
     canonical = json.dumps(
         entry_without_chain,
@@ -123,6 +125,15 @@ class ChainResult:
     start_prev: str | None  # the first record's `prev` (cross-file anchor)
     broken_at: int | None  # 1-based line number of the first break, else None
     reason: str
+    # True iff the verified region begins at genesis (seq 0, prev == genesis).
+    # A keyless single-file chain can prove the records from its first to its
+    # last are unaltered and contiguous, but NOT that its first record is the
+    # true beginning (head-truncation) or its last the true end (tail-
+    # truncation). `anchored` is the head-truncation signal: a log that was
+    # built from genesis but no longer starts there has had leading records
+    # removed. Tail-truncation is undetectable from the file alone and is
+    # caught only by the off-host seam comparison. See ADR 0007.
+    anchored: bool = False
 
 
 def verify_chain(path: str) -> ChainResult:
@@ -132,10 +143,20 @@ def verify_chain(path: str) -> ChainResult:
     and verifies that from the first chained record to EOF the chain is
     internally consistent: each ``seq`` increments by one, each ``prev``
     equals the previous record's ``chain``, and each record's body
-    recomputes to its stated ``chain``. The first record's ``prev`` is the
-    anchor — genesis for a from-scratch log, or the last ``chain`` of the
-    prior rotation for a mid-chain file (verify continuity across
-    rotations by checking that seam manually). Never raises.
+    recomputes to its stated ``chain``.
+
+    What this proves, and what it does NOT (a keyless single-file chain):
+    it proves the records from the first surviving one to the last are
+    unaltered, contiguous, and correctly ordered. It does *not* prove the
+    first surviving record is the true beginning (head-truncation) or the
+    last is the true end (tail-truncation) — both leave a shorter but
+    internally valid sub-chain. ``ChainResult.anchored`` is the
+    head-truncation signal: a log built from genesis but no longer starting
+    at seq 0 / genesis ``prev`` has had leading records removed (or is a
+    mid-stream rotation segment). Tail-truncation is undetectable from the
+    file alone; catch it with the cross-rotation seam against the off-host
+    copy (the prior file's last ``chain`` == this file's first ``prev``).
+    Never raises.
     """
     try:
         p = Path(path).expanduser()
@@ -231,14 +252,21 @@ def verify_chain(path: str) -> ChainResult:
         return ChainResult(
             True, 0, None, None, None, "no chained records found (empty or unchained log)"
         )
-    return ChainResult(
-        True,
-        records,
-        start_seq,
-        start_prev,
-        None,
-        f"chain intact: {records} record(s) from seq {start_seq}",
-    )
+    anchored = start_seq == 0 and start_prev == _CHAIN_GENESIS
+    if anchored:
+        reason = f"chain intact and genesis-anchored: {records} record(s) from seq 0"
+    else:
+        # Internally valid, but the first surviving record is not genesis:
+        # either leading records were excised (head-truncation) or this is a
+        # mid-stream rotation segment. The verifier cannot tell which from one
+        # file; the operator reconciles via `--require-genesis` (for a log that
+        # should start at genesis) or the cross-rotation seam.
+        reason = (
+            f"chain internally consistent: {records} record(s) from seq {start_seq}, "
+            f"but NOT genesis-anchored (leading records removed, or a mid-stream "
+            f"rotation segment — verify the seam against the prior file)"
+        )
+    return ChainResult(True, records, start_seq, start_prev, None, reason, anchored=anchored)
 
 
 class AuditLogger:

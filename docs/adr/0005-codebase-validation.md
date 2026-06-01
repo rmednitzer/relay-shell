@@ -149,12 +149,13 @@ broader engagement is recorded in
   **CLI verb** (`--verify-audit`), not a tool, so the tool contract is
   unchanged.
 - `ruff check`, `ruff format --check`, `mypy --strict` clean.
-- `pytest -q` — 269 passed, 13 deselected (up from 250; +19 tests for the
-  chain emit/resume, the `verify_chain` tamper cases, the config
-  cross-field validator, and the `--verify-audit` CLI). `pytest -m fuzz`
+- `pytest -q` — 275 passed, 13 deselected (up from 250; +25 tests for the
+  chain emit/resume, the `verify_chain` tamper / head-truncation /
+  tail-truncation cases, the config cross-field validator, and the
+  `--verify-audit` CLI incl. `--require-genesis`). `pytest -m fuzz`
   — 13 invariants pass.
 - `coverage` — 92% with subprocess collection (floor 90%); `config.py`
-  99%, `audit.py` 93%, `patterns.py` / `redaction.py` / `policy.py` 100%.
+  99%, `audit.py` 95%, `patterns.py` / `redaction.py` / `policy.py` 100%.
 - Every upstream symbol in step 3 still resolves on `mcp==1.27.1` /
   `asyncssh` 2.23.0; `pydantic` `model_validator(mode="after")` (the new
   cross-field `audit_chain`→`jsonl` guard) resolves on the pinned

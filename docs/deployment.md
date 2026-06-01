@@ -208,28 +208,43 @@ Vector, Fluent Bit, and `journalctl` → `systemd-journal-remote`.
 
 `chattr +a` and off-host shipping protect the log, but neither makes a
 *single altered record* detectable, and the shipper has a flush window. Set
-`RELAY_SHELL_AUDIT_CHAIN=true` (requires `AUDIT_FORMAT=jsonl`) to add a
-per-record hash chain ([ADR 0007](adr/0007-audit-hash-chain.md)): each record
-carries `seq`, the previous record's `prev` hash, and its own `chain` hash, so
-any edit, insertion, deletion, or reorder is detectable by recomputation —
-including from the shipped copy, without trusting the relay host. Default off
-keeps the record byte-identical; `server_info.audit.chain` reports the live
-state.
+`RELAY_SHELL_AUDIT_CHAIN=true` (requires `RELAY_SHELL_AUDIT_FORMAT=jsonl`) to
+add a per-record hash chain ([ADR 0007](adr/0007-audit-hash-chain.md)): each
+record carries `seq`, the previous record's `prev` hash, and its own `chain`
+hash. Default off keeps the record byte-identical; `server_info.audit.chain`
+reports the live state.
 
-Enable it on a **freshly rotated** log so the chain runs from genesis with no
-leading legacy prefix. Verify the on-host log or a shipped copy:
+**What the chain proves, and what it does not.** From a single file the chain
+detects any **edit, insertion, reorder, or interior deletion** by recomputation
+— including from the shipped copy, without trusting the relay host.
+**Head-truncation** (excising leading records) is caught by the genesis anchor:
+`--require-genesis` fails a log that should start at genesis but does not.
+**Tail-truncation** (dropping the newest records) leaves a shorter but valid
+prefix and is *not* detectable from the file alone — catch it by comparing
+against the off-host copy, which has the later records. This split is by design
+(ADR 0007 delegates durability/truncation defense to off-host shipping).
+
+Enable it on a **freshly rotated** log so the chain runs from genesis. Verify
+the on-host log or a shipped copy:
 
 ```bash
-relay-shell --verify-audit                         # uses RELAY_SHELL_AUDIT_PATH
-relay-shell --verify-audit --audit-path /path/to/shipped.jsonl --json
-# exit 0 = chain intact; exit 2 = a record was inserted / deleted / edited.
+relay-shell --verify-audit --require-genesis        # uses RELAY_SHELL_AUDIT_PATH
+relay-shell --verify-audit --audit-path /path/to/rotated.1 --json
+# exit 0 = chain intact; exit 2 = a record was edited / reordered / inserted /
+# deleted from the interior (or, with --require-genesis, the chain does not
+# start at genesis). Omit --require-genesis when verifying a mid-stream
+# rotation segment, which legitimately starts at seq > 0.
 ```
 
-The chain is rotation-safe: the in-memory anchor carries it into the new file,
-so cross-rotation continuity is the prior file's last `chain` equalling the new
-file's first `prev` (printed as the verifier's start anchor). A restart that
-cannot read the tail starts a fresh chain at genesis — a visible `seq`-reset
-seam the verifier surfaces, never a silent gap.
+**Rotation.** While the process keeps running, rotation preserves the chain:
+the in-memory anchor follows the file (`WatchedFileHandler` reopens, or
+`copytruncate` keeps the fd), so the new file continues the same `seq`/`chain`.
+A rotation **immediately followed by a restart** (before any record lands in
+the fresh file) re-anchors at genesis: the new file is a fresh genesis segment
+with `seq` restarting at 0 — a visible seam, not a silent gap. Verify each
+genesis-anchored segment independently; cross-segment continuity lives in the
+ordered off-host stream, consistent with ADR 0007's delegation of cross-file
+durability to off-host shipping.
 
 ## 7. SSH credential scoping
 

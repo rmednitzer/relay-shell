@@ -31,10 +31,14 @@ that a persuaded model still cannot exceed the operator-defined envelope:
   [`docs/audit-shipper.md`](docs/audit-shipper.md) for worked Vector,
   Fluent Bit, and `systemd-journal-remote` recipes. Optionally set
   `RELAY_SHELL_AUDIT_CHAIN=true` for a per-record hash chain
-  (`docs/adr/0007-audit-hash-chain.md`) so any in-place edit, insertion,
-  deletion, or reorder is detectable with `relay-shell --verify-audit` —
-  in-record tamper-evidence that does not depend on the filesystem
-  attribute the residual-risk attacker below can clear.
+  (`docs/adr/0007-audit-hash-chain.md`) so an in-place edit, insertion,
+  reorder, or interior deletion is detectable with
+  `relay-shell --verify-audit` — in-record tamper-evidence that does not
+  depend on the filesystem attribute the residual-risk attacker below can
+  clear. Head-truncation is caught by the genesis anchor
+  (`--require-genesis`); tail-truncation and cross-file durability remain
+  the off-host shipper's job (a single file cannot prove its own newest
+  record is the true end).
 - **Secret redaction.** Audited arguments are scrubbed for bearer tokens,
   API keys, private-key blocks, `Authorization` headers, long-name CLI
   flags (both `--password` and single-dash `-token=` forms),

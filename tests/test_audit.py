@@ -408,3 +408,40 @@ def test_verify_chain_unchained_log_reports_no_records(tmp_path: Path) -> None:
     assert r.ok
     assert r.records == 0
     assert "no chained records" in r.reason
+
+
+def test_verify_chain_genesis_log_is_anchored(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    _write_chained(path, 3)
+    r = verify_chain(str(path))
+    assert r.ok
+    assert r.anchored is True
+    assert r.start_seq == 0
+
+
+def test_verify_chain_head_truncation_is_valid_but_not_anchored(tmp_path: Path) -> None:
+    # Excising leading records (incl. seq 0) leaves a valid sub-chain that the
+    # recompute/linkage checks accept — but it is no longer genesis-anchored,
+    # which is the head-truncation signal (ADR 0007). The CLI turns this into a
+    # failure under --require-genesis.
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 5)
+    _rewrite(path, recs[2:])  # drop seq 0 and 1
+    r = verify_chain(str(path))
+    assert r.ok  # internally consistent
+    assert r.anchored is False  # head-truncation signal
+    assert r.start_seq == 2
+
+
+def test_verify_chain_tail_truncation_is_a_valid_prefix(tmp_path: Path) -> None:
+    # Dropping the newest records leaves a valid genesis-anchored prefix. A
+    # single file CANNOT detect this (documented limitation in ADR 0007); the
+    # off-host copy is the defense. This test pins the limitation honestly so a
+    # future change that claims otherwise has to update it deliberately.
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 5)
+    _rewrite(path, recs[:3])  # drop the last two
+    r = verify_chain(str(path))
+    assert r.ok
+    assert r.anchored is True
+    assert r.records == 3
