@@ -44,7 +44,10 @@ Every tool body is identical in shape (`Relay.run`):
    safe). An `[exit N]` prefix is added when an exit code is meaningful.
 5. **Audit** - one JSON line: timestamp, tool, tier, denied flag, redacted and
    length-bounded args, SHA-256 of the final output, output byte length, exit
-   code, request and client id. The output body is never written.
+   code, request and client id. The output body is never written. With
+   `RELAY_SHELL_AUDIT_CHAIN=true` the line additionally carries `seq`/`prev`/`chain`
+   for tamper-evidence ([ADR 0007](adr/0007-audit-hash-chain.md)); default off
+   keeps the record byte-identical.
 
 This is the same discipline a production gateway uses: a tool may fail, time
 out, or be denied, but it always returns a single bounded, audited string.
@@ -57,7 +60,7 @@ out, or be denied, but it always returns a single bounded, audited string.
 | `util` | Time, hashing, byte-safe truncation, id generation. |
 | `patterns` | Version-pinned compiled regex tables for redaction and tier classification. |
 | `redaction` | Scrub secrets from audited arguments (consumes `patterns`). |
-| `audit` | Rotation-safe append-only JSONL; hash, never body. |
+| `audit` | Rotation-safe append-only JSONL; hash, never body. Optional tamper-evident per-record hash chain + `verify_chain` (ADR 0007). |
 | `policy` | Tier 0..3 classification (consumes `patterns`); `open`/`guarded`/`readonly` admission. |
 | `metrics` | In-memory Prometheus counter + gauge registry rendered at `GET /metrics` (HTTP only). |
 | `errors` | Error types and the uniform `[ERROR: ...]` formatter. |

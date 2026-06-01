@@ -83,6 +83,108 @@ def test_check_config_help_lists_the_flag() -> None:
     assert "CI pipelines" in proc.stdout
 
 
+def test_verify_audit_ok_then_detects_tamper(tmp_path: Path) -> None:
+    """``--verify-audit`` exits 0 on an intact chain and 2 once it is edited."""
+    import json
+
+    from relay_shell.audit import AuditLogger
+
+    audit = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(audit), chain=True)
+    for i in range(3):
+        log.record(tool="t", args={"i": i}, output="x", exit_code=0, tier=1)
+
+    ok = _run_main(["--verify-audit", "--audit-path", str(audit)])
+    assert ok.returncode == 0, ok.stderr
+    assert "chain intact" in ok.stdout
+    assert "verify-audit OK" in ok.stderr
+
+    # Tamper with a record body and re-verify (machine-readable output).
+    lines = [json.loads(x) for x in audit.read_text().splitlines() if x.strip()]
+    lines[1]["args"]["i"] = 777
+    audit.write_text("\n".join(json.dumps(r) for r in lines) + "\n")
+
+    bad = _run_main(["--verify-audit", "--audit-path", str(audit), "--json"])
+    assert bad.returncode == 2
+    payload = json.loads(bad.stdout)
+    assert payload["ok"] is False
+    assert payload["broken_at"] == 2
+
+
+def test_verify_audit_help_lists_the_flags() -> None:
+    proc = _run_main(["--help"])
+    assert proc.returncode == 0
+    assert "--verify-audit" in proc.stdout
+    assert "--audit-path" in proc.stdout
+    assert "--segment" in proc.stdout
+
+
+def test_verify_audit_fails_closed_on_head_truncation(tmp_path: Path) -> None:
+    """Fail-closed: head-truncation fails by default; --segment accepts it.
+
+    A non-genesis start is treated as head-truncation unless the operator
+    asserts (via --segment) that the file is a mid-stream rotation segment.
+    """
+    import json
+
+    from relay_shell.audit import AuditLogger
+
+    audit = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(audit), chain=True)
+    for i in range(5):
+        log.record(tool="t", args={"i": i}, output="x", exit_code=0, tier=1)
+
+    # Excise the first two records (head-truncation).
+    lines = [x for x in audit.read_text().splitlines() if x.strip()]
+    audit.write_text("\n".join(lines[2:]) + "\n")
+
+    # Default is fail-closed: a non-genesis start is rejected.
+    strict = _run_main(["--verify-audit", "--audit-path", str(audit), "--json"])
+    assert strict.returncode == 2
+    payload = json.loads(strict.stdout)
+    assert payload["ok"] is False
+    assert payload["anchored"] is False
+    assert payload["chain_ok"] is True  # the chain itself is internally valid
+
+    # --segment accepts a legitimately mid-stream rotation segment.
+    seg = _run_main(["--verify-audit", "--audit-path", str(audit), "--segment"])
+    assert seg.returncode == 0, seg.stderr
+
+
+def test_verify_audit_passes_genesis_log_by_default(tmp_path: Path) -> None:
+    from relay_shell.audit import AuditLogger
+
+    audit = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(audit), chain=True)
+    for i in range(3):
+        log.record(tool="t", args={"i": i}, output="x", exit_code=0, tier=1)
+    ok = _run_main(["--verify-audit", "--audit-path", str(audit)])
+    assert ok.returncode == 0, ok.stderr
+
+
+def test_verify_audit_fails_closed_on_missing_file(tmp_path: Path) -> None:
+    # A verifier pointed at a configured log must not bless its absence.
+    missing = tmp_path / "never-created.jsonl"
+    proc = _run_main(["--verify-audit", "--audit-path", str(missing), "--json"])
+    assert proc.returncode == 2
+    import json
+
+    payload = json.loads(proc.stdout)
+    assert payload["ok"] is False
+    assert payload["present"] is False
+
+
+def test_verify_audit_fails_closed_on_unchained_log(tmp_path: Path) -> None:
+    # An existing but unchained (chain-off) log has no chain to verify -> fail.
+    from relay_shell.audit import AuditLogger
+
+    audit = tmp_path / "audit.jsonl"
+    AuditLogger(str(audit)).record(tool="t", args={}, output="x", exit_code=0, tier=0)
+    proc = _run_main(["--verify-audit", "--audit-path", str(audit)])
+    assert proc.returncode == 2
+    assert "no chained records" in proc.stdout
+
+
 def test_main_returns_two_on_invalid_config_without_check_flag(tmp_path: Path) -> None:
     """T-001 from runbook section 5.3: main() exits 2 on invalid config.
 

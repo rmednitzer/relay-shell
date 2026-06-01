@@ -359,9 +359,12 @@ async def test_server_info_reports_documented_fields(settings: Settings) -> None
         assert key in info, f"server_info missing top-level key: {key}"
     # The version is non-empty.
     assert info["version"]
-    # The audit substructure carries the documented fields.
+    # The audit substructure carries the documented fields, including the
+    # serialization format and whether the tamper-evident chain is active.
     assert "path" in info["audit"]
     assert "degraded" in info["audit"]
+    assert "format" in info["audit"]
+    assert "chain" in info["audit"]
     # The limits substructure carries every clamp the server enforces.
     for limit in (
         "default_timeout",

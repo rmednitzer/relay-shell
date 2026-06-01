@@ -204,6 +204,51 @@ on-host log is evidence only until the host is compromised. See
 [`docs/audit-shipper.md`](audit-shipper.md) for worked examples using
 Vector, Fluent Bit, and `journalctl` → `systemd-journal-remote`.
 
+### 6a. Tamper-evident chain (optional)
+
+`chattr +a` and off-host shipping protect the log, but neither makes a
+*single altered record* detectable, and the shipper has a flush window. Set
+`RELAY_SHELL_AUDIT_CHAIN=true` (requires `RELAY_SHELL_AUDIT_FORMAT=jsonl`) to
+add a per-record hash chain ([ADR 0007](adr/0007-audit-hash-chain.md)): each
+record carries `seq`, the previous record's `prev` hash, and its own `chain`
+hash. Default off keeps the record byte-identical; `server_info.audit.chain`
+reports the live state.
+
+**What the chain proves, and what it does not.** From a single file the chain
+detects any **edit, insertion, reorder, or interior deletion** by recomputation
+— including from the shipped copy, without trusting the relay host.
+**Head-truncation** (excising leading records) is caught by the genesis anchor.
+**Tail-truncation** (dropping the newest records) leaves a shorter but valid
+prefix and is *not* detectable from the file alone — catch it by comparing
+against the off-host copy, which has the later records. This split is by design
+(ADR 0007 delegates durability/truncation defense to off-host shipping).
+
+`--verify-audit` is **fail-closed**: it exits 0 only when the file exists,
+carries a chained record, verifies clean, and is genesis-anchored; a missing /
+empty / unchained log, a broken chain, or a non-genesis start (head-truncation)
+exits 2. Enable chaining on a **freshly rotated** log so the chain runs from
+genesis. Verify the on-host log or a shipped copy:
+
+```bash
+relay-shell --verify-audit                          # uses RELAY_SHELL_AUDIT_PATH
+relay-shell --verify-audit --audit-path /var/log/relay-shell/audit.jsonl-20260601 \
+            --segment --json                        # a mid-stream rotation segment
+# exit 0 = clean, genesis-anchored chain; exit 2 = missing/empty log, a record
+# edited / reordered / inserted / deleted from the interior, or a non-genesis
+# start. Pass --segment when the file legitimately starts at seq > 0 (a rotation
+# segment); a missing/empty log and a broken chain fail regardless.
+```
+
+**Rotation.** While the process keeps running, rotation preserves the chain:
+the in-memory anchor follows the file (`WatchedFileHandler` reopens, or
+`copytruncate` keeps the fd), so the new file continues the same `seq`/`chain`.
+A rotation **immediately followed by a restart** (before any record lands in
+the fresh file) re-anchors at genesis: the new file is a fresh genesis segment
+with `seq` restarting at 0 — a visible seam, not a silent gap. Verify each
+genesis-anchored segment independently; cross-segment continuity lives in the
+ordered off-host stream, consistent with ADR 0007's delegation of cross-file
+durability to off-host shipping.
+
 ## 7. SSH credential scoping
 
 The realized credential surface is whatever keys the service account can use.

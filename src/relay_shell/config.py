@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = ["Settings", "get_settings"]
@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     audit_path: str = "/var/log/relay-shell/audit.jsonl"
     audit_stderr: bool = False
     audit_format: str = "jsonl"
+    # Tamper-evident audit: when true, each record carries a `seq`, the
+    # previous record's chain hash (`prev`), and its own `chain` hash so a
+    # verifier can detect any insertion / deletion / reordering / edit of
+    # the on-disk log (see docs/adr/0007-audit-hash-chain.md). Default off
+    # keeps the record byte-identical to today. Only the `jsonl` format can
+    # resume the chain across restarts, so chaining requires it.
+    audit_chain: bool = False
 
     # SSH
     ssh_config: str = "~/.ssh/config"
@@ -106,6 +113,17 @@ class Settings(BaseSettings):
         if v not in _AUDIT_FORMATS:
             raise ValueError(f"audit_format must be one of {sorted(_AUDIT_FORMATS)}")
         return v
+
+    @model_validator(mode="after")
+    def _v_chain_requires_jsonl(self) -> Settings:
+        # The hash chain is defined over the on-disk `jsonl` record and is
+        # resumed across restarts by re-parsing the last line. CEF/LEEF are
+        # SIEM-ingest shapes where the aggregator owns integrity, so refuse
+        # the combination at startup rather than emit a chain that cannot be
+        # resumed. Fails fast (per the module contract) instead of mid-run.
+        if self.audit_chain and self.audit_format != "jsonl":
+            raise ValueError("audit_chain=true requires audit_format=jsonl")
+        return self
 
 
 @lru_cache(maxsize=1)

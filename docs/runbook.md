@@ -115,6 +115,28 @@ Grep for the canonical "must never appear" markers:
 grep -F "body-42-only" "$AUDIT" && echo "FAIL: output body leaked into audit"
 ```
 
+If the deployment runs with `RELAY_SHELL_AUDIT_CHAIN=true`
+([ADR 0007](adr/0007-audit-hash-chain.md)), also verify the tamper-evident
+chain — on the live log and on a shipped-off-host copy:
+
+```bash
+relay-shell --verify-audit --json
+# fail-closed: exit 0 only for a clean, genesis-anchored chain. exit 2 for a
+# missing/empty log, a record edited / reordered / inserted / deleted from the
+# interior, or a non-genesis start (head-truncation). Pass --segment to verify
+# a mid-stream rotation segment. server_info reports whether the chain is even
+# on:  .audit.chain == true  and  .audit.format == "jsonl"
+```
+
+A `FAILED` result is page-worthy: a missing/empty audit log, or an on-disk
+stream that diverged from what the relay emitted (`broken_at` localizes a
+break). Note the bounds of single-file verification: it does not detect
+**tail-truncation** (dropping the newest records leaves a valid prefix) —
+catch that by comparing the latest `seq` against the off-host copy, which has
+the later records. The default is strict (a non-genesis start fails as possible
+head-truncation); pass `--segment` only when verifying a mid-stream rotation
+segment that legitimately starts at `seq > 0`.
+
 ### 2.4 Policy posture
 
 ```bash
@@ -277,7 +299,7 @@ Use this for every PR, your own or external.
 | `server.py`          | Every new tool goes through `Relay.run()`. No tool ever raises into the transport.                |
 | `patterns.py`        | The single home for `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN` and the redaction tables. Any change bumps `PATTERNS_VERSION`. Paired tests in `tests/test_patterns.py`. |
 | `policy.py`          | Consumes `patterns`; deny list is still the first gate; `_READ_ONLY_TOOLS` / `_MUTATING_TOOLS` membership intact. |
-| `audit.py`           | Output body never written, only `sha256` + `len`. `degraded` path still degrades, not crashes.    |
+| `audit.py`           | Output body never written, only `sha256` + `len`. `degraded` path still degrades, not crashes. With `audit_chain` on, `seq`/`prev`/`chain` are appended under `_chain_lock` and `verify_chain` round-trips (ADR 0007); the default-off path is byte-identical. |
 | `redaction.py`       | Consumes `patterns`; the loop order (URL creds → prefix patterns → whole-match patterns → MySQL family) is unchanged. |
 | `sessions.py`        | Lost-wakeup invariant: `recv` clears the event under the buffer lock before awaiting.             |
 | `sshpool.py`         | `known_hosts` arg is validated. Connection cache keyed by `user@host:port`. Forwards leak-free.   |
@@ -305,6 +327,9 @@ this manual checklist:
 
 - audit-record fields unchanged (`ts, tool, tier, denied, args,
   output_sha256, output_len, exit_code`), output body still hashed only;
+- if `audit_chain` is enabled, the `seq`/`prev`/`chain` fields are
+  *additive only* (the default-off record stays byte-identical) and
+  `relay-shell --verify-audit` passes on a freshly written log;
 - `policy_text` passed to `Relay.run()` covers every byte the executor
   will see (command + stdin + env_json + script body);
 - redaction patterns have paired over-scrub / under-scrub tests;
@@ -473,10 +498,8 @@ and clearer code, not to land a refactor for its own sake.
 
 ### 5.1 Consolidation candidates
 
-- **C-005 `Inventory` field naming.** `Settings.ssh_config` (config path)
-  is passed into `Inventory(ssh_config_path=...)` and surfaces as
-  `ssh_config_file` on the same object. Settle on one name across the
-  three sites.
+(All currently listed items closed. New entries land here when a
+consolidation opportunity shows up during an audit pass.)
 
 Closed (do not re-add):
 
@@ -494,6 +517,14 @@ Closed (do not re-add):
 - **C-004** `_INSTRUCTIONS` is asserted to mention every registered tool
   in `tests/test_server.py::test_server_instructions_mentions_every_tool`;
   the test catches drift on add or rename.
+- **C-005** `Inventory` field naming resolved in PR #57. The constructor
+  takes `ssh_config` (matching `Settings.ssh_config`); `ssh_config_file`
+  is a *distinct* property — the resolved path iff the file exists on
+  disk, vs the raw input path — kept deliberately because the two names
+  mean different things (see the `Inventory.ssh_config_file` docstring).
+  There is no third name to settle. The code carries no `ssh_config_path`.
+  (Surfaced as F-005 in the 2026-06-01 ADR 0005 pass — this entry had gone
+  stale here after the rename landed.)
 
 ### 5.2 Refactor candidates
 
@@ -691,8 +722,14 @@ commitment.
 
 ### 7.1 Capability
 
-(Items in this category are tracked here as they land; the queue is
-currently empty.)
+- **F-6 (P2)** Add an explicit `timeout=` parameter to `ssh_upload` /
+  `ssh_download` (SFTP), mirroring `ssh_exec`. Today a hung transfer is
+  bounded only by the connection-level keepalive, not a per-call cap.
+  Deferred from the 2026-05-27 engagement
+  (`audit/2026-05-27-engagement.md` §8.2 F-6); re-surfaced in the
+  2026-06-01 audit pass. Surgical: add the kwarg, clamp it, thread it
+  through `SshPool.sftp_put` / `sftp_get` via `asyncio.wait_for`, and add
+  a wiring test asserting the cap fires.
 
 ### 7.2 Quality + automation
 
@@ -720,6 +757,14 @@ currently empty.)
   [ADR 0006](adr/0006-seccomp-notify-audit-channel.md) (Proposed);
   promotion to Accepted is gated on the implementing PR and its
   validation-pass outcome (ADR 0005 §"Decision" step 5).
+- **B-023 (P2)** — **Closed** by
+  [ADR 0007](adr/0007-audit-hash-chain.md): an opt-in, additive
+  tamper-evident audit hash chain (`RELAY_SHELL_AUDIT_CHAIN`, default
+  off) — `seq`/`prev`/`chain` per record plus offline verification via
+  `relay-shell --verify-audit`. Closes the in-record integrity gap (G-1)
+  the 2026-06-01 audit pass surfaced: `chattr +a` + off-host shipping do
+  not make a single altered record detectable, the chain does.
+  Default-off keeps the record byte-identical, so no posture change.
 
 ---
 
@@ -933,7 +978,7 @@ plan lands in the same PR.)
 
 - Keep: the status-vocabulary table, the indexed ADR list (number /
   title / status / date / one-line subject), the "when to write an
-  ADR" criteria, the next-free-number marker (currently **0007**),
+  ADR" criteria, the next-free-number marker (currently **0008**),
   and the cross-references to `docs/architecture.md` and
   `docs/runbook.md` §6.
 - Add: a row to the index table whenever a new ADR lands. Update the

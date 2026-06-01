@@ -167,9 +167,10 @@ Tests: `tests/test_sessions.py`, `tests/test_tool_wrappers.py`.
 ## Diagnostics
 
 ### `server_info`
-Version, transport, policy mode, effective limits, audit path and degraded
-flag, SSH defaults (known-hosts mode, connect/keepalive/idle timeouts),
-inventory size. Tier 0.
+Version, transport, policy mode, effective limits, audit path / degraded
+flag / format / chain (the tamper-evident hash chain state, ADR 0007), SSH
+defaults (known-hosts mode, connect/keepalive/idle timeouts), inventory
+size. Tier 0.
 
 Tests: `tests/test_tool_wrappers.py`, `tests/test_stdio_e2e.py`.
 

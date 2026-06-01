@@ -16,6 +16,7 @@ import signal
 import sys
 from pathlib import Path
 
+from .audit import verify_chain
 from .config import get_settings
 from .server import Relay, build_server
 from .verifier import Status, verify_deploy
@@ -83,10 +84,49 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--verify-audit",
+        action="store_true",
+        help=(
+            "Verify the tamper-evident hash chain of an audit jsonl file "
+            "(RELAY_SHELL_AUDIT_CHAIN=true). Fail-closed: exits 0 only when "
+            "the file exists, carries a chained record, verifies clean, and is "
+            "anchored to genesis. Exits 2 otherwise — a missing/empty log, a "
+            "chain broken by an edit / reorder / insertion / interior "
+            "deletion, or a non-genesis start (head-truncation). Pass "
+            "--segment to accept a mid-stream rotation segment that "
+            "legitimately starts at seq > 0. Tail-truncation is not detectable "
+            "from one file; compare the latest seq against the off-host copy. "
+            "Reads RELAY_SHELL_AUDIT_PATH unless --audit-path overrides it."
+        ),
+    )
+    parser.add_argument(
+        "--audit-path",
+        type=str,
+        default=None,
+        help=(
+            "Override the audit file for --verify-audit. Default: the "
+            "configured RELAY_SHELL_AUDIT_PATH. Useful for verifying a "
+            "rotated or shipped-off-host copy."
+        ),
+    )
+    parser.add_argument(
+        "--segment",
+        action="store_true",
+        help=(
+            "For --verify-audit: accept a chain that is internally valid but "
+            "starts at seq > 0 (a mid-stream rotation segment). Without it, a "
+            "non-genesis start is treated as head-truncation and fails. A "
+            "missing/empty log and a broken chain still fail regardless."
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         dest="json_out",
-        help=("Emit machine-readable output for --verify-deploy (ignored for other subcommands)."),
+        help=(
+            "Emit machine-readable output for --verify-deploy / --verify-audit "
+            "(ignored for other subcommands)."
+        ),
     )
     return parser
 
@@ -189,6 +229,74 @@ def _verify_deploy(
     return 0 if report.ok else 2
 
 
+def _verify_audit(audit_path: str | None, json_out: bool, segment: bool = False) -> int:
+    """Verify the audit hash chain and print a report (fail-closed).
+
+    Exits 0 only when the file exists, has at least one chained record, the
+    chain verifies clean, and it is genesis-anchored (``--segment`` relaxes
+    the anchor for a mid-stream rotation segment). A missing / empty /
+    unchained log, a broken chain, or an unflagged non-genesis start exits 2,
+    so the integrity check never blesses an absent or head-truncated trail.
+    ``verify_chain`` never raises.
+    """
+    path = audit_path
+    if path is None:
+        try:
+            path = get_settings().audit_path
+        except Exception as exc:  # noqa: BLE001
+            print(f"relay_shell: invalid configuration: {exc}", file=sys.stderr)
+            return 2
+
+    result = verify_chain(path)
+    # Fail-closed: an integrity check must not return 0 for an absent, empty,
+    # or head-truncated log just because no in-region break was found.
+    if not result.present:
+        reason, passed = f"audit file not found or unreadable: {path}", False
+    elif result.records == 0:
+        reason, passed = (
+            "no chained records found — is RELAY_SHELL_AUDIT_CHAIN enabled, "
+            "and has the server logged anything?",
+            False,
+        )
+    elif not result.ok:
+        reason, passed = result.reason, False
+    elif not result.anchored and not segment:
+        reason, passed = (
+            f"{result.reason} — refusing a non-genesis start without --segment "
+            "(possible head-truncation; pass --segment for a rotation segment)",
+            False,
+        )
+    else:
+        reason, passed = result.reason, True
+
+    if json_out:
+        print(
+            json.dumps(
+                {
+                    "ok": passed,
+                    "chain_ok": result.ok,
+                    "present": result.present,
+                    "anchored": result.anchored,
+                    "segment_mode": segment,
+                    "path": path,
+                    "records": result.records,
+                    "start_seq": result.start_seq,
+                    "broken_at": result.broken_at,
+                    "reason": reason,
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(reason)
+        summary = "relay-shell: verify-audit OK"
+        if not passed:
+            tail = f" (line {result.broken_at})" if result.broken_at else ""
+            summary = f"relay-shell: verify-audit FAILED{tail}"
+        print(summary, file=sys.stderr)
+    return 0 if passed else 2
+
+
 def _install_sigterm_handler() -> None:
     """Convert SIGTERM into a KeyboardInterrupt so the shutdown finally
     block in ``main`` runs.
@@ -218,6 +326,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.verify_deploy:
         return _verify_deploy(args.templates_dir, args.install_prefix, args.json_out)
+
+    if args.verify_audit:
+        return _verify_audit(args.audit_path, args.json_out, args.segment)
 
     if args.check_config:
         return _check_config()

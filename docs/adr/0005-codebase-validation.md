@@ -136,6 +136,45 @@ record schema, or any tool's response shape. The trust boundary
 (ADR 0002) and tier semantics (ADR 0003) are unchanged — this pass
 hardened a compensating control, it did not move the boundary.
 
+## Validation outcome (2026-06-01)
+
+Re-ran steps 1-4. This pass also landed [ADR 0007](0007-audit-hash-chain.md)
+(tamper-evident audit hash chain) in the same PR, so the behavior
+validation in step 4 was extended to cover the new chain surface. The
+broader engagement is recorded in
+[`audit/2026-06-01-engagement.md`](../../audit/2026-06-01-engagement.md).
+
+- 21 MCP tools and 3 resources registered, matching
+  `tests/test_server.py::_EXPECTED` and `docs/tools.md`. ADR 0007 adds a
+  **CLI verb** (`--verify-audit`), not a tool, so the tool contract is
+  unchanged.
+- `ruff check`, `ruff format --check`, `mypy --strict` clean.
+- `pytest -q` — 277 passed, 13 deselected (up from 250; +27 tests for the
+  chain emit/resume, the `verify_chain` tamper / head-truncation /
+  tail-truncation cases, the config cross-field validator, and the
+  fail-closed `--verify-audit` CLI incl. `--segment`). `pytest -m fuzz`
+  — 13 invariants pass.
+- `coverage` — 92% with subprocess collection (floor 90%); `config.py`
+  99%, `audit.py` 95%, `patterns.py` / `redaction.py` / `policy.py` 100%.
+- Every upstream symbol in step 3 still resolves on `mcp==1.27.1` /
+  `asyncssh` 2.23.0; `pydantic` `model_validator(mode="after")` (the new
+  cross-field `audit_chain`→`jsonl` guard) resolves on the pinned
+  `pydantic>=2.11`.
+- Step 4 audit-record schema: the default-off record is byte-identical to
+  the 2026-05-31 pass; with `RELAY_SHELL_AUDIT_CHAIN=true` it gains exactly
+  `seq`/`prev`/`chain` and `verify_chain` confirms a clean chain and flags
+  edit / forgery / deletion / reorder / garbage-line / non-genesis-anchor.
+
+| ID    | Severity | Subject                                                                                                                                                                                                 | Resolution |
+|-------|----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|
+| F-005 | P3       | `docs/runbook.md` §5.1 still listed **C-005** (`Inventory` field naming) as an open consolidation candidate. It was closed in PR #57 (`Inventory(ssh_config=...)` ctor + `ssh_config_file` resolved-iff-exists property), as recorded in `audit/2026-05-27-engagement.md` §2.2/§3 and `CHANGELOG.md`. The code carries no `ssh_config_path`; the runbook entry was the last stale reference. | Moved C-005 to the §5.1 "Closed (do not re-add)" block with the resolution note. |
+| G-1   | (gap)    | The audit log — ADR 0002's first compensating control — had no in-record tamper-evidence; integrity rested solely on `chattr +a` + off-host shipping, both defeatable by the documented residual-risk attacker in the pre-ship window. Not a regression against the docs (the docs never claimed in-record integrity), recorded as a hardening gap. | Closed by [ADR 0007](0007-audit-hash-chain.md): opt-in, additive per-record hash chain + `relay-shell --verify-audit`. Default-off keeps every existing deployment byte-identical. |
+
+No security regressions. No capability regressions. The trust boundary
+(ADR 0002) and tier semantics (ADR 0003) are unchanged. The audit-record
+schema change is additive and opt-in (default off), so off-host parsers
+built against the prior shape keep working.
+
 ## Consequences
 
 - The runbook §2 audit pass is now grounded in a concrete, repeatable
