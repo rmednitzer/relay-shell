@@ -217,23 +217,26 @@ reports the live state.
 **What the chain proves, and what it does not.** From a single file the chain
 detects any **edit, insertion, reorder, or interior deletion** by recomputation
 — including from the shipped copy, without trusting the relay host.
-**Head-truncation** (excising leading records) is caught by the genesis anchor:
-`--require-genesis` fails a log that should start at genesis but does not.
+**Head-truncation** (excising leading records) is caught by the genesis anchor.
 **Tail-truncation** (dropping the newest records) leaves a shorter but valid
 prefix and is *not* detectable from the file alone — catch it by comparing
 against the off-host copy, which has the later records. This split is by design
 (ADR 0007 delegates durability/truncation defense to off-host shipping).
 
-Enable it on a **freshly rotated** log so the chain runs from genesis. Verify
-the on-host log or a shipped copy:
+`--verify-audit` is **fail-closed**: it exits 0 only when the file exists,
+carries a chained record, verifies clean, and is genesis-anchored; a missing /
+empty / unchained log, a broken chain, or a non-genesis start (head-truncation)
+exits 2. Enable chaining on a **freshly rotated** log so the chain runs from
+genesis. Verify the on-host log or a shipped copy:
 
 ```bash
-relay-shell --verify-audit --require-genesis        # uses RELAY_SHELL_AUDIT_PATH
-relay-shell --verify-audit --audit-path /path/to/rotated.1 --json
-# exit 0 = chain intact; exit 2 = a record was edited / reordered / inserted /
-# deleted from the interior (or, with --require-genesis, the chain does not
-# start at genesis). Omit --require-genesis when verifying a mid-stream
-# rotation segment, which legitimately starts at seq > 0.
+relay-shell --verify-audit                          # uses RELAY_SHELL_AUDIT_PATH
+relay-shell --verify-audit --audit-path /var/log/relay-shell/audit.jsonl-20260601 \
+            --segment --json                        # a mid-stream rotation segment
+# exit 0 = clean, genesis-anchored chain; exit 2 = missing/empty log, a record
+# edited / reordered / inserted / deleted from the interior, or a non-genesis
+# start. Pass --segment when the file legitimately starts at seq > 0 (a rotation
+# segment); a missing/empty log and a broken chain fail regardless.
 ```
 
 **Rotation.** While the process keeps running, rotation preserves the chain:

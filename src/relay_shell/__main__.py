@@ -88,13 +88,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Verify the tamper-evident hash chain of an audit jsonl file "
-            "(RELAY_SHELL_AUDIT_CHAIN=true). Exits 0 if the chain is intact, "
-            "2 if any record was edited, reordered, inserted, or removed from "
-            "the interior. A single file cannot detect head/tail truncation on "
-            "its own: use --require-genesis to fail a log that should start at "
-            "genesis but does not (head-truncation), and compare the rotation "
-            "seam against the off-host copy for tail-truncation. Reads "
-            "RELAY_SHELL_AUDIT_PATH unless --audit-path overrides it."
+            "(RELAY_SHELL_AUDIT_CHAIN=true). Fail-closed: exits 0 only when "
+            "the file exists, carries a chained record, verifies clean, and is "
+            "anchored to genesis. Exits 2 otherwise — a missing/empty log, a "
+            "chain broken by an edit / reorder / insertion / interior "
+            "deletion, or a non-genesis start (head-truncation). Pass "
+            "--segment to accept a mid-stream rotation segment that "
+            "legitimately starts at seq > 0. Tail-truncation is not detectable "
+            "from one file; compare the latest seq against the off-host copy. "
+            "Reads RELAY_SHELL_AUDIT_PATH unless --audit-path overrides it."
         ),
     )
     parser.add_argument(
@@ -108,14 +110,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--require-genesis",
+        "--segment",
         action="store_true",
         help=(
-            "For --verify-audit: fail (exit 2) if the chain is internally "
-            "valid but does not start at genesis (seq 0). Use it for a log "
-            "that should be complete from the start; a non-genesis start means "
-            "leading records were removed. Omit it when verifying a mid-stream "
-            "rotation segment (which legitimately starts at seq > 0)."
+            "For --verify-audit: accept a chain that is internally valid but "
+            "starts at seq > 0 (a mid-stream rotation segment). Without it, a "
+            "non-genesis start is treated as head-truncation and fails. A "
+            "missing/empty log and a broken chain still fail regardless."
         ),
     )
     parser.add_argument(
@@ -228,14 +229,15 @@ def _verify_deploy(
     return 0 if report.ok else 2
 
 
-def _verify_audit(audit_path: str | None, json_out: bool, require_genesis: bool = False) -> int:
-    """Verify the audit hash chain and print a report.
+def _verify_audit(audit_path: str | None, json_out: bool, segment: bool = False) -> int:
+    """Verify the audit hash chain and print a report (fail-closed).
 
-    Returns 0 if the chain is intact, 2 if a break is found. With
-    ``require_genesis``, a chain that is internally valid but does not start
-    at genesis (leading records removed, or a mid-stream rotation segment)
-    also fails. ``verify_chain`` never raises; a missing file is reported as
-    OK-with-no-records, an unreadable file as a break.
+    Exits 0 only when the file exists, has at least one chained record, the
+    chain verifies clean, and it is genesis-anchored (``--segment`` relaxes
+    the anchor for a mid-stream rotation segment). A missing / empty /
+    unchained log, a broken chain, or an unflagged non-genesis start exits 2,
+    so the integrity check never blesses an absent or head-truncated trail.
+    ``verify_chain`` never raises.
     """
     path = audit_path
     if path is None:
@@ -246,11 +248,26 @@ def _verify_audit(audit_path: str | None, json_out: bool, require_genesis: bool 
             return 2
 
     result = verify_chain(path)
-    # A single file cannot prove its own first record is the true beginning;
-    # --require-genesis turns "valid but not genesis-anchored" into a failure
-    # for a log that is supposed to be complete from the start.
-    genesis_violation = require_genesis and result.records > 0 and not result.anchored
-    passed = result.ok and not genesis_violation
+    # Fail-closed: an integrity check must not return 0 for an absent, empty,
+    # or head-truncated log just because no in-region break was found.
+    if not result.present:
+        reason, passed = f"audit file not found or unreadable: {path}", False
+    elif result.records == 0:
+        reason, passed = (
+            "no chained records found — is RELAY_SHELL_AUDIT_CHAIN enabled, "
+            "and has the server logged anything?",
+            False,
+        )
+    elif not result.ok:
+        reason, passed = result.reason, False
+    elif not result.anchored and not segment:
+        reason, passed = (
+            f"{result.reason} — refusing a non-genesis start without --segment "
+            "(possible head-truncation; pass --segment for a rotation segment)",
+            False,
+        )
+    else:
+        reason, passed = result.reason, True
 
     if json_out:
         print(
@@ -258,31 +275,24 @@ def _verify_audit(audit_path: str | None, json_out: bool, require_genesis: bool 
                 {
                     "ok": passed,
                     "chain_ok": result.ok,
+                    "present": result.present,
                     "anchored": result.anchored,
-                    "genesis_required": require_genesis,
+                    "segment_mode": segment,
                     "path": path,
                     "records": result.records,
                     "start_seq": result.start_seq,
                     "broken_at": result.broken_at,
-                    "reason": result.reason,
+                    "reason": reason,
                 },
                 indent=2,
             )
         )
     else:
-        print(result.reason)
-        if result.ok and result.records > 0 and not result.anchored:
-            print(
-                "[WARN] chain does not start at genesis — leading records may "
-                "have been removed (or this is a rotation segment).",
-                file=sys.stderr,
-            )
-        if passed:
-            summary = "relay-shell: verify-audit OK"
-        elif genesis_violation:
-            summary = "relay-shell: verify-audit FAILED (not genesis-anchored; --require-genesis)"
-        else:
-            summary = f"relay-shell: verify-audit FAILED (line {result.broken_at})"
+        print(reason)
+        summary = "relay-shell: verify-audit OK"
+        if not passed:
+            tail = f" (line {result.broken_at})" if result.broken_at else ""
+            summary = f"relay-shell: verify-audit FAILED{tail}"
         print(summary, file=sys.stderr)
     return 0 if passed else 2
 
@@ -318,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
         return _verify_deploy(args.templates_dir, args.install_prefix, args.json_out)
 
     if args.verify_audit:
-        return _verify_audit(args.audit_path, args.json_out, args.require_genesis)
+        return _verify_audit(args.audit_path, args.json_out, args.segment)
 
     if args.check_config:
         return _check_config()

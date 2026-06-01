@@ -120,21 +120,22 @@ If the deployment runs with `RELAY_SHELL_AUDIT_CHAIN=true`
 chain — on the live log and on a shipped-off-host copy:
 
 ```bash
-relay-shell --verify-audit --require-genesis --json
-# exit 0 = chain intact; 2 = a record was edited / reordered / inserted /
-# deleted from the interior, OR (with --require-genesis) the chain does not
-# start at genesis (leading records removed). server_info reports whether the
-# chain is even on:  .audit.chain == true  and  .audit.format == "jsonl"
+relay-shell --verify-audit --json
+# fail-closed: exit 0 only for a clean, genesis-anchored chain. exit 2 for a
+# missing/empty log, a record edited / reordered / inserted / deleted from the
+# interior, or a non-genesis start (head-truncation). Pass --segment to verify
+# a mid-stream rotation segment. server_info reports whether the chain is even
+# on:  .audit.chain == true  and  .audit.format == "jsonl"
 ```
 
-A `BROKEN` result with a `broken_at` line is page-worthy: the on-disk stream
-diverged from what the relay emitted. Note the bounds of single-file
-verification: it does not detect **tail-truncation** (dropping the newest
-records leaves a valid prefix) — catch that by comparing the latest `seq`
-against the off-host copy, which has the later records. Use `--require-genesis`
-for any log that should be complete from the start (a non-genesis start means
-leading records were excised); omit it when verifying a mid-stream rotation
-segment.
+A `FAILED` result is page-worthy: a missing/empty audit log, or an on-disk
+stream that diverged from what the relay emitted (`broken_at` localizes a
+break). Note the bounds of single-file verification: it does not detect
+**tail-truncation** (dropping the newest records leaves a valid prefix) —
+catch that by comparing the latest `seq` against the off-host copy, which has
+the later records. The default is strict (a non-genesis start fails as possible
+head-truncation); pass `--segment` only when verifying a mid-stream rotation
+segment that legitimately starts at `seq > 0`.
 
 ### 2.4 Policy posture
 

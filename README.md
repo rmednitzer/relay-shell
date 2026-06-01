@@ -152,8 +152,9 @@ Safety is achieved with **compensating controls**, not by crippling the tool:
   client id, and the assessed tier. Append-only on disk; rotation-safe handler.
   Optional per-record hash chain (`RELAY_SHELL_AUDIT_CHAIN`,
   [ADR 0007](docs/adr/0007-audit-hash-chain.md)) makes edits, insertions,
-  reorders, and interior deletions detectable with `relay-shell --verify-audit`
-  (head-truncation via `--require-genesis`; tail-truncation via the off-host copy).
+  reorders, and interior deletions detectable with `relay-shell --verify-audit`,
+  which is fail-closed (a missing / empty / head-truncated log fails;
+  `--segment` accepts a rotation segment; tail-truncation needs the off-host copy).
 - **Tiered authority** - every call is classified Tier 0..3
   ([`docs/adr/0003-tiered-authority.md`](docs/adr/0003-tiered-authority.md)).
   `RELAY_SHELL_POLICY_MODE` selects `open` (default), `guarded`, or `readonly`.

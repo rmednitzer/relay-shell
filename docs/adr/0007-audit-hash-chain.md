@@ -89,18 +89,21 @@ Add an **opt-in, additive** per-record hash chain to the audit log.
   another thread (e.g. the ADR 0006 seccomp-notify supervisor). Today every
   write already runs on the single event-loop thread, so the lock is
   uncontended; it is future-proofing, engaged only when chaining is on.
-- **Offline verification, no new tool.** A new CLI verb
-  `relay-shell --verify-audit [--audit-path PATH] [--json]` walks a file
-  and reports `OK` / `BROKEN` (exit 0 / 2), mirroring `--check-config` and
-  `--verify-deploy`. It is deliberately **not** an MCP tool: verifying the
-  audit trail is an operator/forensic action, not something the audited
-  model should drive, and keeping it off the tool surface avoids churning
-  the 21-tool contract (`tests/test_server.py::_EXPECTED`). The verifier
-  (`audit.verify_chain`) skips any leading legacy records, then requires a
-  contiguous valid chain to EOF; a `seq` 0 record must anchor to genesis,
-  and the result reports whether the verified region is genesis-`anchored`.
-  `--verify-audit --require-genesis` fails (exit 2) a log that is internally
-  valid but does not start at genesis — the head-truncation signal.
+- **Offline verification, no new tool, fail-closed.** A new CLI verb
+  `relay-shell --verify-audit [--audit-path PATH] [--segment] [--json]`
+  walks a file, mirroring `--check-config` and `--verify-deploy`. It is
+  deliberately **not** an MCP tool: verifying the audit trail is an
+  operator/forensic action, not something the audited model should drive,
+  and keeping it off the tool surface avoids churning the 21-tool contract
+  (`tests/test_server.py::_EXPECTED`). The library `audit.verify_chain` is
+  *structural* — it reports `ok` (no in-region break), `records`, `present`,
+  and whether the region is genesis-`anchored`. The CLI applies a
+  **fail-closed policy**: exit 0 only when the file exists, carries a chained
+  record, verifies clean, and is genesis-anchored; a missing / empty /
+  unchained log, a broken chain, or a non-genesis start (head-truncation)
+  exits 2. `--segment` relaxes only the genesis-anchor requirement, for
+  verifying a mid-stream rotation segment that legitimately starts at
+  `seq > 0`. The default refuses to bless an absent or front-excised trail.
 
 ## What the single-file chain proves (and what it does not)
 
@@ -113,10 +116,12 @@ isolation, prove the boundaries:
 - **Head-truncation** (excising leading records, including `seq` 0): the
   remaining records still form a valid sub-chain. Caught by the **genesis
   anchor** — a log built from genesis but no longer starting at `seq` 0 /
-  genesis `prev` has had leading records removed. `--require-genesis` turns
-  this into a hard failure; `ChainResult.anchored` exposes it
-  programmatically. (A mid-stream rotation segment legitimately starts at
-  `seq > 0`, so this is opt-in, not the default.)
+  genesis `prev` has had leading records removed. The CLI **fails this by
+  default** (`ChainResult.anchored` exposes it programmatically); `--segment`
+  opts out for a mid-stream rotation segment that legitimately starts at
+  `seq > 0`. Fail-closed is the right default for an integrity tool: the
+  ambiguous case (head-truncation vs rotation segment) resolves to "refuse"
+  unless the operator asserts the segment.
 - **Tail-truncation** (dropping the newest records): leaves a shorter but
   valid prefix and is **not detectable from the file alone**. The defense is
   the off-host copy, which holds the later records — the same off-host
@@ -151,13 +156,14 @@ in the file; tail-truncation and cross-file/durability off-host.
   three extra keys ride along. A SIEM that re-verifies the chain gains
   end-to-end tamper-evidence from the relay host to the sink.
 - Operational guidance: enable chaining on a **freshly rotated** log so the
-  chain runs from genesis. Verify a shipped copy with
-  `--verify-audit --audit-path`, and `--require-genesis` for any log that
-  should be complete from the start. When the process ran across a rotation,
-  cross-rotation continuity is an equality check on the seam (`prev` of file
-  *N+1*'s first record == `chain` of file *N*'s last record), which the
-  verifier prints as the start anchor. When a restart fell between the
-  rotation and the next record, file *N+1* is a new genesis segment instead;
+  chain runs from genesis. Verify the live log (or a shipped copy) with
+  `--verify-audit --audit-path` — the fail-closed default is what you want
+  for a log that should be complete from genesis — and add `--segment` only
+  when verifying a mid-stream rotation segment. When the process ran across a
+  rotation, cross-rotation continuity is an equality check on the seam
+  (`prev` of file *N+1*'s first record == `chain` of file *N*'s last record),
+  which the verifier prints as the start anchor. When a restart fell between
+  the rotation and the next record, file *N+1* is a new genesis segment instead;
   verify each genesis-anchored segment independently and rely on the ordered
   off-host stream for continuity across segments.
 
@@ -210,7 +216,7 @@ four-step pass; full record in `docs/adr/0005-codebase-validation.md`
 §"Validation outcome (2026-06-01)" and `audit/2026-06-01-engagement.md`):
 
 - `ruff check`, `ruff format --check`, `mypy --strict` clean. `pytest -q` —
-  275 passed, 13 deselected (up from 250; +25 chain/config/CLI tests).
+  277 passed, 13 deselected (up from 250; +27 chain/config/CLI tests).
   `pytest -m fuzz` — 13 invariants pass. `coverage` — 92% with subprocess
   collection (floor 90%); `config.py` 99%, `audit.py` 95%.
 - 21 MCP tools and 3 resources unchanged — the chain adds a **CLI verb**,
@@ -220,27 +226,35 @@ four-step pass; full record in `docs/adr/0005-codebase-validation.md`
   restart; `verify_chain` returns intact on a clean log and detects edit,
   chain-field forgery, interior deletion, reorder, a garbage line, a
   non-genesis seq-0 anchor, and a legacy line inside the region; reports
-  `anchored=false` for a head-truncated log and `--require-genesis` fails
-  it; default-off records carry none of the three fields (byte-identical to
-  v0.1); and `audit_chain=true` with a non-`jsonl` format is rejected at
-  startup. The `--verify-audit` CLI returns 0 on an intact genesis chain, 2
-  on an edited body, and 2 on a head-truncated log under `--require-genesis`.
+  `anchored=false` for a head-truncated log and `present=false` for a
+  missing file; default-off records carry none of the three fields
+  (byte-identical to v0.1); and `audit_chain=true` with a non-`jsonl`
+  format is rejected at startup. The `--verify-audit` CLI is fail-closed:
+  exit 0 on a clean genesis chain; exit 2 on an edited body, a
+  head-truncated log (no `--segment`), a missing log, or an unchained log;
+  exit 0 on a head-truncated log *with* `--segment`.
 
 ### PR-review hardening
 
 Automated review (Copilot + Codex) plus the bundled `/security-review`
 converged on one substantive point: the initial draft **overclaimed**
-"any deletion is detectable". A keyless single-file chain cannot detect
-boundary truncation. The fix kept the architecture (no new sidecar, no
-external anchor — both rejected above) and instead (a) added the genesis
-anchor / `ChainResult.anchored` / `--require-genesis` so **head-truncation**
-is caught, (b) scoped **tail-truncation** and cross-file durability to the
-off-host stream in every user-facing claim, and (c) corrected the
-rotation-safety wording to distinguish rotation-while-running (chain
-continues) from rotation-then-restart (a new genesis segment). See the
-"What the single-file chain proves" section above. Regression tests pin
+detection and was too lenient by default. A keyless single-file chain
+cannot detect boundary truncation, and a verifier must not bless an absent
+or front-excised log. The fix kept the architecture (no new sidecar, no
+external anchor — both rejected above) and instead (a) made `--verify-audit`
+**fail-closed** — a missing / empty / unchained log, a broken chain, or a
+non-genesis start (head-truncation) all exit 2 by default, with `--segment`
+the explicit opt-out for a rotation segment; (b) added `ChainResult.anchored`
+/ `present` so head-truncation and absence are surfaced; (c) scoped
+**tail-truncation** and cross-file durability to the off-host stream in every
+user-facing claim; and (d) corrected the rotation-safety wording to
+distinguish rotation-while-running (chain continues) from rotation-then-restart
+(a new genesis segment, which the fail-closed default still verifies because
+it is genesis-anchored). See the "What the single-file chain proves" section.
+Regression tests pin
 head-truncation (`anchored=false`), tail-truncation (valid-prefix, the
-documented limitation), and the `--require-genesis` exit codes.
+documented limitation), and the fail-closed CLI exit codes for missing,
+unchained, head-truncated (with and without `--segment`), and genesis logs.
 
 No change to policy admission, tier semantics, the no-sandbox posture, or
 any tool's response shape. This pass hardened a compensating control

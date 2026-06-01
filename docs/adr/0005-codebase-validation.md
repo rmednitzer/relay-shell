@@ -149,10 +149,10 @@ broader engagement is recorded in
   **CLI verb** (`--verify-audit`), not a tool, so the tool contract is
   unchanged.
 - `ruff check`, `ruff format --check`, `mypy --strict` clean.
-- `pytest -q` — 275 passed, 13 deselected (up from 250; +25 tests for the
+- `pytest -q` — 277 passed, 13 deselected (up from 250; +27 tests for the
   chain emit/resume, the `verify_chain` tamper / head-truncation /
   tail-truncation cases, the config cross-field validator, and the
-  `--verify-audit` CLI incl. `--require-genesis`). `pytest -m fuzz`
+  fail-closed `--verify-audit` CLI incl. `--segment`). `pytest -m fuzz`
   — 13 invariants pass.
 - `coverage` — 92% with subprocess collection (floor 90%); `config.py`
   99%, `audit.py` 95%, `patterns.py` / `redaction.py` / `policy.py` 100%.

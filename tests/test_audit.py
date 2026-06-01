@@ -396,9 +396,12 @@ def test_verify_chain_garbage_line_in_region_is_a_break(tmp_path: Path) -> None:
 
 
 def test_verify_chain_missing_file_is_ok_with_no_records(tmp_path: Path) -> None:
+    # verify_chain is structural (no break in a nonexistent region), but flags
+    # the file as absent so the CLI can fail-closed on it.
     r = verify_chain(str(tmp_path / "never-created.jsonl"))
     assert r.ok
     assert r.records == 0
+    assert r.present is False
 
 
 def test_verify_chain_unchained_log_reports_no_records(tmp_path: Path) -> None:
@@ -422,8 +425,8 @@ def test_verify_chain_genesis_log_is_anchored(tmp_path: Path) -> None:
 def test_verify_chain_head_truncation_is_valid_but_not_anchored(tmp_path: Path) -> None:
     # Excising leading records (incl. seq 0) leaves a valid sub-chain that the
     # recompute/linkage checks accept — but it is no longer genesis-anchored,
-    # which is the head-truncation signal (ADR 0007). The CLI turns this into a
-    # failure under --require-genesis.
+    # which is the head-truncation signal (ADR 0007). The fail-closed CLI
+    # rejects this by default (`--segment` opts out for a rotation segment).
     path = tmp_path / "audit.jsonl"
     recs = _write_chained(path, 5)
     _rewrite(path, recs[2:])  # drop seq 0 and 1

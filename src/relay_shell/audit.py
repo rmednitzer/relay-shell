@@ -134,6 +134,11 @@ class ChainResult:
     # removed. Tail-truncation is undetectable from the file alone and is
     # caught only by the off-host seam comparison. See ADR 0007.
     anchored: bool = False
+    # Whether the audit file existed and was readable. `verify_chain` is
+    # structural and treats a missing file as "no break found" (ok=True,
+    # records=0); the CLI applies a fail-closed policy and rejects a missing
+    # or empty log so `--verify-audit` never blesses an absent audit trail.
+    present: bool = True
 
 
 def verify_chain(path: str) -> ChainResult:
@@ -161,9 +166,13 @@ def verify_chain(path: str) -> ChainResult:
     try:
         p = Path(path).expanduser()
         if not p.is_file():
-            return ChainResult(True, 0, None, None, None, f"audit file not found: {path}")
+            return ChainResult(
+                True, 0, None, None, None, f"audit file not found: {path}", present=False
+            )
     except Exception as exc:  # noqa: BLE001 - never raise from a verifier
-        return ChainResult(False, 0, None, None, None, f"cannot access audit file: {exc}")
+        return ChainResult(
+            False, 0, None, None, None, f"cannot access audit file: {exc}", present=False
+        )
 
     records = 0
     started = False
@@ -259,8 +268,8 @@ def verify_chain(path: str) -> ChainResult:
         # Internally valid, but the first surviving record is not genesis:
         # either leading records were excised (head-truncation) or this is a
         # mid-stream rotation segment. The verifier cannot tell which from one
-        # file; the operator reconciles via `--require-genesis` (for a log that
-        # should start at genesis) or the cross-rotation seam.
+        # file; the fail-closed CLI rejects this by default and the operator
+        # asserts a rotation segment with `--segment`.
         reason = (
             f"chain internally consistent: {records} record(s) from seq {start_seq}, "
             f"but NOT genesis-anchored (leading records removed, or a mid-stream "

@@ -116,14 +116,14 @@ def test_verify_audit_help_lists_the_flags() -> None:
     assert proc.returncode == 0
     assert "--verify-audit" in proc.stdout
     assert "--audit-path" in proc.stdout
-    assert "--require-genesis" in proc.stdout
+    assert "--segment" in proc.stdout
 
 
-def test_verify_audit_require_genesis_flags_head_truncation(tmp_path: Path) -> None:
-    """Head-truncation: internally valid but not genesis-anchored.
+def test_verify_audit_fails_closed_on_head_truncation(tmp_path: Path) -> None:
+    """Fail-closed: head-truncation fails by default; --segment accepts it.
 
-    Without --require-genesis it exits 0 (a mid-stream rotation segment is
-    legitimate) but warns; with --require-genesis it fails (exit 2).
+    A non-genesis start is treated as head-truncation unless the operator
+    asserts (via --segment) that the file is a mid-stream rotation segment.
     """
     import json
 
@@ -138,29 +138,51 @@ def test_verify_audit_require_genesis_flags_head_truncation(tmp_path: Path) -> N
     lines = [x for x in audit.read_text().splitlines() if x.strip()]
     audit.write_text("\n".join(lines[2:]) + "\n")
 
-    warned = _run_main(["--verify-audit", "--audit-path", str(audit)])
-    assert warned.returncode == 0
-    assert "does not start at genesis" in warned.stderr
-
-    strict = _run_main(
-        ["--verify-audit", "--audit-path", str(audit), "--require-genesis", "--json"]
-    )
+    # Default is fail-closed: a non-genesis start is rejected.
+    strict = _run_main(["--verify-audit", "--audit-path", str(audit), "--json"])
     assert strict.returncode == 2
     payload = json.loads(strict.stdout)
     assert payload["ok"] is False
     assert payload["anchored"] is False
     assert payload["chain_ok"] is True  # the chain itself is internally valid
 
+    # --segment accepts a legitimately mid-stream rotation segment.
+    seg = _run_main(["--verify-audit", "--audit-path", str(audit), "--segment"])
+    assert seg.returncode == 0, seg.stderr
 
-def test_verify_audit_require_genesis_passes_genesis_log(tmp_path: Path) -> None:
+
+def test_verify_audit_passes_genesis_log_by_default(tmp_path: Path) -> None:
     from relay_shell.audit import AuditLogger
 
     audit = tmp_path / "audit.jsonl"
     log = AuditLogger(str(audit), chain=True)
     for i in range(3):
         log.record(tool="t", args={"i": i}, output="x", exit_code=0, tier=1)
-    ok = _run_main(["--verify-audit", "--audit-path", str(audit), "--require-genesis"])
+    ok = _run_main(["--verify-audit", "--audit-path", str(audit)])
     assert ok.returncode == 0, ok.stderr
+
+
+def test_verify_audit_fails_closed_on_missing_file(tmp_path: Path) -> None:
+    # A verifier pointed at a configured log must not bless its absence.
+    missing = tmp_path / "never-created.jsonl"
+    proc = _run_main(["--verify-audit", "--audit-path", str(missing), "--json"])
+    assert proc.returncode == 2
+    import json
+
+    payload = json.loads(proc.stdout)
+    assert payload["ok"] is False
+    assert payload["present"] is False
+
+
+def test_verify_audit_fails_closed_on_unchained_log(tmp_path: Path) -> None:
+    # An existing but unchained (chain-off) log has no chain to verify -> fail.
+    from relay_shell.audit import AuditLogger
+
+    audit = tmp_path / "audit.jsonl"
+    AuditLogger(str(audit)).record(tool="t", args={}, output="x", exit_code=0, tier=0)
+    proc = _run_main(["--verify-audit", "--audit-path", str(audit)])
+    assert proc.returncode == 2
+    assert "no chained records" in proc.stdout
 
 
 def test_main_returns_two_on_invalid_config_without_check_flag(tmp_path: Path) -> None:
