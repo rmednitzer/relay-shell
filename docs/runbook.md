@@ -137,6 +137,22 @@ the later records. The default is strict (a non-genesis start fails as possible
 head-truncation); pass `--segment` only when verifying a mid-stream rotation
 segment that legitimately starts at `seq > 0`.
 
+If the deployment runs with `RELAY_SHELL_SECCOMP_NOTIFY=true`
+([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)), confirm the
+syscall-notify channel actually engaged — an enabled-but-inactive channel is a
+silent audit gap on the child side. `server_info.seccomp.supported` must be
+`true` (a `false` carries a `reason`, most often "requires CAP_SYS_ADMIN"), and
+one real `shell_exec` should leave at least one `syscall_notify` line behind:
+
+```bash
+jq -r 'select(.tool=="syscall_notify") | .syscall' "$AUDIT" | sort -u
+# expect at least: execve
+```
+
+Treat `supported=false` while the env var is on as a finding: grant
+`CAP_SYS_ADMIN` (the channel installs without `no_new_privs`, so set-uid/`sudo`
+is unaffected) or accept the child-side gap explicitly.
+
 ### 2.4 Policy posture
 
 ```bash
@@ -306,7 +322,8 @@ Use this for every PR, your own or external.
 | `auth/oauth.py`      | File modes (0o700 dir / 0o600 files), atomic save, lazy expiry, single-client lockdown intact.    |
 | `shelltools.py`      | `start_new_session=True` preserved (so `killpg` works). Env overlay does not propagate JSON errors. |
 | `inventory.py`       | Wildcard `Host *` patterns are skipped in the flat listing. `resolve()` passthrough behavior holds. The raw ssh_config parse is retained so `ssh_config_aliases()` reports aliases that an inventory entry overrides. |
-| `metrics.py`         | Counter / gauge label cardinality stays bounded. The `tool` label on resource reads is the STABLE name, never a user-controlled string. Hand-rolled exposition stays compliant (HELP + TYPE per metric, label escaping). |
+| `metrics.py`         | Counter / gauge label cardinality stays bounded. The `tool` label on resource reads is the STABLE name, never a user-controlled string. Hand-rolled exposition stays compliant (HELP + TYPE per metric, label escaping). The `syscall` label on the seccomp counters comes from the fixed `NOTIFIED_SYSCALLS` set. |
+| `seccomp.py`         | Opt-in, default-off, `CAP_SYS_ADMIN`-gated; **never** latches `no_new_privs` (preserves set-uid/`sudo`). The supervisor only ever answers CONTINUE — it must never block/kill a child. `SECCOMP_FILTER_VERSION` bumps on any filter / notified-set change. `syscall_notify` events carry raw scalar register args only — no buffer dereference. Paired tests in `tests/test_seccomp.py`; the privileged paths are `seccomp`-marked. |
 | `verifier.py`        | Template lookup tries packaged `_deploy` first, then source-tree `deploy/`. Each pair in `DEFAULT_PAIRS` has a stable `name`; new pairs must be reflected in `docs/deployment.md` §10. |
 
 ### 3.3 Security-sensitive diffs
@@ -317,6 +334,7 @@ Trigger an extra review pass if the diff touches:
 - The `Relay.run()` body in `server.py` or any resource handler
 - `auth/oauth.py` (any TTL, store, or token-shape change)
 - `metrics.py` (label-cardinality and label-value-escaping invariants are part of the trust boundary - a model that controls a label could otherwise smuggle data into the exposition)
+- `seccomp.py` (the BPF filter, the notified-syscall set, the `CAP_SYS_ADMIN` gate, or the never-`no_new_privs` / always-CONTINUE invariants - a change here can alter the audit shape or the no-sandbox posture)
 - `deploy/install*.sh` (anything that writes a systemd unit / EnvironmentFile)
 - `deploy/Caddyfile` (CIDR matcher or header changes)
 
@@ -330,6 +348,11 @@ this manual checklist:
 - if `audit_chain` is enabled, the `seq`/`prev`/`chain` fields are
   *additive only* (the default-off record stays byte-identical) and
   `relay-shell --verify-audit` passes on a freshly written log;
+- if the seccomp-notify channel is touched: it stays opt-in +
+  `CAP_SYS_ADMIN`-gated and never latches `no_new_privs` (set-uid/`sudo`
+  preserved); the supervisor only ever answers CONTINUE; `syscall_notify`
+  events carry no dereferenced buffer; the per-call record and the spawn path
+  stay byte-identical when the channel is off;
 - `policy_text` passed to `Relay.run()` covers every byte the executor
   will see (command + stdin + env_json + script body);
 - redaction patterns have paired over-scrub / under-scrub tests;
@@ -751,12 +774,32 @@ currently empty.)
 
 ### 7.5 Security hardening (incremental, no posture change)
 
-- **B-021 (P3)** Investigate `seccomp-bpf` notification mode (not
-  enforcement) for the local executor: not a sandbox, but an additional
-  audit channel covering syscalls. Design contract recorded in
-  [ADR 0006](adr/0006-seccomp-notify-audit-channel.md) (Proposed);
-  promotion to Accepted is gated on the implementing PR and its
-  validation-pass outcome (ADR 0005 §"Decision" step 5).
+- **B-021 (P3)** — **Closed** by
+  [ADR 0006](adr/0006-seccomp-notify-audit-channel.md) (now Accepted): the
+  opt-in, audit-only seccomp-notify channel shipped in
+  `src/relay_shell/seccomp.py` (`RELAY_SHELL_SECCOMP_NOTIFY`, default off). A
+  per-call BPF USER_NOTIF filter + supervisor appends `syscall_notify` /
+  `syscall_notify_overflow` lines for a spawned child's syscalls, never
+  blocking (always answers CONTINUE). `CAP_SYS_ADMIN`-gated and never latches
+  `no_new_privs`, so set-uid/`sudo` posture is preserved verbatim;
+  Linux/`x86_64`/kernel ≥ 5.5; pure `ctypes`, no new dependency. Follow-ups
+  below (B-024/B-025/B-026).
+- **B-024 (P3)** `prctl` option-filtering for the seccomp-notify set.
+  Deferred from B-021: notify only on capability/securebits-relevant `option`
+  values to bound volume. The filter assembler already does flag predicates
+  for `open`/`openat`; extend it to an `eq-any` predicate on `args[0]` and add
+  the paired positive / near-miss tests in `tests/test_seccomp.py`. Bump
+  `SECCOMP_FILTER_VERSION`.
+- **B-025 (P3)** `aarch64` support for the seccomp-notify channel. Deferred
+  from B-021 (v1 ships `x86_64`-validated syscall numbers only; other arches
+  no-op). Add the arch's syscall-number + `AUDIT_ARCH` tables and validate the
+  notify round-trip on a live `aarch64` host before `platform_support()`
+  admits it.
+- **B-026 (P3)** Extend the seccomp-notify channel to PTY sessions
+  (`shell_spawn`) and the SSH-local half. Deferred from B-021 (v1 covers the
+  one-shot local executor). The PTY path spawns via
+  `sessions.LocalPtyTransport.spawn`, not `shelltools`, so the monitor lifetime
+  must follow the long-lived session rather than a single call.
 - **B-023 (P2)** — **Closed** by
   [ADR 0007](adr/0007-audit-hash-chain.md): an opt-in, additive
   tamper-evident audit hash chain (`RELAY_SHELL_AUDIT_CHAIN`, default

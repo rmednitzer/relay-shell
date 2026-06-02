@@ -237,6 +237,60 @@ def test_audit_leef_escapes_tabs_and_delimiters(tmp_path: Path) -> None:
     assert "\ttool=shell_exec" in line
 
 
+# --- Syscall-notify events (ADR 0006) ---------------------------------------
+
+
+def test_record_syscall_event_shape(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    log.record_syscall(pid=4321, syscall="execve", nr=59, args=(1, 2, 3, 4, 5, 6), request_id="r9")
+    rec = json.loads(path.read_text().strip())
+    assert rec["tool"] == "syscall_notify"
+    assert rec["tier"] == 0
+    assert rec["pid"] == 4321
+    assert rec["syscall"] == "execve"
+    assert rec["nr"] == 59
+    assert rec["syscall_args"] == [1, 2, 3, 4, 5, 6]
+    assert rec["request_id"] == "r9"
+    # A distinct shape from a tool-call record: no output hash, no args dict.
+    assert "output_sha256" not in rec
+    assert "args" not in rec
+
+
+def test_record_syscall_overflow_shape(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    log.record_syscall_overflow(pid=99, cap=256)
+    rec = json.loads(path.read_text().strip())
+    assert rec["tool"] == "syscall_notify_overflow"
+    assert rec["pid"] == 99
+    assert rec["cap"] == 256
+    assert rec["tier"] == 0
+
+
+def test_syscall_events_interleave_and_extend_the_chain(tmp_path: Path) -> None:
+    # syscall_notify lines share the stream (and the hash chain) with tool-call
+    # records: a mixed sequence must verify clean and stay seq-monotonic.
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path), chain=True)
+    log.record(tool="shell_exec", args={"command": "x"}, output="o", exit_code=0, tier=1)
+    log.record_syscall(pid=5, syscall="execve", nr=59, args=(0, 0, 0, 0, 0, 0))
+    log.record_syscall_overflow(pid=5, cap=1)
+    log.record(tool="shell_exec", args={"command": "y"}, output="o2", exit_code=0, tier=1)
+    r = verify_chain(str(path))
+    assert r.ok
+    assert r.records == 4
+    assert r.anchored
+    recs = [json.loads(ln) for ln in path.read_text().strip().splitlines()]
+    assert [x["seq"] for x in recs] == [0, 1, 2, 3]
+    assert [x["tool"] for x in recs] == [
+        "shell_exec",
+        "syscall_notify",
+        "syscall_notify_overflow",
+        "shell_exec",
+    ]
+
+
 # --- Tamper-evident hash chain (ADR 0007) -----------------------------------
 
 _GENESIS = "0" * 64

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import pwd
 import re
@@ -28,7 +29,7 @@ from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from . import __version__
+from . import __version__, seccomp
 from .audit import AuditLogger
 from .config import Settings, get_settings
 from .errors import RelayError, fmt_exc
@@ -42,6 +43,8 @@ from .sshpool import SshPool
 from .util import clamp, truncate
 
 __all__ = ["Relay", "build_server"]
+
+_log = logging.getLogger("relay_shell.server")
 
 Work = Callable[[], Awaitable[tuple[str, int | None]]]
 _SUDO_SEARCH_PATHS = (Path("/usr/bin/sudo"), Path("/bin/sudo"), Path("/usr/local/bin/sudo"))
@@ -120,6 +123,24 @@ class Relay:
         self.metrics.register_gauge(ACTIVE_SESSIONS, lambda: float(self.sessions.count()))
         self.metrics.register_gauge(ACTIVE_FORWARDS, lambda: float(self.ssh.forward_count()))
         self.metrics.register_gauge(AUDIT_DEGRADED, lambda: 1.0 if self.audit.degraded else 0.0)
+        # Announce the seccomp-notify channel's status once at construction so
+        # an operator who set RELAY_SHELL_SECCOMP_NOTIFY learns immediately
+        # whether it actually engaged (or why it no-ops on this host).
+        if settings.seccomp_notify:
+            support = seccomp.platform_support()
+            if support.ok:
+                _log.info(
+                    "seccomp-notify audit channel ON (arch=%s, kernel=%s, cap=%d)",
+                    support.arch,
+                    support.kernel,
+                    settings.seccomp_notify_cap,
+                )
+            else:
+                _log.warning(
+                    "seccomp-notify requested but unavailable (%s); the channel is "
+                    "OFF and local spawns are unaffected",
+                    support.reason,
+                )
 
     def clamp_timeout(self, timeout: int) -> int:
         return clamp(timeout, 1, self.settings.max_timeout)
@@ -159,6 +180,13 @@ class Relay:
             return body
 
         errored = False
+        # Activate the per-call seccomp-notify monitor (ADR 0006) for the
+        # duration of work(). It is None unless the channel is enabled AND
+        # supported; the local executor (shelltools) consults it when it
+        # spawns a child. A ContextVar keeps concurrent calls isolated and
+        # avoids threading the monitor through every tool's work closure.
+        monitor = self._seccomp_monitor(request_id)
+        token = seccomp.set_active(monitor)
         try:
             body, exit_code = await work()
         except RelayError as exc:
@@ -167,6 +195,8 @@ class Relay:
         except Exception as exc:  # noqa: BLE001
             body, exit_code = fmt_exc(exc), None
             errored = True
+        finally:
+            seccomp.clear_active(token)
 
         body = truncate(body, self.clamp_output(max_output))
         final = f"[exit {exit_code}]\n{body}" if exit_code is not None else body
@@ -211,6 +241,44 @@ class Relay:
         if connect_timeout > 0:
             ck["connect_timeout"] = connect_timeout
         return ck
+
+    def _seccomp_monitor(self, request_id: str) -> seccomp.SeccompMonitor | None:
+        """Build a per-call seccomp-notify monitor, or ``None`` if disabled.
+
+        ``None`` whenever the channel is off (the default) or the host lacks
+        the prerequisites (Linux/x86_64/kernel 5.5+/CAP_SYS_ADMIN), so the
+        spawn path stays byte-identical. When active, every observed syscall
+        is routed to the audit log (an additive ``syscall_notify`` line tied
+        to this ``request_id``) and the bounded ``/metrics`` counters.
+        """
+        if not self.settings.seccomp_notify:
+            return None
+        support = seccomp.platform_support()
+        if not support.ok:
+            return None
+
+        def _on_event(evt: seccomp.SyscallEvent) -> None:
+            self.audit.record_syscall(
+                pid=evt.pid,
+                syscall=evt.syscall,
+                nr=evt.nr,
+                args=evt.args,
+                request_id=request_id,
+            )
+            self.metrics.inc_seccomp_event(syscall=evt.syscall)
+
+        def _on_overflow(pid: int) -> None:
+            self.audit.record_syscall_overflow(
+                pid=pid, cap=self.settings.seccomp_notify_cap, request_id=request_id
+            )
+            self.metrics.inc_seccomp_overflow()
+
+        return seccomp.SeccompMonitor(
+            cap=self.settings.seccomp_notify_cap,
+            arch=support.arch,
+            on_event=_on_event,
+            on_overflow=_on_overflow,
+        )
 
 
 def build_server(settings: Settings | None = None) -> FastMCP:
@@ -966,6 +1034,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             user = ""
             with contextlib.suppress(KeyError):
                 user = pwd.getpwuid(euid).pw_name
+            _seccomp_support = seccomp.platform_support()
             info = {
                 "name": "relay-shell",
                 "version": __version__,
@@ -990,6 +1059,13 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                     "degraded": app.audit.degraded,
                     "format": app.audit.format,
                     "chain": app.audit.chain,
+                },
+                "seccomp": {
+                    "notify": cfg.seccomp_notify,
+                    "supported": _seccomp_support.ok,
+                    "reason": _seccomp_support.reason,
+                    "cap": cfg.seccomp_notify_cap,
+                    "filter_version": seccomp.SECCOMP_FILTER_VERSION,
                 },
                 "ssh": {
                     "known_hosts_default": cfg.ssh_known_hosts,

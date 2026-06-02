@@ -249,6 +249,39 @@ genesis-anchored segment independently; cross-segment continuity lives in the
 ordered off-host stream, consistent with ADR 0007's delegation of cross-file
 durability to off-host shipping.
 
+### 6b. Syscall-level audit channel (optional)
+
+The audit record covers *what the model asked for* and the SHA-256 of the
+output, but not what a spawned child does after `exec` returns. Set
+`RELAY_SHELL_SECCOMP_NOTIFY=true` to add an audit-only seccomp **user-notify**
+channel ([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)):
+locally-spawned children (`shell_exec` / `shell_script` / `ssh_keyscan`) get a
+BPF filter that traps a small, high-signal syscall set (`execve`, the
+`set[re|res]?[ug]id` family, `mount`/`umount2`, `unshare`/`setns`,
+`chroot`/`pivot_root`, `ptrace`, write-`open`/`openat`), and a supervisor
+appends one `syscall_notify` line per observed call to the same JSONL stream
+(it extends the §6a hash chain when that is on). It **never blocks** a syscall
+— the supervisor always answers CONTINUE — so ADR 0002's no-sandbox posture is
+unchanged.
+
+**Activation is gated, by design.** A seccomp filter installs with
+`CAP_SYS_ADMIN` *or* by latching `no_new_privs`; the latter would silently
+disable set-uid escalation in the child (`sudo` would break). To preserve the
+privileged-admin posture verbatim, the channel installs **only** with
+`CAP_SYS_ADMIN` (e.g. running as root) and never latches `no_new_privs`. It
+also requires Linux / `x86_64` / kernel ≥ 5.5 and a notify ABI matching the
+build. Where any prerequisite is missing it **cleanly no-ops** — local spawns
+are byte-identical to the off path — and `server_info.seccomp.supported` is
+`false` with a `reason` (also logged once at startup). There is no system
+package to install: the channel is pure `ctypes`.
+
+`RELAY_SHELL_SECCOMP_NOTIFY_CAP` (default 256, range 1..65536) bounds the
+per-call event volume: beyond it, one `syscall_notify_overflow` line is written
+and emission stops while the child still runs to completion. Watch
+`relay_shell_seccomp_notify_overflow_total` (§9a) and raise the cap if a
+legitimate workload trips it. The events ride the same off-host shipper as the
+rest of the log (`docs/audit-shipper.md`); shippers route on the `tool` field.
+
 ## 7. SSH credential scoping
 
 The realized credential surface is whatever keys the service account can use.
@@ -293,12 +326,14 @@ exposition format (no auth - the route bypasses OAuth by design, scope it
 via the Caddy CIDR allowlist). The audit log remains the source of truth
 for what happened; metrics are for dashboards only and reset on restart.
 
-| metric                              | type    | meaning                                                             |
-|-------------------------------------|---------|---------------------------------------------------------------------|
-| `relay_shell_tool_calls_total`      | counter | One per tool call. Labels: `tool`, `tier`, `mode`, `outcome`.       |
-| `relay_shell_active_sessions`       | gauge   | Live local + SSH PTY sessions.                                      |
-| `relay_shell_active_forwards`       | gauge   | Live SSH port forwards.                                             |
-| `relay_shell_audit_degraded`        | gauge   | 1 if the audit sink is degraded, 0 otherwise. Should always be 0.   |
+| metric                                       | type    | meaning                                                             |
+|----------------------------------------------|---------|---------------------------------------------------------------------|
+| `relay_shell_tool_calls_total`               | counter | One per tool call. Labels: `tool`, `tier`, `mode`, `outcome`.       |
+| `relay_shell_seccomp_notify_events_total`    | counter | One per observed syscall when the §6b channel is on. Label: `syscall` (bounded set). |
+| `relay_shell_seccomp_notify_overflow_total`  | counter | One per tool call that hit `RELAY_SHELL_SECCOMP_NOTIFY_CAP`.         |
+| `relay_shell_active_sessions`                | gauge   | Live local + SSH PTY sessions.                                      |
+| `relay_shell_active_forwards`                | gauge   | Live SSH port forwards.                                             |
+| `relay_shell_audit_degraded`                 | gauge   | 1 if the audit sink is degraded, 0 otherwise. Should always be 0.   |
 
 `outcome` is one of `ok` (work returned), `denied` (policy refused), or
 `error` (work raised). Combine `mode + tier + outcome` for the classic

@@ -64,3 +64,23 @@ def test_audit_chain_requires_jsonl_format(
     monkeypatch.setenv("RELAY_SHELL_AUDIT_FORMAT", "cef")
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_seccomp_notify_off_by_default(clean_env: None) -> None:
+    s = Settings()
+    assert s.seccomp_notify is False
+    assert s.seccomp_notify_cap == 256
+
+
+def test_seccomp_notify_env_override(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RELAY_SHELL_SECCOMP_NOTIFY", "true")
+    monkeypatch.setenv("RELAY_SHELL_SECCOMP_NOTIFY_CAP", "64")
+    s = Settings()
+    assert s.seccomp_notify is True
+    assert s.seccomp_notify_cap == 64
+
+
+def test_seccomp_notify_cap_floor(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RELAY_SHELL_SECCOMP_NOTIFY_CAP", "0")
+    with pytest.raises(ValidationError):
+        Settings()

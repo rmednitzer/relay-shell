@@ -16,6 +16,7 @@ import shlex
 import signal
 import sys
 
+from . import seccomp
 from .errors import fmt_exc
 
 __all__ = ["build_env", "run_command", "run_script", "spawn_argv"]
@@ -98,17 +99,29 @@ async def run_command(
         "stderr": stderr_dst,
         "start_new_session": True,
     }
+    argv: list[str] = []
+    if not use_shell:
+        argv = shlex.split(command)
+        if not argv:
+            return ("[ERROR: empty command]", None)
+    # Optional, opt-in seccomp-notify audit channel (ADR 0006). `extras` is
+    # {} unless the active monitor armed (CAP_SYS_ADMIN + enabled), keeping
+    # the default spawn byte-identical. arm() must precede the spawn; stop()
+    # tears the supervisor down once the child is reaped.
+    monitor = seccomp.get_active()
+    extras = monitor.arm() if monitor is not None else {}
     try:
-        if use_shell:
-            proc = await asyncio.create_subprocess_shell(command, **common)  # type: ignore[arg-type]
-        else:
-            argv = shlex.split(command)
-            if not argv:
-                return ("[ERROR: empty command]", None)
-            proc = await asyncio.create_subprocess_exec(*argv, **common)  # type: ignore[arg-type]
-    except (OSError, ValueError) as exc:
-        return (fmt_exc(exc), None)
-    return await _drive(proc, stdin_data, timeout, merge_stderr)
+        try:
+            if use_shell:
+                proc = await asyncio.create_subprocess_shell(command, **common, **extras)  # type: ignore[arg-type]
+            else:
+                proc = await asyncio.create_subprocess_exec(*argv, **common, **extras)  # type: ignore[arg-type, misc]
+        except (OSError, ValueError) as exc:
+            return (fmt_exc(exc), None)
+        return await _drive(proc, stdin_data, timeout, merge_stderr)
+    finally:
+        if monitor is not None:
+            monitor.stop()
 
 
 async def run_script(
@@ -135,19 +148,26 @@ async def run_script(
         return (f"[ERROR: unsupported interpreter: {interpreter}]", None)
 
     env = build_env(env_json)
+    monitor = seccomp.get_active()
+    extras = monitor.arm() if monitor is not None else {}
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=cwd or None,
-            env=env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
-        )
-    except (OSError, ValueError) as exc:
-        return (fmt_exc(exc), None)
-    return await _drive(proc, body.encode("utf-8"), timeout, merge_stderr=True)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=cwd or None,
+                env=env,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+                **extras,  # type: ignore[arg-type]
+            )
+        except (OSError, ValueError) as exc:
+            return (fmt_exc(exc), None)
+        return await _drive(proc, body.encode("utf-8"), timeout, merge_stderr=True)
+    finally:
+        if monitor is not None:
+            monitor.stop()
 
 
 def spawn_argv(command: str) -> list[str]:

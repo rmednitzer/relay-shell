@@ -76,7 +76,9 @@ centrally; failure paths never crash the transport. The reasoning layer sits
 | `audit_tail` | Return the last N audit records (read-only, Tier 0). |
 
 The HTTP transport also exposes `GET /metrics` (Prometheus text format):
-`relay_shell_tool_calls_total{tool,tier,mode,outcome}` (counter), plus
+`relay_shell_tool_calls_total{tool,tier,mode,outcome}`,
+`relay_shell_seccomp_notify_events_total{syscall}`, and
+`relay_shell_seccomp_notify_overflow_total` (counters), plus
 `relay_shell_active_sessions`, `relay_shell_active_forwards`, and
 `relay_shell_audit_degraded` (gauges). See
 [`docs/deployment.md`](docs/deployment.md) §9a.
@@ -155,6 +157,13 @@ Safety is achieved with **compensating controls**, not by crippling the tool:
   reorders, and interior deletions detectable with `relay-shell --verify-audit`,
   which is fail-closed (a missing / empty / head-truncated log fails;
   `--segment` accepts a rotation segment; tail-truncation needs the off-host copy).
+- **Syscall visibility** (optional) - `RELAY_SHELL_SECCOMP_NOTIFY`
+  ([ADR 0006](docs/adr/0006-seccomp-notify-audit-channel.md)) adds an
+  audit-only seccomp **user-notify** channel that appends `syscall_notify`
+  lines for a spawned child's `execve` / privilege / namespace / mount /
+  write-`open` syscalls. It **never blocks** a syscall and installs only with
+  `CAP_SYS_ADMIN` (never latching `no_new_privs`), so set-uid/`sudo` posture
+  is preserved verbatim — visibility added, capability untouched.
 - **Tiered authority** - every call is classified Tier 0..3
   ([`docs/adr/0003-tiered-authority.md`](docs/adr/0003-tiered-authority.md)).
   `RELAY_SHELL_POLICY_MODE` selects `open` (default), `guarded`, or `readonly`.
