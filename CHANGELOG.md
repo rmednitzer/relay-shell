@@ -38,6 +38,15 @@ All notable changes to this project are documented here. The format follows
   `CAP_SYS_ADMIN`), plus `tests/test_audit.py`, `tests/test_config.py`, and
   `tests/test_metrics.py`. Closes runbook §7.5 B-021. `prctl` option-filtering,
   `aarch64`, and PTY/SSH-local coverage are recorded follow-ups (runbook §7.5).
+- `ssh_upload` / `ssh_download` gain an explicit `timeout=` parameter (clamped
+  to the server max), mirroring `ssh_exec`. A hung SFTP transfer was previously
+  bounded only by the connection-level keepalive; the per-call cap is threaded
+  through `SshPool.sftp_put` / `sftp_get` via `asyncio.wait_for` and a
+  timed-out transfer returns a `[TIMEOUT after Ns]` string. `0` (the default)
+  disables the per-call cap, so existing callers are unaffected. The clamped
+  value is recorded in `audit_args`. Wiring tests in
+  `tests/test_sshpool_unit.py` assert the cap fires (put + get) and that
+  `timeout=0` completes. Closes runbook §7.1 F-6.
 - Tamper-evident audit log (opt-in). `RELAY_SHELL_AUDIT_CHAIN=true`
   (requires `RELAY_SHELL_AUDIT_FORMAT=jsonl`) appends a per-record hash
   chain — `seq`, the previous record's `prev` hash, and a `chain` hash

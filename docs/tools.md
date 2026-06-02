@@ -83,10 +83,14 @@ Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 
 ### `ssh_upload` / `ssh_download`
 SFTP transfer. `ssh_upload(host, local_path, remote_path, recursive=false,
-...)`; `ssh_download(host, remote_path, local_path, recursive=false, ...)`.
-Tier 2 (mutating).
+timeout=0, ...)`; `ssh_download(host, remote_path, local_path,
+recursive=false, timeout=0, ...)`. `timeout` caps the transfer in seconds
+(clamped to the server max); `0` (default) means no per-call cap, leaving only
+the connection keepalive. A transfer that exceeds the cap returns a
+`[TIMEOUT after Ns]` string. Tier 2 (mutating).
 
-Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
+Tests: `tests/test_ssh_integration.py`, `tests/test_sshpool_unit.py`,
+`tests/test_tool_wrappers.py`.
 
 ### `ssh_forward`
 Create a port forward. `spec`:

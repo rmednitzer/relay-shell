@@ -745,14 +745,14 @@ commitment.
 
 ### 7.1 Capability
 
-- **F-6 (P2)** Add an explicit `timeout=` parameter to `ssh_upload` /
-  `ssh_download` (SFTP), mirroring `ssh_exec`. Today a hung transfer is
-  bounded only by the connection-level keepalive, not a per-call cap.
-  Deferred from the 2026-05-27 engagement
-  (`audit/2026-05-27-engagement.md` §8.2 F-6); re-surfaced in the
-  2026-06-01 audit pass. Surgical: add the kwarg, clamp it, thread it
-  through `SshPool.sftp_put` / `sftp_get` via `asyncio.wait_for`, and add
-  a wiring test asserting the cap fires.
+- **F-6 (P2)** — **Closed**. `ssh_upload` / `ssh_download` gained an explicit
+  `timeout=` parameter (clamped to the server max), mirroring `ssh_exec`.
+  Threaded through `SshPool.sftp_put` / `sftp_get` via `asyncio.wait_for`; a
+  timed-out transfer returns `[TIMEOUT after Ns]`. `0` (default) disables the
+  per-call cap (connection keepalive still applies), so existing callers are
+  unaffected. Wiring tests in `tests/test_sshpool_unit.py` assert the cap fires
+  (put + get) and that `timeout=0` completes. Originally deferred from the
+  2026-05-27 engagement (`audit/2026-05-27-engagement.md` §8.2 F-6).
 
 ### 7.2 Quality + automation
 

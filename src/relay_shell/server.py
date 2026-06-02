@@ -625,6 +625,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         local_path: str,
         remote_path: str,
         recursive: bool = False,
+        timeout: int = 0,
         user: str = "",
         port: int = 0,
         key_path: str = "",
@@ -632,19 +633,26 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         jump: str = "",
         ctx: Context | None = None,
     ) -> str:
-        """Upload a file or tree to a remote host via SFTP."""
+        """Upload a file or tree to a remote host via SFTP.
+
+        ``timeout`` caps the transfer in seconds (clamped to the server max);
+        ``0`` (default) means no per-call cap, leaving only the connection
+        keepalive. A transfer that exceeds the cap returns a
+        ``[TIMEOUT after Ns]`` string.
+        """
         ck = app.connect_kwargs(user, port, key_path, known_hosts, jump)
+        t = app.clamp_timeout(timeout) if timeout > 0 else 0
 
         async def _work() -> tuple[str, int | None]:
             msg = await app.ssh.sftp_put(
-                host, local_path, remote_path, recurse=recursive, connect_kwargs=ck
+                host, local_path, remote_path, recurse=recursive, connect_kwargs=ck, timeout=t
             )
             return (msg, None)
 
         return await app.run(
             tool="ssh_upload",
             ctx=ctx,
-            audit_args={"host": host, "local": local_path, "remote": remote_path},
+            audit_args={"host": host, "local": local_path, "remote": remote_path, "timeout": t},
             policy_text=f"upload {local_path} {host}:{remote_path}",
             max_output=2048,
             work=_work,
@@ -656,6 +664,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         remote_path: str,
         local_path: str,
         recursive: bool = False,
+        timeout: int = 0,
         user: str = "",
         port: int = 0,
         key_path: str = "",
@@ -663,19 +672,26 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         jump: str = "",
         ctx: Context | None = None,
     ) -> str:
-        """Download a file or tree from a remote host via SFTP."""
+        """Download a file or tree from a remote host via SFTP.
+
+        ``timeout`` caps the transfer in seconds (clamped to the server max);
+        ``0`` (default) means no per-call cap, leaving only the connection
+        keepalive. A transfer that exceeds the cap returns a
+        ``[TIMEOUT after Ns]`` string.
+        """
         ck = app.connect_kwargs(user, port, key_path, known_hosts, jump)
+        t = app.clamp_timeout(timeout) if timeout > 0 else 0
 
         async def _work() -> tuple[str, int | None]:
             msg = await app.ssh.sftp_get(
-                host, remote_path, local_path, recurse=recursive, connect_kwargs=ck
+                host, remote_path, local_path, recurse=recursive, connect_kwargs=ck, timeout=t
             )
             return (msg, None)
 
         return await app.run(
             tool="ssh_download",
             ctx=ctx,
-            audit_args={"host": host, "remote": remote_path, "local": local_path},
+            audit_args={"host": host, "remote": remote_path, "local": local_path, "timeout": t},
             policy_text=f"download {host}:{remote_path} {local_path}",
             max_output=2048,
             work=_work,
