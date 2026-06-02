@@ -52,6 +52,14 @@ Every tool body is identical in shape (`Relay.run`):
 This is the same discipline a production gateway uses: a tool may fail, time
 out, or be denied, but it always returns a single bounded, audited string.
 
+When `RELAY_SHELL_SECCOMP_NOTIFY=true` (and the host supports it),
+`Relay.run` also activates a per-call seccomp-notify monitor for the duration
+of step 3: a spawned local child's forensically-interesting syscalls are
+appended as *additional* `syscall_notify` lines (tier 0) tied to the same
+`request_id`, never replacing the per-call record
+([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)). It never blocks a
+syscall and is default off, so the lifecycle above is otherwise unchanged.
+
 ## Modules
 
 | Module | Responsibility |
@@ -63,6 +71,7 @@ out, or be denied, but it always returns a single bounded, audited string.
 | `audit` | Rotation-safe append-only JSONL; hash, never body. Optional tamper-evident per-record hash chain + `verify_chain` (ADR 0007). |
 | `policy` | Tier 0..3 classification (consumes `patterns`); `open`/`guarded`/`readonly` admission. |
 | `metrics` | In-memory Prometheus counter + gauge registry rendered at `GET /metrics` (HTTP only). |
+| `seccomp` | Opt-in, audit-only seccomp-notify channel: a version-pinned BPF filter + per-call supervisor that appends `syscall_notify` lines for a spawned child's syscalls, never blocking. `CAP_SYS_ADMIN`-gated, Linux/`x86_64` ([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)). |
 | `errors` | Error types and the uniform `[ERROR: ...]` formatter. |
 | `sessions` | Local PTY transport + transport-agnostic session registry. |
 | `shelltools` | One-shot command/script execution (no PTY). |
@@ -95,8 +104,10 @@ The five `Relay.run` steps above correspond to specific call sites in
 Resource reads (`relay-shell://...`) do not flow through `Relay.run` -
 there is no work to admit, time out, or truncate. They are still
 audited with `tool="resource:<name>"` and `tier=0` so the operator
-sees what context the model is pulling in. The `Relay.run` body and the
-resource handlers are the only places where audit records are produced.
+sees what context the model is pulling in. The `Relay.run` body, the
+resource handlers, and (when `RELAY_SHELL_SECCOMP_NOTIFY` is enabled) the
+seccomp-notify supervisor are the only places where audit records are
+produced.
 
 ## Concurrency and resource model
 

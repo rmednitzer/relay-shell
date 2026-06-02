@@ -8,6 +8,45 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Syscall-level audit channel (opt-in), implementing
+  [ADR 0006](docs/adr/0006-seccomp-notify-audit-channel.md) (now Accepted).
+  `RELAY_SHELL_SECCOMP_NOTIFY=true` installs a seccomp-bpf **user-notify**
+  filter (`SECCOMP_RET_USER_NOTIF` + `SECCOMP_USER_NOTIF_FLAG_CONTINUE`) on
+  locally-spawned children (`shell_exec` / `shell_script` / `ssh_keyscan`)
+  and appends one additive `syscall_notify` audit line per observed syscall:
+  `execve`, `execveat`, `ptrace`, `mount`, `umount2`, `unshare`, `setns`,
+  `chroot`, `pivot_root`, the `set[re|res]?[ug]id` family, and `open`/`openat`
+  gated on a write/create flag. It **never blocks** a syscall — the supervisor
+  always answers CONTINUE — so ADR 0002's no-sandbox posture is preserved.
+  The channel activates **only** when the process holds `CAP_SYS_ADMIN` and so
+  installs the filter *without* latching `no_new_privs`: set-uid/`sudo`
+  behaviour in audited children is unchanged. Linux / `x86_64` / kernel ≥ 5.5;
+  anywhere else it cleanly no-ops and `server_info.seccomp` reports
+  `supported=false` with a `reason`. `RELAY_SHELL_SECCOMP_NOTIFY_CAP`
+  (default 256) bounds the per-call event volume — beyond it, one
+  `syscall_notify_overflow` line is written and emission stops while the
+  child still runs to completion. The events ride the same JSONL stream
+  (and the ADR 0007 hash chain) as tool-call records, carry only raw scalar
+  register arguments (no buffer dereference), and the per-call record stays
+  byte-identical, so existing log shippers keep working. Two bounded
+  `/metrics` counters added: `relay_shell_seccomp_notify_events_total{syscall}`
+  and `relay_shell_seccomp_notify_overflow_total`. Implemented in pure
+  `ctypes` — **no new runtime dependency**; default off keeps the spawn path
+  byte-identical. The 21-tool contract is unchanged (this is an audit event,
+  not a tool). Tests in `tests/test_seccomp.py` (portable BPF/parse/dispatch
+  unit tests + `seccomp`-marked end-to-end tests that auto-skip without
+  `CAP_SYS_ADMIN`), plus `tests/test_audit.py`, `tests/test_config.py`, and
+  `tests/test_metrics.py`. Closes runbook §7.5 B-021. `prctl` option-filtering,
+  `aarch64`, and PTY/SSH-local coverage are recorded follow-ups (runbook §7.5).
+- `ssh_upload` / `ssh_download` gain an explicit `timeout=` parameter (clamped
+  to the server max), mirroring `ssh_exec`. A hung SFTP transfer was previously
+  bounded only by the connection-level keepalive; the per-call cap is threaded
+  through `SshPool.sftp_put` / `sftp_get` via `asyncio.wait_for` and a
+  timed-out transfer returns a `[TIMEOUT after Ns]` string. `0` (the default)
+  disables the per-call cap, so existing callers are unaffected. The clamped
+  value is recorded in `audit_args`. Wiring tests in
+  `tests/test_sshpool_unit.py` assert the cap fires (put + get) and that
+  `timeout=0` completes. Closes runbook §7.1 F-6.
 - Tamper-evident audit log (opt-in). `RELAY_SHELL_AUDIT_CHAIN=true`
   (requires `RELAY_SHELL_AUDIT_FORMAT=jsonl`) appends a per-record hash
   chain — `seq`, the previous record's `prev` hash, and a `chain` hash

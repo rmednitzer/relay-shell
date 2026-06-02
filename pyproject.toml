@@ -117,6 +117,7 @@ testpaths = ["tests"]
 addopts = "-q -m \"not fuzz\""
 markers = [
   "fuzz: hypothesis-driven property-based fuzz tests for redact/classify; nightly only",
+  "seccomp: seccomp-notify end-to-end tests; require Linux/x86_64/kernel>=5.5/CAP_SYS_ADMIN (auto-skip otherwise)",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]
 

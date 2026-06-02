@@ -144,6 +144,89 @@ class _TrackingConn:
         self.close_count += 1
 
 
+class _SlowSftp:
+    """Fake SFTP client whose transfers sleep, to exercise the per-call cap.
+
+    Mirrors the asyncssh surface ``SshPool.sftp_put`` / ``sftp_get`` use:
+    ``conn.start_sftp_client()`` returns an async context manager, and
+    ``put`` / ``get`` are awaitable transfers.
+    """
+
+    def __init__(self, delay: float) -> None:
+        self._delay = delay
+        self.exited = False
+
+    async def __aenter__(self) -> _SlowSftp:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        self.exited = True
+
+    async def put(self, *_a: object, **_k: object) -> None:
+        await asyncio.sleep(self._delay)
+
+    async def get(self, *_a: object, **_k: object) -> None:
+        await asyncio.sleep(self._delay)
+
+
+class _SftpConn(_MockConn):
+    def __init__(self, delay: float) -> None:
+        super().__init__()
+        self.sftp = _SlowSftp(delay)
+
+    def start_sftp_client(self) -> _SlowSftp:
+        return self.sftp
+
+
+_CK: dict[str, object] = {"user": "", "port": 0, "key_path": "", "known_hosts": "", "jump": ""}
+
+
+async def test_sftp_put_timeout_fires(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # F-6: a hung transfer is bounded by the per-call timeout, not just the
+    # connection keepalive. The put sleeps 5s; the 1s cap must win.
+    conn = _SftpConn(delay=5.0)
+
+    async def fake_connect(*_a: object, **_k: object) -> _SftpConn:
+        return conn
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    pool = _make_pool(tmp_path)
+    msg = await pool.sftp_put(
+        "h1.example", "/local/x", "/remote/x", recurse=False, connect_kwargs=_CK, timeout=1
+    )
+    assert msg.startswith("[TIMEOUT after 1s]")
+    assert conn.sftp.exited  # the sftp client was closed on the way out
+
+
+async def test_sftp_get_timeout_fires(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = _SftpConn(delay=5.0)
+
+    async def fake_connect(*_a: object, **_k: object) -> _SftpConn:
+        return conn
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    pool = _make_pool(tmp_path)
+    msg = await pool.sftp_get(
+        "h1.example", "/remote/x", "/local/x", recurse=False, connect_kwargs=_CK, timeout=1
+    )
+    assert msg.startswith("[TIMEOUT after 1s]")
+
+
+async def test_sftp_put_no_cap_completes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # timeout=0 (the default) keeps the historical behaviour: no per-call cap.
+    conn = _SftpConn(delay=0.0)
+
+    async def fake_connect(*_a: object, **_k: object) -> _SftpConn:
+        return conn
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    pool = _make_pool(tmp_path)
+    msg = await pool.sftp_put(
+        "h1.example", "/local/x", "/remote/x", recurse=False, connect_kwargs=_CK, timeout=0
+    )
+    assert msg.startswith("uploaded")
+
+
 async def test_close_all_during_connect_discards_conn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

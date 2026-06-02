@@ -61,6 +61,18 @@ class Settings(BaseSettings):
     # resume the chain across restarts, so chaining requires it.
     audit_chain: bool = False
 
+    # Syscall-level audit channel (ADR 0006; opt-in, default off). When on,
+    # locally-spawned children get a seccomp-bpf USER_NOTIF filter and the
+    # supervisor appends one `syscall_notify` audit line per observed
+    # syscall (execve, privilege/namespace/mount changes, write-opens). It
+    # never blocks a syscall and only activates when the process holds
+    # CAP_SYS_ADMIN (so set-uid/sudo behaviour is preserved verbatim);
+    # otherwise it cleanly no-ops. `seccomp_notify_cap` bounds the per-call
+    # event volume — beyond it, one `syscall_notify_overflow` line is written
+    # and emission stops (the child still runs to completion).
+    seccomp_notify: bool = False
+    seccomp_notify_cap: int = Field(default=256, ge=1, le=65536)
+
     # SSH
     ssh_config: str = "~/.ssh/config"
     inventory: str = ""

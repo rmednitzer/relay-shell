@@ -1,7 +1,7 @@
 # ADR 0006: Syscall-level audit channel via seccomp-bpf notification mode
 
-- Status: Proposed
-- Date: 2026-05-24
+- Status: Accepted (Proposed 2026-05-24)
+- Date: 2026-06-02
 
 ## Context
 
@@ -37,7 +37,7 @@ a way to close the first gap without re-introducing a sandbox. This ADR
 records the design constraints **before** any code lands, per the ADR
 README criteria ("A change to the audit-record shape... needs an ADR").
 
-## Decision (Proposed)
+## Decision
 
 Add an **audit-only** seccomp-bpf channel using user-notify mode
 (`SECCOMP_RET_USER_NOTIF`, first available in Linux 5.0; the effective
@@ -152,29 +152,86 @@ floor for this design is **Linux >= 5.5** because
 
 ## Validation outcome
 
-Deferred until status moves from Proposed to Accepted. Per ADR 0005,
-acceptance requires the four-step validation pass (code index,
-quality gates, upstream surface validation, behavior validation) to
-run against the implementation; the findings table from that pass
-lands in the same PR that flips the Status line above. Until then,
-this ADR is a design contract for the implementing PR, not a record
-of executed work.
+Accepted 2026-06-02 with the implementing PR (runbook §7.5 B-021). The
+channel ships in `src/relay_shell/seccomp.py` (version-pinned
+`SECCOMP_FILTER_VERSION`, like `patterns.py`), wired into the local
+executor via a per-call `ContextVar`, with additive `syscall_notify` /
+`syscall_notify_overflow` audit lines and two bounded `/metrics`
+counters. The four-step ADR 0005 pass ran green against the
+implementation:
 
-## Operational notes (forward-looking)
+1. **Code index** — one new module, no new tool (the 21-tool contract is
+   unchanged; this is an audit *event*, not a tool). `server_info` grows a
+   `seccomp` block; `Settings` grows `seccomp_notify` / `seccomp_notify_cap`.
+2. **Quality gates** — `ruff` / `ruff format` / `mypy --strict` clean;
+   `pytest` green; coverage holds the 90% floor (`seccomp.py` ~97% with the
+   portable unit suite alone; the privileged paths carry a `# pragma: no
+   cover` or are exercised by the `seccomp`-marked end-to-end tests).
+3. **Upstream surface validation** — the kernel ABI constants
+   (`SECCOMP_FILTER_FLAG_NEW_LISTENER = 1<<3`,
+   `SECCOMP_RET_USER_NOTIF`, `SECCOMP_USER_NOTIF_FLAG_CONTINUE`, the notify
+   ioctl numbers, and the 80/24/64 struct sizes) were validated against a
+   live `Linux 6.18 / x86_64` host; `platform_support()` re-checks the
+   struct sizes via `SECCOMP_GET_NOTIF_SIZES` at runtime and disables the
+   channel on a mismatch (the "silently-downgraded kernel" guard this ADR
+   called for).
+4. **Behavior validation** — `seccomp`-marked end-to-end tests drive a real
+   child and assert that `execve` and a write-`openat` are observed and
+   allowed to continue, a read-only `open` is *not* notified, the per-call
+   cap emits one overflow marker while the child still runs to completion,
+   and the events extend the ADR 0007 hash chain.
 
-These notes will move into `deployment.md` when the ADR is Accepted;
-recording them here keeps the rationale next to the decision while the
-implementation is still being shaped.
+### Refinements adopted at implementation (deltas from the Decision)
 
-- **Kernel floor check.** The installer (`deploy/install-edge.sh`
-  pattern) gains a `uname -r` comparison against `5.5`. Below the
-  floor, the installer warns and forces `RELAY_SHELL_SECCOMP_NOTIFY=off`
-  rather than silently producing an unfiltered child.
-- **`libseccomp` packaging.** Add `python-libseccomp` (Debian/Ubuntu)
-  to the `[seccomp]` extras in `pyproject.toml`. The bare install
-  remains dependency-clean; the extra is required only for the new
-  channel.
+- **No `libseccomp` dependency.** The forward-looking note proposed a
+  `python-libseccomp` extra; the channel is implemented in pure `ctypes`
+  instead, so the bare and `[dev]` installs gain **zero** new dependencies.
+  The `[seccomp]` extra is therefore unnecessary and was not added.
+- **`CAP_SYS_ADMIN`-gated, never `no_new_privs`.** A seccomp filter installs
+  with `CAP_SYS_ADMIN` *or* by latching `no_new_privs`. Latching
+  `no_new_privs` would silently disable set-uid escalation in audited
+  children (`sudo` would break) — a capability regression this project
+  forbids and one the Decision's "preserves ADR 0002 verbatim" claim cannot
+  tolerate. The channel therefore activates **only** with `CAP_SYS_ADMIN`
+  (e.g. running as root, a supported privileged posture) and installs
+  without `no_new_privs`, so set-uid/`sudo` semantics are unchanged. Without
+  `CAP_SYS_ADMIN` the channel cleanly no-ops.
+- **`x86_64` only in v1.** Only syscall-number tables we can validate on a
+  live host ship; any other arch makes `platform_support()` report
+  unsupported and the channel no-op, so a guessed number can never notify
+  the wrong syscall. `aarch64` is a recorded follow-up (runbook §7.5).
+- **Syscall set.** Implemented unconditionally: `execve`, `execveat`,
+  `ptrace`, `mount`, `umount2`, `unshare`, `setns`, `chroot`, `pivot_root`,
+  `setuid`/`setgid`/`setreuid`/`setregid`/`setresuid`/`setresgid`; plus
+  `openat`/`open` gated on a write/create flag (`O_WRONLY|O_RDWR|O_CREAT`).
+  `prctl` option-filtering is **deferred** (it needs per-argument BPF
+  predicates and has volume concerns); recorded as a follow-up. The
+  privilege/namespace coverage is broader than the Decision's sketch.
+- **Runtime support check placement.** The Decision put a kernel-floor check
+  in the `verifier` (`--verify-deploy`); that command does template *drift*
+  detection only. The runtime check instead lives in `platform_support()`,
+  is surfaced by `server_info.seccomp` (`supported` + `reason`), logged once
+  at startup, and reflected by `--check-config`.
+- **Scope (v1).** The one-shot local executor (`shell_exec` / `shell_script`
+  / `ssh_keyscan`). Long-lived PTY sessions and the SSH-local half are a
+  recorded follow-up (runbook §7.5).
+
+## Operational notes (as accepted)
+
+Operator-facing detail now lives in `docs/deployment.md` §6a; the as-built
+rationale is captured here next to the decision.
+
+- **Activation prerequisites, not a kernel-floor installer check.** The
+  channel self-gates at runtime via `platform_support()`
+  (Linux / `x86_64` / kernel ≥ 5.5 / `CAP_SYS_ADMIN` / a matching notify
+  ABI). When `RELAY_SHELL_SECCOMP_NOTIFY=on` but a prerequisite is missing,
+  it logs once at startup, `server_info.seccomp.supported` is `false` with a
+  `reason`, and local spawns are byte-identical to the off path — there is
+  no separate installer `uname -r` gate to drift out of sync.
+- **No `libseccomp` packaging step.** The pure-`ctypes` implementation needs
+  no system package; there is nothing to add to a base image beyond a kernel
+  that meets the floor and the `CAP_SYS_ADMIN` posture.
 - **Off-host shipping.** No change to `docs/audit-shipper.md`: the new
-  events ride the same JSONL stream the three existing recipes
-  already tail, and the schema discriminator (`tool` field) is
-  exactly what Vector/Fluent Bit/`journal-remote` already key on.
+  events ride the same JSONL stream the three existing recipes already tail,
+  and the schema discriminator (`tool` field) is exactly what
+  Vector/Fluent Bit/`journal-remote` already key on.

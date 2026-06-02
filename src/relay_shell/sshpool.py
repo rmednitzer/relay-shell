@@ -367,19 +367,53 @@ class SshPool:
         return SshProcessTransport(proc)
 
     async def sftp_put(
-        self, target: str, local: str, remote: str, *, recurse: bool, connect_kwargs: dict[str, Any]
+        self,
+        target: str,
+        local: str,
+        remote: str,
+        *,
+        recurse: bool,
+        connect_kwargs: dict[str, Any],
+        timeout: int = 0,
     ) -> str:
         conn = await self.connect(target, **connect_kwargs)
         async with conn.start_sftp_client() as sftp:
-            await sftp.put(local, remote, recurse=recurse, preserve=True)
+            transfer = sftp.put(local, remote, recurse=recurse, preserve=True)
+            # ``timeout`` is a per-call cap on the transfer itself (the
+            # connection-level keepalive is the only other bound). 0 disables
+            # it. On a hung transfer wait_for cancels the in-flight put; the
+            # sftp client is closed by the context manager on the way out.
+            if timeout > 0:
+                try:
+                    await asyncio.wait_for(transfer, timeout)
+                except TimeoutError:
+                    return f"[TIMEOUT after {timeout}s] partial upload {local} -> {target}:{remote}"
+            else:
+                await transfer
         return f"uploaded {local} -> {target}:{remote}"
 
     async def sftp_get(
-        self, target: str, remote: str, local: str, *, recurse: bool, connect_kwargs: dict[str, Any]
+        self,
+        target: str,
+        remote: str,
+        local: str,
+        *,
+        recurse: bool,
+        connect_kwargs: dict[str, Any],
+        timeout: int = 0,
     ) -> str:
         conn = await self.connect(target, **connect_kwargs)
         async with conn.start_sftp_client() as sftp:
-            await sftp.get(remote, local, recurse=recurse, preserve=True)
+            transfer = sftp.get(remote, local, recurse=recurse, preserve=True)
+            if timeout > 0:
+                try:
+                    await asyncio.wait_for(transfer, timeout)
+                except TimeoutError:
+                    return (
+                        f"[TIMEOUT after {timeout}s] partial download {target}:{remote} -> {local}"
+                    )
+            else:
+                await transfer
         return f"downloaded {target}:{remote} -> {local}"
 
     async def add_forward(

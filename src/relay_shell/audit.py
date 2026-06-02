@@ -387,14 +387,71 @@ class AuditLogger:
             entry["request_id"] = request_id
         if client_id:
             entry["client_id"] = client_id
-        # Audit must never break a tool call.
+        self._emit(entry)
+
+    def record_syscall(
+        self,
+        *,
+        pid: int,
+        syscall: str,
+        nr: int,
+        args: tuple[int, ...],
+        request_id: str = "",
+    ) -> None:
+        """Append one syscall-notification observation (ADR 0006).
+
+        A *passive* tier-0 event emitted by the seccomp-notify supervisor for
+        a single allowed-to-continue syscall in a spawned child. It is an
+        ADDITIONAL line in the same stream, never a replacement for the
+        per-call record: it carries no output hash (there is no output) and
+        records only the raw scalar register arguments — never a dereferenced
+        user buffer. Off-host parsers key on ``tool`` to route it.
+        """
+        entry: dict[str, Any] = {
+            "ts": now_iso(),
+            "tool": "syscall_notify",
+            "tier": 0,
+            "pid": pid,
+            "syscall": syscall,
+            "nr": nr,
+            "syscall_args": list(args),
+        }
+        if request_id:
+            entry["request_id"] = request_id
+        self._emit(entry)
+
+    def record_syscall_overflow(self, *, pid: int, cap: int, request_id: str = "") -> None:
+        """Append one ``syscall_notify_overflow`` marker (ADR 0006).
+
+        Emitted once per tool call when the child crosses the per-call event
+        cap. Beyond the cap the supervisor keeps answering CONTINUE (the child
+        is never blocked) but stops emitting per-syscall events; this single
+        line records that the cap was hit.
+        """
+        entry: dict[str, Any] = {
+            "ts": now_iso(),
+            "tool": "syscall_notify_overflow",
+            "tier": 0,
+            "pid": pid,
+            "cap": cap,
+        }
+        if request_id:
+            entry["request_id"] = request_id
+        self._emit(entry)
+
+    def _emit(self, entry: dict[str, Any]) -> None:
+        """Format + append one record, advancing the hash chain under lock.
+
+        Shared by :meth:`record` and the syscall-event recorders. Audit must
+        never break a caller, so all failure is swallowed. When chaining is on,
+        the in-memory anchor advances only after a successful emit so it stays
+        consistent with the bytes on disk; ``_chain_lock`` also serializes the
+        seccomp-notify supervisor thread against the tool-call path so seq/prev
+        stay monotonic across both writers.
+        """
         with contextlib.suppress(Exception):
             formatter = _FORMATTERS.get(self.format, _format_jsonl)
             if self.chain:
-                # Append the chain fields (seq/prev), commit to them with a
-                # `chain` hash, and advance the in-memory anchor only after
-                # the line is emitted. If emit raises, the chain does not
-                # advance, so it stays consistent with what is on disk.
                 with self._chain_lock:
                     entry["seq"] = self._seq
                     entry["prev"] = self._prev

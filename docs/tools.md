@@ -83,10 +83,14 @@ Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 
 ### `ssh_upload` / `ssh_download`
 SFTP transfer. `ssh_upload(host, local_path, remote_path, recursive=false,
-...)`; `ssh_download(host, remote_path, local_path, recursive=false, ...)`.
-Tier 2 (mutating).
+timeout=0, ...)`; `ssh_download(host, remote_path, local_path,
+recursive=false, timeout=0, ...)`. `timeout` caps the transfer in seconds
+(clamped to the server max); `0` (default) means no per-call cap, leaving only
+the connection keepalive. A transfer that exceeds the cap returns a
+`[TIMEOUT after Ns]` string. Tier 2 (mutating).
 
-Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
+Tests: `tests/test_ssh_integration.py`, `tests/test_sshpool_unit.py`,
+`tests/test_tool_wrappers.py`.
 
 ### `ssh_forward`
 Create a port forward. `spec`:
@@ -168,9 +172,10 @@ Tests: `tests/test_sessions.py`, `tests/test_tool_wrappers.py`.
 
 ### `server_info`
 Version, transport, policy mode, effective limits, audit path / degraded
-flag / format / chain (the tamper-evident hash chain state, ADR 0007), SSH
-defaults (known-hosts mode, connect/keepalive/idle timeouts), inventory
-size. Tier 0.
+flag / format / chain (the tamper-evident hash chain state, ADR 0007),
+seccomp-notify state (`notify` enabled, `supported` + `reason`, the per-call
+`cap`, the `filter_version`; ADR 0006), SSH defaults (known-hosts mode,
+connect/keepalive/idle timeouts), inventory size. Tier 0.
 
 Tests: `tests/test_tool_wrappers.py`, `tests/test_stdio_e2e.py`.
 
@@ -215,6 +220,27 @@ declares, even if an entry in the inventory file overrides the same
 alias's spec - the resource describes the file, not the merged map.
 
 Tests: `tests/test_resources.py`.
+
+## Syscall-notify audit events (ADR 0006)
+
+When `RELAY_SHELL_SECCOMP_NOTIFY=true` and the host supports it (Linux /
+`x86_64` / kernel ≥ 5.5 / `CAP_SYS_ADMIN`), a locally-spawned child
+(`shell_exec` / `shell_script` / `ssh_keyscan`) is observed by a seccomp
+user-notify supervisor that appends *additional* audit lines to the same
+JSONL stream. These never replace the per-call tool record - they are a
+distinct, narrower shape keyed on `tool`, so log shippers and the ADR 0007
+hash chain handle them like any other line:
+
+| audit `tool`              | fields beyond `ts`/`tool`/`tier`/`request_id`                          | meaning                                                                                                   |
+|---------------------------|------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| `syscall_notify`          | `pid`, `syscall`, `nr`, `syscall_args` (six raw scalar register values)| one observed-and-continued syscall in the child (`execve`, a privilege/namespace/mount change, a write-`open`). No user buffer is dereferenced. |
+| `syscall_notify_overflow` | `pid`, `cap`                                                           | emitted once when the child crosses `RELAY_SHELL_SECCOMP_NOTIFY_CAP`; beyond it, emission stops but the child still runs to completion. |
+
+Both are tier 0 (passive observations, not tool calls), and the channel
+**never blocks** a syscall. Default off; when unsupported it cleanly no-ops
+and `server_info.seccomp.supported` is `false` with a `reason`.
+
+Tests: `tests/test_seccomp.py`.
 
 ## Interactive pattern
 

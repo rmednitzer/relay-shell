@@ -87,6 +87,7 @@ inventing scope mid-PR.
 - `src/relay_shell/redaction.py`: argument secret scrubbing (consumes `patterns`)
 - `src/relay_shell/patterns.py`: version-pinned compiled regex tables for redaction + tier classification (`PATTERNS_VERSION` is a monotonic counter)
 - `src/relay_shell/metrics.py`: in-memory Prometheus counter + gauge registry rendered at `GET /metrics` (HTTP only)
+- `src/relay_shell/seccomp.py`: opt-in, audit-only seccomp-notify channel (ADR 0006); `CAP_SYS_ADMIN`-gated BPF USER_NOTIF filter + per-call supervisor that appends `syscall_notify` lines, never blocking. `SECCOMP_FILTER_VERSION` is a monotonic counter
 - `src/relay_shell/errors.py`: `RelayError` hierarchy and uniform `[ERROR: ...]` formatter
 - `src/relay_shell/shelltools.py`: one-shot local command/script execution
 - `src/relay_shell/sessions.py`: local PTY transport + unified session registry

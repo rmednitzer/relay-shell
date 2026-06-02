@@ -19,6 +19,8 @@ from relay_shell.metrics import (
     ACTIVE_FORWARDS,
     ACTIVE_SESSIONS,
     AUDIT_DEGRADED,
+    SECCOMP_NOTIFY_EVENTS_TOTAL,
+    SECCOMP_NOTIFY_OVERFLOW_TOTAL,
     TOOL_CALLS_TOTAL,
     Metrics,
 )
@@ -83,9 +85,30 @@ def test_register_gauge_rejects_unknown_or_counter_metric() -> None:
 def test_render_emits_every_metric_block() -> None:
     m = Metrics()
     text = m.render()
-    for name in (TOOL_CALLS_TOTAL, ACTIVE_SESSIONS, ACTIVE_FORWARDS, AUDIT_DEGRADED):
+    for name in (
+        TOOL_CALLS_TOTAL,
+        SECCOMP_NOTIFY_EVENTS_TOTAL,
+        SECCOMP_NOTIFY_OVERFLOW_TOTAL,
+        ACTIVE_SESSIONS,
+        ACTIVE_FORWARDS,
+        AUDIT_DEGRADED,
+    ):
         assert f"# HELP {name}" in text
         assert f"# TYPE {name}" in text
+
+
+def test_seccomp_counters_increment_and_render() -> None:
+    m = Metrics()
+    m.inc_seccomp_event(syscall="execve")
+    m.inc_seccomp_event(syscall="execve")
+    m.inc_seccomp_event(syscall="openat")
+    m.inc_seccomp_overflow()
+    text = m.render()
+    assert f"# TYPE {SECCOMP_NOTIFY_EVENTS_TOTAL} counter" in text
+    assert f'{SECCOMP_NOTIFY_EVENTS_TOTAL}{{syscall="execve"}} 2' in text
+    assert f'{SECCOMP_NOTIFY_EVENTS_TOTAL}{{syscall="openat"}} 1' in text
+    # The overflow counter is unlabelled.
+    assert f"{SECCOMP_NOTIFY_OVERFLOW_TOTAL} 1" in text
 
 
 # --- HTTP /metrics route + Relay integration --------------------------------

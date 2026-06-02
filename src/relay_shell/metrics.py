@@ -23,12 +23,16 @@ from threading import Lock
 # Public metric names. Kept here as constants so docs/tests can reference
 # them without hard-coding the strings in three places.
 TOOL_CALLS_TOTAL = "relay_shell_tool_calls_total"
+SECCOMP_NOTIFY_EVENTS_TOTAL = "relay_shell_seccomp_notify_events_total"
+SECCOMP_NOTIFY_OVERFLOW_TOTAL = "relay_shell_seccomp_notify_overflow_total"
 ACTIVE_SESSIONS = "relay_shell_active_sessions"
 ACTIVE_FORWARDS = "relay_shell_active_forwards"
 AUDIT_DEGRADED = "relay_shell_audit_degraded"
 
 _HELP: dict[str, str] = {
     TOOL_CALLS_TOTAL: "Total tool invocations, labelled by tool/tier/mode/outcome.",
+    SECCOMP_NOTIFY_EVENTS_TOTAL: "Total seccomp-notify syscall observations, labelled by syscall.",
+    SECCOMP_NOTIFY_OVERFLOW_TOTAL: "Total tool calls whose syscall-notify per-call cap was hit.",
     ACTIVE_SESSIONS: "Current count of live local/SSH PTY sessions.",
     ACTIVE_FORWARDS: "Current count of live SSH port forwards.",
     AUDIT_DEGRADED: "1 if the audit sink is degraded; 0 otherwise.",
@@ -36,12 +40,19 @@ _HELP: dict[str, str] = {
 
 _TYPES: dict[str, str] = {
     TOOL_CALLS_TOTAL: "counter",
+    SECCOMP_NOTIFY_EVENTS_TOTAL: "counter",
+    SECCOMP_NOTIFY_OVERFLOW_TOTAL: "counter",
     ACTIVE_SESSIONS: "gauge",
     ACTIVE_FORWARDS: "gauge",
     AUDIT_DEGRADED: "gauge",
 }
 
 # Order matters: HELP+TYPE+samples block per metric, then the next metric.
+_COUNTER_ORDER: tuple[str, ...] = (
+    TOOL_CALLS_TOTAL,
+    SECCOMP_NOTIFY_EVENTS_TOTAL,
+    SECCOMP_NOTIFY_OVERFLOW_TOTAL,
+)
 _GAUGE_ORDER: tuple[str, ...] = (ACTIVE_SESSIONS, ACTIVE_FORWARDS, AUDIT_DEGRADED)
 
 _LabelKey = tuple[tuple[str, str], ...]
@@ -87,6 +98,19 @@ class Metrics:
         with self._lock:
             self._counters[TOOL_CALLS_TOTAL][labels] += 1
 
+    def inc_seccomp_event(self, *, syscall: str) -> None:
+        """Bump the per-syscall seccomp-notify counter. ``syscall`` is from the
+        fixed notified set (see :data:`relay_shell.seccomp.NOTIFIED_SYSCALLS`),
+        never a user-controlled string, so label cardinality stays bounded."""
+        labels: _LabelKey = (("syscall", syscall),)
+        with self._lock:
+            self._counters[SECCOMP_NOTIFY_EVENTS_TOTAL][labels] += 1
+
+    def inc_seccomp_overflow(self) -> None:
+        """Bump the seccomp-notify per-call-cap-exceeded counter (no labels)."""
+        with self._lock:
+            self._counters[SECCOMP_NOTIFY_OVERFLOW_TOTAL][()] += 1
+
     def register_gauge(self, name: str, provider: Callable[[], float]) -> None:
         if name not in _TYPES or _TYPES[name] != "gauge":
             raise ValueError(f"unknown or non-gauge metric: {name!r}")
@@ -105,7 +129,7 @@ class Metrics:
 
         # Counter block(s).
         counters = self.snapshot_counters()
-        for name in (TOOL_CALLS_TOTAL,):
+        for name in _COUNTER_ORDER:
             lines.append(f"# HELP {name} {_HELP[name]}")
             lines.append(f"# TYPE {name} {_TYPES[name]}")
             for label_tuple, value in sorted(counters.get(name, {}).items()):
