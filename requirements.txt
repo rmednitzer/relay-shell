@@ -17,5 +17,5 @@ cryptography==48.0.0
 # dev / CI
 pytest==9.0.3
 pytest-asyncio==1.4.0
-ruff==0.15.14
+ruff==0.15.15
 mypy==2.1.0
