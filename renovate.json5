@@ -1,0 +1,25 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:best-practices',
+    ':semanticCommits',
+    ':timezone(Europe/Vienna)',
+  ],
+  labels: [
+    'dependencies',
+  ],
+  // Renovate is the sole dependency-update tool for this repo. Dependabot
+  // version updates retired (.github/dependabot.yml removed); GitHub Dependabot
+  // security alerts remain for detection, Renovate raises vuln-fix PRs.
+  prConcurrentLimit: 5,
+  prHourlyLimit: 2,
+  packageRules: [
+    {
+      matchUpdateTypes: ['minor', 'patch', 'digest'],
+      groupName: 'minor and patch',
+    },
+  ],
+  vulnerabilityAlerts: {
+    labels: ['security'],
+  },
+}
