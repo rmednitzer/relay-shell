@@ -4,22 +4,17 @@
     'config:best-practices',
     ':semanticCommits',
     ':timezone(Europe/Vienna)',
+    'schedule:weekly',
   ],
-  labels: [
-    'dependencies',
-  ],
-  // Renovate is the sole dependency-update tool for this repo. Dependabot
-  // version updates retired (.github/dependabot.yml removed); GitHub Dependabot
-  // security alerts remain for detection, Renovate raises vuln-fix PRs.
+  labels: ['dependencies'],
   prConcurrentLimit: 5,
   prHourlyLimit: 2,
   packageRules: [
     {
       matchUpdateTypes: ['minor', 'patch', 'digest'],
-      groupName: 'minor and patch',
+      groupName: 'minor and patch updates',
     },
   ],
-  vulnerabilityAlerts: {
-    labels: ['security'],
-  },
+  lockFileMaintenance: { enabled: true, schedule: ['before 5am on monday'] },
+  vulnerabilityAlerts: { labels: ['security'] },
 }
