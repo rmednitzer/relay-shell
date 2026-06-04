@@ -139,7 +139,7 @@ Configuration is environment-driven; see [`.env.example`](.env.example) and
 | Host OS (dev)     | macOS                                                      | Unsupported for production; `pty`/SSH paths work for local development.                |
 | Host OS (other)   | Windows                                                    | Out of scope — no PTY contract, no systemd integration.                                |
 | Transports        | `stdio`, `streamable-http`                                 | Stdio is the default. HTTP binds loopback and requires a TLS edge (see `deployment.md`). |
-| SDK               | `mcp==1.27.1`                                              | Pinned (ADR 0001); Dependabot-tracked; bumps trigger a fresh validation pass.          |
+| SDK               | `mcp==1.27.1`                                              | Pinned (ADR 0001); Renovate-tracked; bumps trigger a fresh validation pass.          |
 | SSH library       | `asyncssh>=2.18` (tested at 2.23.0)                        | Native async; no shell-out to system `ssh`.                                            |
 
 ## Security posture
