@@ -1,0 +1,20 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:best-practices',
+    ':semanticCommits',
+    ':timezone(Europe/Vienna)',
+    'schedule:weekly',
+  ],
+  labels: ['dependencies'],
+  prConcurrentLimit: 5,
+  prHourlyLimit: 2,
+  packageRules: [
+    {
+      matchUpdateTypes: ['minor', 'patch', 'digest'],
+      groupName: 'minor and patch updates',
+    },
+  ],
+  lockFileMaintenance: { enabled: true, schedule: ['before 5am on monday'] },
+  vulnerabilityAlerts: { labels: ['security'] },
+}
