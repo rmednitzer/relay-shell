@@ -23,7 +23,7 @@ classifiers = [
   "Topic :: System :: Shells",
 ]
 dependencies = [
-  "mcp==1.27.1",
+  "mcp==1.27.2",
   "pydantic>=2.11",
   "pydantic-settings>=2.7",
   "asyncssh>=2.18",
