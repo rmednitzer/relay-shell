@@ -30,6 +30,23 @@ numbers are intentionally omitted — they drift; the file name is the
 stable handle. The tool-list contract itself lives in
 `tests/test_server.py`.
 
+## Choosing a tool
+
+The same guidance the server hands the client at initialize (the FastMCP
+`instructions` string) and in each tool's description:
+
+- A command that **runs and exits on its own** → `shell_exec` (local) or
+  `ssh_exec` (remote). **Several statements** or a non-bash interpreter →
+  `shell_script`.
+- **Interactive or long-lived** work that needs a real TTY (a REPL, a TUI, a
+  pager, a password prompt, a job you watch) → `shell_spawn` (local) or
+  `ssh_spawn` (remote), then drive the returned session id with the
+  `session_*` tools. Spawning and the session tools are **one workflow**, not
+  alternatives: the spawn creates the PTY; `session_send` / `session_recv`
+  drive it; `session_resize` / `session_kill` / `session_list` manage it.
+- **Across many hosts** → `ssh_fanout` (and `ssh_check` / `ssh_hosts` to
+  discover and probe first).
+
 ## Local shell
 
 ### `shell_exec`

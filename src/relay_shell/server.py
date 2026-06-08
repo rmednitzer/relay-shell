@@ -314,7 +314,12 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         env_json: str = "",
         ctx: Context | None = None,
     ) -> str:
-        """Run a shell command on the local host and return its combined output.
+        """Run one non-interactive shell command on the local host; returns its combined output.
+
+        Use for a command that runs and exits on its own. For an interactive
+        or long-lived program that needs a TTY (a REPL, a pager, a prompt) use
+        ``shell_spawn``; for several statements or a non-bash interpreter use
+        ``shell_script``.
 
         Timeout and output size are clamped to the server limits. Set
         ``use_shell=false`` to exec an argv without a shell.
@@ -355,7 +360,11 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         env_json: str = "",
         ctx: Context | None = None,
     ) -> str:
-        """Run a multi-line script (bash/sh/python) fed on stdin.
+        """Run a multi-line script (bash/sh/python) fed on stdin; returns its output.
+
+        Use when you have several statements or need a non-bash interpreter.
+        For a single command use ``shell_exec``; for interactive or long-lived
+        work that needs a TTY use ``shell_spawn``.
 
         With ``strict`` and a shell interpreter, ``set -euo pipefail`` is
         prepended so failures abort early.
@@ -400,7 +409,13 @@ def build_server(settings: Settings | None = None) -> FastMCP:
     ) -> str:
         """Start a persistent local PTY session; returns a session id.
 
-        Drive it with ``session_send`` / ``session_recv``.
+        Use when the work is interactive or long-lived and needs a real TTY: a
+        REPL or TUI, a program that prompts (including a sudo password), or a
+        job you start and watch. Drive the returned id with ``session_send`` /
+        ``session_recv`` (``session_resize`` / ``session_kill`` /
+        ``session_list`` to manage it) - spawning and the session tools are one
+        workflow, not alternatives. For a one-shot command that just runs and
+        exits, use ``shell_exec`` instead.
         """
 
         async def _work() -> tuple[str, int | None]:
@@ -452,7 +467,12 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         jump: str = "",
         ctx: Context | None = None,
     ) -> str:
-        """Run a command on a remote host over SSH and return its output.
+        """Run one non-interactive command on a remote host over SSH; returns its output.
+
+        Use for a remote command that runs and exits on its own. For an
+        interactive or long-lived remote program that needs a TTY use
+        ``ssh_spawn``; to run one command across many hosts at once use
+        ``ssh_fanout``.
 
         ``host`` may be an inventory/ssh_config alias or ``user@host``.
         ``known_hosts`` is ``strict`` | ``accept-new`` | ``ignore``.
@@ -481,7 +501,14 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         jump: str = "",
         ctx: Context | None = None,
     ) -> str:
-        """Open a persistent interactive PTY on a remote host; returns a session id."""
+        """Open a persistent interactive PTY on a remote host; returns a session id.
+
+        Use when the remote work is interactive or long-lived and needs a real
+        TTY (a remote shell, a REPL, a program that prompts). Drive the returned
+        id with ``session_send`` / ``session_recv``, exactly like a local
+        ``shell_spawn`` session. For a one-shot remote command, use ``ssh_exec``
+        instead.
+        """
         ck = app.connect_kwargs(user, port, key_path, known_hosts, jump)
 
         async def _work() -> tuple[str, int | None]:
@@ -1265,17 +1292,25 @@ def build_server(settings: Settings | None = None) -> FastMCP:
 _INSTRUCTIONS = """\
 relay-shell - shell and SSH operations.
 
-Local: shell_exec (one-shot), shell_script (multi-line), shell_spawn (PTY).
-SSH:   ssh_exec, ssh_spawn, ssh_upload, ssh_download, ssh_forward,
-       ssh_forward_list, ssh_forward_close, ssh_check, ssh_hosts,
-       ssh_keyscan (pre-populate known_hosts), ssh_fanout (parallel exec
-       across a host list).
-PTY sessions (local or ssh) are driven by session_send, session_recv,
-session_resize, session_kill, session_list.
-Diagnostics: server_info reports limits and policy mode; audit_tail
-returns the last N audit records.
+Choosing a tool:
+- A command that runs and exits on its own -> shell_exec (local) or
+  ssh_exec (remote). Several statements or a non-bash interpreter ->
+  shell_script.
+- Interactive or long-lived work that needs a real TTY (a REPL, a TUI, a
+  pager, a password prompt, a job you watch) -> shell_spawn (local) or
+  ssh_spawn (remote). These return a session id; drive it with session_send
+  and session_recv, and manage it with session_resize, session_kill, and
+  session_list. Spawning and the session tools are one workflow, not
+  alternatives: the spawn creates the PTY, the session tools drive it.
+- Move files with ssh_upload / ssh_download; tunnel ports with ssh_forward
+  (inspect and close via ssh_forward_list / ssh_forward_close).
+- Before fleet work, list hosts with ssh_hosts and probe them with
+  ssh_check; run one command across many hosts with ssh_fanout; seed
+  known_hosts with ssh_keyscan.
+
+Diagnostics: server_info reports limits and policy mode; audit_tail returns
+the last N audit records.
 
 Every call is tier-classified, bounded (timeout + output caps), and appended
-to an append-only audit log (output is hashed, never stored). Prefer
-ssh_hosts/ssh_check before fleet operations.
+to an append-only audit log (output is hashed, never stored).
 """
