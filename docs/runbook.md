@@ -827,6 +827,8 @@ by the same checklist.
   - Runbook link under "AI contributor guidance".
   - `/metrics` paragraph under Diagnostics.
   - Resources subsection.
+  - Prompts subsection (the `operating_guide` prompt, audited like a
+    resource read; ADR 0008).
   - Status line under the title (version, Python matrix, transports,
     last validation date with ADR pointer).
   - Compatibility matrix block (Python / host OS / transport / SDK /
@@ -901,6 +903,8 @@ by the same checklist.
   - Tier reference sidebar at the top of the file.
   - Resources section listing the three `relay-shell://...` URIs and
     the stable audit `tool` names.
+  - Prompts section listing the `operating_guide` prompt and its stable
+    audit `tool` name (`prompt:operating_guide`); ADR 0008.
   - Per-tool "Tests: ..." line giving the test file(s) that exercise
     each tool (file paths only - lines drift).
 - Remove: nothing.

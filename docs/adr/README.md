@@ -27,6 +27,7 @@ top. Status values:
 | [0005](0005-codebase-validation.md) | Codebase validation against known-good sources | Accepted | 2026-05-24 | A repeatable validation pass against the upstream `mcp` / `asyncssh` / OAuth surfaces, the audit record schema, and the documented redaction / tier behavior. A running record that appends a dated outcome per pass: 2026-05-24 (three documentation-drift findings), 2026-05-31 (F-004, redaction coverage for bare provider-token shapes), and 2026-06-01 (F-005 C-005 runbook drift; the ADR 0007 audit hash-chain landed in the same pass). |
 | [0006](0006-seccomp-notify-audit-channel.md) | Syscall-level audit channel via seccomp-bpf notification mode | Accepted | 2026-06-02 | An audit-only seccomp-bpf channel (notify-mode, never blocking) that closes the audit gap on the child side of `asyncio.create_subprocess_*` without re-introducing a sandbox. Shipped in `src/relay_shell/seccomp.py` (pure `ctypes`, no new deps): opt-in via `RELAY_SHELL_SECCOMP_NOTIFY` (default off), `CAP_SYS_ADMIN`-gated so set-uid/`sudo` posture is preserved verbatim, Linux/`x86_64`/kernel ≥ 5.5, additive `syscall_notify` / `syscall_notify_overflow` audit lines (extend the ADR 0007 chain) plus two bounded `/metrics` counters. Proposed 2026-05-24; accepted with the implementing PR (runbook §7.5 B-021). |
 | [0007](0007-audit-hash-chain.md) | Tamper-evident audit log via per-record hash chaining | Accepted | 2026-06-01 | An opt-in (`RELAY_SHELL_AUDIT_CHAIN`, default off), additive per-record hash chain (`seq`/`prev`/`chain`) that makes edits, insertions, reorders, and interior deletions of the on-disk audit log detectable by recomputation; the fail-closed `relay-shell --verify-audit` also rejects a missing / empty / head-truncated log by default (`--segment` for a rotation segment; tail-truncation needs the off-host copy) — closing the integrity gap left by `chattr +a` + off-host shipping against the ADR 0002 residual-risk attacker. `jsonl` only; a CLI verb, not an MCP tool. |
+| [0008](0008-operating-guidance-prompt.md) | Operating-guidance MCP prompt, audited like a resource read | Accepted | 2026-06-08 | Adds one MCP prompt (`operating_guide`) as the canonical home for detailed "when to use which tool" guidance (one-shot vs PTY session, the spawn+`session_*` workflow, fleet/transfer entry points), beyond the concise `instructions` string and per-tool descriptions. A fetch is a model-context pull, so it is audited (tier 0, stable `tool="prompt:<name>"`) and bounded by the same `max_output` cap, bypassing `Relay.run` exactly as resource reads do; `prompts/list` returns metadata only and does not audit. No audit-record-shape change — only a new `prompt:` `tool` namespace alongside `resource:` / `syscall_notify`. |
 
 ## When to write an ADR
 
@@ -44,7 +45,7 @@ runbook §6 has recipes per case.
 
 ## How to write one
 
-1. Number sequentially. Next free number is **0008**.
+1. Number sequentially. Next free number is **0009**.
 2. Filename pattern: `NNNN-short-slug.md`.
 3. Required header:
 

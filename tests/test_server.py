@@ -145,3 +145,39 @@ def test_server_instructions_mentions_every_tool() -> None:
     assert not missing, f"_INSTRUCTIONS omits registered tools: {sorted(missing)}"
     extras = mentioned - _EXPECTED
     assert not extras, f"_INSTRUCTIONS mentions unknown tools: {sorted(extras)}"
+
+
+def test_instructions_carry_tool_selection_guidance() -> None:
+    """``_INSTRUCTIONS`` gives the client criteria for picking a tool, not just a list.
+
+    Listing every tool (the C-004 guard above) is necessary but not
+    sufficient: the selection cliff this guidance closes is one-shot exec vs a
+    persistent PTY session, plus the fact that spawning and the ``session_*``
+    tools are one workflow rather than alternatives. Assert those cues are
+    present so a future trim of the hint string does not silently drop them.
+    """
+    from relay_shell import server as srv
+
+    text = srv._INSTRUCTIONS.lower()
+    assert "choosing a tool" in text
+    assert "runs and exits" in text  # the one-shot criterion
+    assert "tty" in text  # the interactive/PTY criterion
+    assert "one workflow" in text  # spawn + session_* are not alternatives
+
+
+async def test_mode_selection_tools_cross_reference(settings: Settings) -> None:
+    """The exec/spawn tool descriptions disambiguate each other.
+
+    FastMCP surfaces the whole docstring as the tool ``description``, so the
+    "use this; for the other case use X" pointer rides on the tool itself. A
+    model weighing a one-shot command against a persistent PTY should see the
+    alternative named in either direction, locally and over SSH.
+    """
+    mcp = build_server(settings)
+    desc = {t.name: (t.description or "") for t in await mcp.list_tools()}
+    # Local: one-shot <-> PTY session cross-reference.
+    assert "shell_spawn" in desc["shell_exec"]
+    assert "shell_exec" in desc["shell_spawn"]
+    # SSH: one-shot <-> PTY session cross-reference.
+    assert "ssh_spawn" in desc["ssh_exec"]
+    assert "ssh_exec" in desc["ssh_spawn"]

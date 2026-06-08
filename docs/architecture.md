@@ -79,7 +79,7 @@ syscall and is default off, so the lifecycle above is otherwise unchanged.
 | `sshpool` | asyncssh connection cache, exec, SFTP, forwarding, PTY adapter. |
 | `auth/oauth` | Optional file-backed OAuth 2.1 provider (HTTP only). |
 | `verifier` | Drift-detection comparator powering `relay-shell --verify-deploy`. |
-| `server` | FastMCP assembly, the audited runner, all tool + resource definitions. |
+| `server` | FastMCP assembly, the audited runner, all tool, resource + prompt definitions. |
 | `__main__` | Entrypoint; stderr-only logging; transport selection; `--check-config` / `--verify-deploy` CLI flags. |
 
 The canonical list of registered tools lives in
@@ -101,12 +101,14 @@ The five `Relay.run` steps above correspond to specific call sites in
 | 4 Bound | `truncate(body, self.clamp_output(max_output))` from `util.truncate`. |
 | 5 Audit | `self.audit.record(...)` from `audit.AuditLogger.record`. |
 
-Resource reads (`relay-shell://...`) do not flow through `Relay.run` -
-there is no work to admit, time out, or truncate. They are still
-audited with `tool="resource:<name>"` and `tier=0` so the operator
-sees what context the model is pulling in. The `Relay.run` body, the
-resource handlers, and (when `RELAY_SHELL_SECCOMP_NOTIFY` is enabled) the
-seccomp-notify supervisor are the only places where audit records are
+Resource reads (`relay-shell://...`) and prompt fetches (`prompts/get`)
+do not flow through `Relay.run` - there is no work to admit, time out,
+or truncate. They are still audited with `tool="resource:<name>"` /
+`tool="prompt:<name>"` and `tier=0` so the operator sees what context
+the model is pulling in ([ADR 0008](adr/0008-operating-guidance-prompt.md)
+covers the prompt surface). The `Relay.run` body, the resource handlers,
+the prompt handlers, and (when `RELAY_SHELL_SECCOMP_NOTIFY` is enabled)
+the seccomp-notify supervisor are the only places where audit records are
 produced.
 
 ## Concurrency and resource model
