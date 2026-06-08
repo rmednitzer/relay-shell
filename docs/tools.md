@@ -238,6 +238,27 @@ alias's spec - the resource describes the file, not the merged map.
 
 Tests: `tests/test_resources.py`.
 
+## Prompts
+
+A prompt is reusable, client-pullable guidance — the protocol-native home for
+*detailed* "when to use which tool" instructions (the concise version is the
+FastMCP `instructions` string handed to every client at initialize). One is
+registered:
+
+| name              | audit `tool`              | meaning                                                              |
+|-------------------|---------------------------|----------------------------------------------------------------------|
+| `operating_guide` | `prompt:operating_guide`  | How to choose and drive the tools: one-shot command vs persistent PTY session, the spawn+`session_*` workflow, fleet / file-transfer entry points, and the bounded, audited execution model with its error grammar. |
+
+Like a resource read, a prompt fetch does **not** flow through `Relay.run`
+(there is no work to admit, time out, or truncate) but **is** audited as tier 0
+so the operator sees what context the model pulls in. The audit `tool` is the
+**stable** `prompt:<name>` label; the body is hashed (never written) and
+bounded by the same `max_output` cap tools and resources observe.
+`prompts/list` returns metadata only and is not audited — the audit fires on
+`prompts/get`. See [`adr/0008-operating-guidance-prompt.md`](adr/0008-operating-guidance-prompt.md).
+
+Tests: `tests/test_prompts.py`.
+
 ## Syscall-notify audit events (ADR 0006)
 
 When `RELAY_SHELL_SECCOMP_NOTIFY=true` and the host supports it (Linux /

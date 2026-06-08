@@ -1280,6 +1280,56 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         _audit_resource_read("ssh-config", body)
         return body
 
+    # --- MCP prompts --------------------------------------------------------
+    #
+    # A prompt is reusable, client-pullable guidance - the protocol-native home
+    # for *detailed* "when to use which tool" instructions (the FastMCP
+    # `instructions` string carries the concise version surfaced at initialize).
+    # Like a resource read, a prompt fetch does NOT flow through `Relay.run`:
+    # there is no work to admit, time out, or truncate. But a fetch IS a
+    # model-context pull, so it is audited (tier 0, tool="prompt:<name>") to
+    # preserve the invariant that every context the model pulls in is visible
+    # to the operator. The body is bounded by the same `max_output` cap
+    # resources observe. See ADR 0008.
+    #
+    # `list_prompts` returns metadata only and never calls the function, so the
+    # audit fires on `prompts/get` (a real fetch), not on discovery - mirroring
+    # how resource reads are audited on read, not on listing.
+
+    def _audit_prompt_read(name: str, body: str) -> None:
+        tool_label = f"prompt:{name}"
+        # No user-controlled arguments enter this prompt, so args is empty and
+        # the tool label is a stable constant (cardinality stays bounded for
+        # audit/metrics consumers, same contract as the resource reads above).
+        app.audit.record(
+            tool=tool_label,
+            args={},
+            output=body,
+            exit_code=None,
+            tier=0,
+        )
+        app.metrics.inc_tool_call(
+            tool=tool_label,
+            tier=0,
+            mode=app.settings.policy_mode,
+            outcome="ok",
+        )
+
+    @mcp.prompt(
+        name="operating_guide",
+        title="relay-shell operating guide",
+        description=(
+            "How to drive relay-shell: choosing between a one-shot command and "
+            "a persistent PTY session, the spawn+session workflow, the fleet "
+            "and file-transfer entry points, and the bounded, audited execution "
+            "model to expect. Pull this when deciding which tool to use."
+        ),
+    )
+    def _prompt_operating_guide() -> str:
+        body = truncate(_OPERATING_GUIDE, _resource_cap)
+        _audit_prompt_read("operating_guide", body)
+        return body
+
     # Expose the constructed Relay so `__main__` can wire graceful shutdown
     # (sessions + ssh pool teardown) and `--check-config` can read the audit
     # degraded flag without constructing a second Relay (which would open
@@ -1313,4 +1363,78 @@ the last N audit records.
 
 Every call is tier-classified, bounded (timeout + output caps), and appended
 to an append-only audit log (output is hashed, never stored).
+"""
+
+
+# Detailed operating guide served by the `operating_guide` MCP prompt. The
+# `_INSTRUCTIONS` string above is the concise version handed to every client at
+# initialize; this is the longer, client-pullable form (ADR 0008).
+_OPERATING_GUIDE = """\
+relay-shell operating guide
+===========================
+
+relay-shell exposes local shell and SSH operations as MCP tools. Every call is
+classified into a tier, bounded by a timeout and an output cap, and appended to
+an append-only audit log (the output body is hashed, never stored). Tools never
+raise into the transport; failures come back as bounded strings.
+
+Choosing a tool
+---------------
+- A command that runs and exits on its own -> shell_exec (local) or
+  ssh_exec (remote). This is the one-shot, non-interactive path.
+- Several statements, or a non-bash interpreter (sh/python) -> shell_script.
+- Interactive or long-lived work that needs a real TTY - a REPL or TUI, a
+  pager, a program that prompts (including a sudo password), or a job you
+  start and watch -> shell_spawn (local) or ssh_spawn (remote). These return a
+  session id.
+- One command across many hosts at once -> ssh_fanout.
+
+Spawn and sessions are one workflow, not alternatives
+-----------------------------------------------------
+shell_spawn / ssh_spawn create a PTY and return a session id; the session
+tools then drive that id:
+  session_send   - send input (enter=true appends a newline)
+  session_recv   - read new/buffered output, waiting up to timeout
+  session_resize - resize the PTY (cols x rows)
+  session_kill   - signal and (default) reap the session
+  session_list   - list active sessions with size/age/idle counters
+A typical loop:
+  id = shell_spawn(command="/bin/bash")
+  session_send(id, "kubectl get pods")
+  session_recv(id, timeout=3)
+  session_kill(id)
+
+Working with a fleet
+--------------------
+- ssh_hosts    list the resolved inventory (~/.ssh/config + the optional
+               inventory file).
+- ssh_check    probe connectivity (whole inventory, or a host list).
+- ssh_fanout   run one command across many hosts; per-host exit codes in one
+               JSON object.
+- ssh_keyscan  fetch host public keys to pre-populate known_hosts so a service
+               account can run the strict known-hosts mode unattended.
+A host is an inventory/ssh_config alias or user@host. known_hosts is
+strict | accept-new | ignore.
+
+Moving data and ports
+---------------------
+- ssh_upload / ssh_download   SFTP transfer (recursive supported).
+- ssh_forward                 local (L), remote (R), or dynamic SOCKS (D)
+                              forward; ssh_forward_list / ssh_forward_close
+                              inspect and close active forwards.
+
+Diagnostics
+-----------
+- server_info  version, effective limits, policy mode, audit path and state.
+- audit_tail   the last N audit records (read-only).
+
+What a result can look like
+---------------------------
+- [exit N] followed by output             a command that completed.
+- [DENIED tier N (NAME): reason]          refused by policy (depends on
+                                          RELAY_SHELL_POLICY_MODE and the
+                                          deny/allow lists).
+- [TIMEOUT after Ns]                      exceeded the clamped timeout.
+- [ERROR: ExcType: message]               any other failure, contained.
+- [TRUNCATED - N bytes total, M shown]    output exceeded the budget.
 """

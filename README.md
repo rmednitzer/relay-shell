@@ -97,6 +97,15 @@ the protocol-native way (no tool call needed):
 Resource reads are audited (tier 0). See
 [`docs/tools.md`](docs/tools.md) for the full reference.
 
+### Prompts
+
+One MCP prompt, `operating_guide`, carries the detailed "when to use which
+tool" guidance (one-shot command vs persistent PTY session, the spawn+session
+workflow, fleet and transfer entry points) — the protocol-native counterpart
+to the concise `instructions` string handed to clients at initialize. A fetch
+is audited (tier 0, `prompt:operating_guide`) like a resource read; listing is
+not ([ADR 0008](docs/adr/0008-operating-guidance-prompt.md)).
+
 Full reference: [`docs/tools.md`](docs/tools.md).
 
 ## Quickstart
