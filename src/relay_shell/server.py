@@ -37,7 +37,7 @@ from .inventory import Inventory
 from .metrics import ACTIVE_FORWARDS, ACTIVE_SESSIONS, AUDIT_DEGRADED, Metrics
 from .policy import Policy
 from .redaction import redact_args
-from .sessions import LocalPtyTransport, SessionRegistry
+from .sessions import LocalPtyTransport, Session, SessionRegistry, Transport
 from .shelltools import build_env, run_command, run_script, spawn_argv
 from .sshpool import SshPool
 from .util import clamp, truncate
@@ -95,6 +95,66 @@ def _ctx_ids(ctx: Context | None) -> tuple[str, str]:
     with contextlib.suppress(Exception):
         client_id = str(getattr(ctx, "client_id", "") or "")
     return request_id, client_id
+
+
+# --- policy_text builders (runbook R-002) ------------------------------------
+#
+# The admission contract is: every byte the executor will see, the policy
+# layer sees first (deny list, then the tier heuristics). Each tool with a
+# non-empty policy surface builds its probe text through exactly one function
+# here, so the contract is greppable per tool and pinned by
+# tests/test_tool_wrappers.py::test_policy_text_builders_*. A tool wrapper
+# never assembles policy text inline.
+
+
+def _policy_text_shell_exec(command: str, stdin: str, env_json: str) -> str:
+    """The command line, its stdin, and the env overlay (LD_PRELOAD, PATH...)."""
+    return "\n".join(part for part in (command, stdin, env_json) if part)
+
+
+def _policy_text_shell_script(script: str, env_json: str) -> str:
+    """The script body (it becomes the interpreter's stdin) and the env overlay."""
+    return "\n".join(part for part in (script, env_json) if part)
+
+
+def _policy_text_shell_spawn(command: str, env_json: str) -> str:
+    """The spawned command and the env overlay shaping the PTY's environment."""
+    return "\n".join(part for part in (command, env_json) if part)
+
+
+def _policy_text_ssh_exec(command: str) -> str:
+    """The remote command line, verbatim."""
+    return command
+
+
+def _policy_text_ssh_spawn(command: str) -> str:
+    """The remote command (empty means a plain login shell)."""
+    return command
+
+
+def _policy_text_ssh_fanout(command: str) -> str:
+    """The fanned-out command — identical probe text to a single ssh_exec."""
+    return command
+
+
+def _policy_text_session_send(data: str) -> str:
+    """The bytes written to the session's PTY (before the optional newline)."""
+    return data
+
+
+def _policy_text_ssh_upload(host: str, local_path: str, remote_path: str) -> str:
+    """A synthetic ``upload`` phrase naming both endpoints, for the deny list."""
+    return f"upload {local_path} {host}:{remote_path}"
+
+
+def _policy_text_ssh_download(host: str, remote_path: str, local_path: str) -> str:
+    """A synthetic ``download`` phrase naming both endpoints, for the deny list."""
+    return f"download {host}:{remote_path} {local_path}"
+
+
+def _policy_text_ssh_forward(spec: str) -> str:
+    """A synthetic ``forward`` phrase carrying the spec, for the deny list."""
+    return f"forward {spec}"
 
 
 class Relay:
@@ -182,9 +242,12 @@ class Relay:
         errored = False
         # Activate the per-call seccomp-notify monitor (ADR 0006) for the
         # duration of work(). It is None unless the channel is enabled AND
-        # supported; the local executor (shelltools) consults it when it
-        # spawns a child. A ContextVar keeps concurrent calls isolated and
-        # avoids threading the monitor through every tool's work closure.
+        # supported; the executors consult it when they spawn a child. A
+        # ContextVar keeps concurrent calls isolated and avoids threading the
+        # monitor through every tool's work closure. Whoever arms the monitor
+        # owns stopping it: the one-shot executor (shelltools) stops it when
+        # the call's child is reaped, a PTY transport (sessions) adopts it
+        # for the session's lifetime and stops it at close (B-026).
         monitor = self._seccomp_monitor(request_id)
         token = seccomp.set_active(monitor)
         try:
@@ -212,6 +275,27 @@ class Relay:
         outcome = "error" if errored else "ok"
         self.metrics.inc_tool_call(tool=tool, tier=int(decision.tier), mode=mode, outcome=outcome)
         return final
+
+    async def register_session(
+        self, *, kind: str, title: str, transport: Transport, cols: int, rows: int
+    ) -> Session:
+        """Admit a freshly-spawned transport into the session registry.
+
+        The shared registration path for ``shell_spawn`` / ``ssh_spawn``
+        (runbook R-003). If the registry refuses — typically the session
+        limit — the transport is closed before the error propagates, so the
+        already-spawned child is reaped instead of leaking unsupervised.
+        ``aclose()`` also releases the per-session seccomp monitor when one
+        is attached (B-026).
+        """
+        try:
+            return await self.sessions.add(
+                kind=kind, title=title, transport=transport, cols=cols, rows=rows
+            )
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await transport.aclose()
+            raise
 
     def connect_kwargs(
         self,
@@ -249,7 +333,10 @@ class Relay:
         the prerequisites (Linux/x86_64/kernel 5.5+/CAP_SYS_ADMIN), so the
         spawn path stays byte-identical. When active, every observed syscall
         is routed to the audit log (an additive ``syscall_notify`` line tied
-        to this ``request_id``) and the bounded ``/metrics`` counters.
+        to this ``request_id``) and the bounded ``/metrics`` counters. For a
+        PTY spawn the monitor outlives the call — the session transport
+        adopts it (B-026) — so its events keep carrying the *spawning*
+        call's ``request_id`` for the life of the session.
         """
         if not self.settings.seccomp_notify:
             return None
@@ -325,7 +412,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         ``use_shell=false`` to exec an argv without a shell.
         """
         t = app.clamp_timeout(timeout)
-        policy_text = "\n".join(part for part in (command, stdin, env_json) if part)
+        policy_text = _policy_text_shell_exec(command, stdin, env_json)
         return await app.run(
             tool="shell_exec",
             ctx=ctx,
@@ -370,11 +457,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         prepended so failures abort early.
         """
         t = app.clamp_timeout(timeout)
-        # policy_text mirrors shell_exec: every byte the executor will see
-        # must also be visible to the deny list. The script body becomes the
-        # interpreter's stdin; env_json shapes the process environment
-        # (e.g. LD_PRELOAD, PATH) and would otherwise bypass admission.
-        policy_text = "\n".join(part for part in (script, env_json) if part)
+        policy_text = _policy_text_shell_script(script, env_json)
         return await app.run(
             tool="shell_script",
             ctx=ctx,
@@ -423,7 +506,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             transport = await LocalPtyTransport.spawn(
                 argv, cwd=cwd or None, env=build_env(env_json), cols=cols, rows=rows
             )
-            sess = await app.sessions.add(
+            sess = await app.register_session(
                 kind="local",
                 title=" ".join(argv),
                 transport=transport,
@@ -436,10 +519,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                 None,
             )
 
-        # policy_text mirrors shell_exec: env_json shapes the spawned PTY's
-        # environment (LD_PRELOAD, PATH, ...) and must be visible to the
-        # deny list, not just the executor.
-        policy_text = "\n".join(part for part in (command, env_json) if part)
+        policy_text = _policy_text_shell_spawn(command, env_json)
         return await app.run(
             tool="shell_spawn",
             ctx=ctx,
@@ -483,7 +563,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             tool="ssh_exec",
             ctx=ctx,
             audit_args={"host": host, "command": command, "timeout": t, "jump": jump},
-            policy_text=command,
+            policy_text=_policy_text_ssh_exec(command),
             max_output=65536,
             work=lambda: app.ssh.run(host, command, timeout=t, connect_kwargs=ck),
         )
@@ -515,7 +595,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             transport = await app.ssh.open_process(
                 host, command=command, cols=cols, rows=rows, connect_kwargs=ck
             )
-            sess = await app.sessions.add(
+            sess = await app.register_session(
                 kind="ssh",
                 title=f"ssh {host}: {command or 'shell'}",
                 transport=transport,
@@ -528,7 +608,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             tool="ssh_spawn",
             ctx=ctx,
             audit_args={"host": host, "command": command or "shell", "size": f"{cols}x{rows}"},
-            policy_text=command,
+            policy_text=_policy_text_ssh_spawn(command),
             max_output=4096,
             work=_work,
         )
@@ -549,7 +629,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             tool="session_send",
             ctx=ctx,
             audit_args={"session_id": session_id, "data": data, "enter": enter},
-            policy_text=data,
+            policy_text=_policy_text_session_send(data),
             max_output=2048,
             work=_work,
         )
@@ -680,7 +760,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             tool="ssh_upload",
             ctx=ctx,
             audit_args={"host": host, "local": local_path, "remote": remote_path, "timeout": t},
-            policy_text=f"upload {local_path} {host}:{remote_path}",
+            policy_text=_policy_text_ssh_upload(host, local_path, remote_path),
             max_output=2048,
             work=_work,
         )
@@ -719,7 +799,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             tool="ssh_download",
             ctx=ctx,
             audit_args={"host": host, "remote": remote_path, "local": local_path, "timeout": t},
-            policy_text=f"download {host}:{remote_path} {local_path}",
+            policy_text=_policy_text_ssh_download(host, remote_path, local_path),
             max_output=2048,
             work=_work,
         )
@@ -754,7 +834,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             tool="ssh_forward",
             ctx=ctx,
             audit_args={"host": host, "spec": spec},
-            policy_text=f"forward {spec}",
+            policy_text=_policy_text_ssh_forward(spec),
             max_output=1024,
             work=_work,
         )
@@ -842,10 +922,9 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         list and ``guarded``/``readonly`` modes see the same probe text;
         ``ssh_fanout rm -rf /`` is still Tier 3 and still refused.
         """
-        # Policy text is the command itself so the existing tier
-        # heuristics fire identically to ssh_exec. Construct once,
-        # outside _work, so app.run() sees it before admitting.
-        policy_text = command
+        # Constructed once, outside _work, so app.run() sees it before
+        # admitting; the tier heuristics fire identically to ssh_exec.
+        policy_text = _policy_text_ssh_fanout(command)
 
         async def _work() -> tuple[str, int | None]:
             names = (

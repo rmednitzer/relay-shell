@@ -170,9 +170,12 @@ Safety is achieved with **compensating controls**, not by crippling the tool:
   ([ADR 0006](docs/adr/0006-seccomp-notify-audit-channel.md)) adds an
   audit-only seccomp **user-notify** channel that appends `syscall_notify`
   lines for a spawned child's `execve` / privilege / namespace / mount /
-  write-`open` syscalls. It **never blocks** a syscall and installs only with
-  `CAP_SYS_ADMIN` (never latching `no_new_privs`), so set-uid/`sudo` posture
-  is preserved verbatim — visibility added, capability untouched.
+  write-`open` / privilege-relevant `prctl` syscalls — for one-shot commands
+  and for `shell_spawn` PTY sessions, where the filter rides the session
+  child for the session's whole life. It **never blocks** a syscall and
+  installs only with `CAP_SYS_ADMIN` (never latching `no_new_privs`), so
+  set-uid/`sudo` posture is preserved verbatim — visibility added,
+  capability untouched.
 - **Tiered authority** - every call is classified Tier 0..3
   ([`docs/adr/0003-tiered-authority.md`](docs/adr/0003-tiered-authority.md)).
   `RELAY_SHELL_POLICY_MODE` selects `open` (default), `guarded`, or `readonly`.

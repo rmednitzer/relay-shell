@@ -214,7 +214,46 @@ implementation:
   at startup, and reflected by `--check-config`.
 - **Scope (v1).** The one-shot local executor (`shell_exec` / `shell_script`
   / `ssh_keyscan`). Long-lived PTY sessions and the SSH-local half are a
-  recorded follow-up (runbook §7.5).
+  recorded follow-up (runbook §7.5). *(Both resolved 2026-06-09; see the
+  follow-up section below.)*
+
+### Follow-ups landed 2026-06-09 (B-024, B-026; filter version 2)
+
+- **`prctl` option-filtering (B-024).** `prctl` joined the notified set,
+  gated on the privilege/capability-relevant `option` values the Decision
+  sketched: `PR_SET_DUMPABLE`, `PR_SET_KEEPCAPS`, `PR_SET_SECCOMP`,
+  `PR_CAPBSET_DROP`, `PR_SET_SECUREBITS`, `PR_SET_NO_NEW_PRIVS`,
+  `PR_CAP_AMBIENT` (the `PRCTL_NOTIFIED_OPTIONS` tuple in `seccomp.py`,
+  validated against a live host's `<linux/prctl.h>`). The filter assembler
+  gained an `eq-any` predicate on `args[0]` alongside the existing
+  write-flag predicate, so high-volume benign options (`PR_SET_NAME` from
+  thread naming, glibc's `PR_SET_VMA` tagging) never trap — the volume
+  concern that deferred this in v1. `SECCOMP_FILTER_VERSION` is now **2**.
+  The paired positive / near-miss tests run portably through a small
+  classic-BPF interpreter in `tests/test_seccomp.py` (near-misses include
+  the numerically-adjacent `GET` twins of each notified option), plus a
+  `seccomp`-marked live test driving a real child through one notified and
+  one near-miss `prctl`.
+- **PTY session coverage (B-026).** `sessions.LocalPtyTransport.spawn`
+  consults the same ambient per-call monitor the one-shot executor uses,
+  and the transport *adopts* it: the monitor is stopped in `aclose()` (and
+  on the spawn-failure path), not when the originating `shell_spawn` call
+  returns. The session child and everything it forks inherit the filter,
+  so commands typed *into* a session are observed; events keep the
+  spawning call's `request_id`, and the `RELAY_SHELL_SECCOMP_NOTIFY_CAP`
+  bound applies per session rather than per call. The off path is
+  byte-identical, as before.
+- **SSH-local half: resolved as vacuous.** The Context's "an SSH session's
+  local half" anticipated a local child on the SSH path; as implemented
+  there is none — `asyncssh` runs in-process and `sshpool.py` spawns no
+  subprocess (no `ProxyCommand` support is wired). There is nothing local
+  to observe, so no code change applies. If a local-subprocess proxy path
+  ever lands, the ambient-monitor pattern covers it the same way the PTY
+  path does.
+- Audit-record shape: **unchanged** (`syscall_notify` /
+  `syscall_notify_overflow` as accepted; `prctl` events are just a new
+  value in the existing `syscall` field, and the `/metrics` `syscall`
+  label set stays bounded by `NOTIFIED_SYSCALLS`).
 
 ## Operational notes (as accepted)
 

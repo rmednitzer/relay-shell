@@ -17,8 +17,10 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import socket
 import struct
+import sys
 from array import array
 from pathlib import Path
 
@@ -49,7 +51,9 @@ def test_platform_support_shape() -> None:
 
 def test_filter_version_is_pinned() -> None:
     assert isinstance(seccomp.SECCOMP_FILTER_VERSION, int)
-    assert seccomp.SECCOMP_FILTER_VERSION >= 1
+    # 2: prctl option-filtering joined the set (B-024). Any later filter /
+    # notified-set change must keep bumping this.
+    assert seccomp.SECCOMP_FILTER_VERSION >= 2
 
 
 def test_build_filter_is_well_formed() -> None:
@@ -88,8 +92,109 @@ def test_build_filter_covers_every_notified_syscall() -> None:
 def test_syscall_name_known_and_unknown() -> None:
     assert seccomp.syscall_name("x86_64", 59) == "execve"
     assert seccomp.syscall_name("x86_64", 257) == "openat"
+    assert seccomp.syscall_name("x86_64", 157) == "prctl"
     assert seccomp.syscall_name("x86_64", 424242) == "#424242"
     assert seccomp.syscall_name("sparc", 1) == "#1"  # unknown arch -> numeric
+
+
+def test_build_filter_rejects_empty_eq_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An eq-any spec with no values would assemble to a bare argument load
+    # falling through into the next block; build_filter must refuse.
+    bad = (seccomp._Notify("prctl", eq_arg=0, eq_values=()),)
+    monkeypatch.setattr(seccomp, "NOTIFIED_SYSCALLS", bad)
+    with pytest.raises(ValueError, match="eq_values"):
+        seccomp.build_filter("x86_64")
+
+
+# --- classic-BPF simulator: portable positive / near-miss semantics ----------
+#
+# The assembled program is pure data; interpreting it over a synthetic
+# ``seccomp_data`` asserts the real ALLOW/NOTIFY decision — argument
+# predicates included — on any host, without privilege. Implements exactly
+# the opcode set the assembler emits (LD_W_ABS, JEQ, JSET, JA, RET).
+
+
+def _run_bpf(prog: bytes, *, arch: int, nr: int, args: tuple[int, ...] = (0, 0, 0, 0, 0, 0)) -> int:
+    data = struct.pack("iIQ6Q", nr, arch, 0, *args)  # struct seccomp_data
+    instrs = [struct.unpack_from("HBBI", prog, i) for i in range(0, len(prog), 8)]
+    acc = 0
+    pc = 0
+    while pc < len(instrs):
+        code, jt, jf, k = instrs[pc]
+        if code == seccomp._LD_W_ABS:
+            (acc,) = struct.unpack_from("I", data, k)
+            pc += 1
+        elif code == seccomp._JEQ_K:
+            pc += 1 + (jt if acc == k else jf)
+        elif code == seccomp._JSET_K:
+            pc += 1 + (jt if acc & k else jf)
+        elif code == seccomp._JA:
+            pc += 1 + k
+        elif code == seccomp._RET_K:
+            return k
+        else:  # pragma: no cover - the assembler emits no other opcode
+            raise AssertionError(f"unexpected BPF opcode {code:#06x} at {pc}")
+    raise AssertionError("BPF program fell off the end")
+
+
+_SIM_ARCH = seccomp._AUDIT_ARCH_X86_64
+_SIM_NR = seccomp._SYSCALLS["x86_64"]
+_NOTIF = seccomp._SECCOMP_RET_USER_NOTIF
+_ALLOW = seccomp._SECCOMP_RET_ALLOW
+
+# Near-miss prctl options: benign / read-only siblings of the notified set,
+# including the numerically-adjacent GET twins that would fire on an
+# off-by-one in the eq-any keys.
+_PR_SET_PDEATHSIG = 1
+_PR_GET_DUMPABLE = 3
+_PR_SET_NAME = 15
+_PR_CAPBSET_READ = 23  # adjacent to PR_CAPBSET_DROP (24)
+_PR_GET_SECUREBITS = 27  # adjacent to PR_SET_SECUREBITS (28)
+_PR_GET_NO_NEW_PRIVS = 39  # adjacent to PR_SET_NO_NEW_PRIVS (38)
+
+
+def test_simulated_filter_unconditional_and_arch_guard() -> None:
+    prog = seccomp.build_filter("x86_64")
+    assert _run_bpf(prog, arch=_SIM_ARCH, nr=_SIM_NR["execve"]) == _NOTIF
+    assert _run_bpf(prog, arch=_SIM_ARCH, nr=1) == _ALLOW  # write(2): not in the set
+    # A compat/foreign arch must fall to ALLOW even for a notified number.
+    assert _run_bpf(prog, arch=0x40000003, nr=_SIM_NR["execve"]) == _ALLOW
+
+
+def test_simulated_open_write_flag_predicate() -> None:
+    prog = seccomp.build_filter("x86_64")
+    o_rdonly, o_wronly, o_creat = 0o0, 0o1, 0o100
+    notify = _run_bpf(prog, arch=_SIM_ARCH, nr=_SIM_NR["openat"], args=(0, 0, o_wronly, 0, 0, 0))
+    assert notify == _NOTIF
+    silent = _run_bpf(prog, arch=_SIM_ARCH, nr=_SIM_NR["openat"], args=(0, 0, o_rdonly, 0, 0, 0))
+    assert silent == _ALLOW
+    create = _run_bpf(prog, arch=_SIM_ARCH, nr=_SIM_NR["open"], args=(0, o_creat, 0, 0, 0, 0))
+    assert create == _NOTIF
+
+
+def test_simulated_prctl_notifies_every_listed_option() -> None:
+    # Positive half of the B-024 pair: each privilege-relevant option traps.
+    prog = seccomp.build_filter("x86_64")
+    for opt in seccomp.PRCTL_NOTIFIED_OPTIONS:
+        decision = _run_bpf(prog, arch=_SIM_ARCH, nr=_SIM_NR["prctl"], args=(opt, 0, 0, 0, 0, 0))
+        assert decision == _NOTIF, f"prctl option {opt} must notify"
+
+
+def test_simulated_prctl_near_miss_options_fall_to_allow() -> None:
+    # Near-miss half: benign / read-only options (including the adjacent GET
+    # twins) must NOT notify — that is what bounds the event volume.
+    prog = seccomp.build_filter("x86_64")
+    for opt in (
+        _PR_SET_PDEATHSIG,
+        _PR_GET_DUMPABLE,
+        _PR_SET_NAME,
+        _PR_CAPBSET_READ,
+        _PR_GET_SECUREBITS,
+        _PR_GET_NO_NEW_PRIVS,
+    ):
+        assert opt not in seccomp.PRCTL_NOTIFIED_OPTIONS  # the test's own premise
+        decision = _run_bpf(prog, arch=_SIM_ARCH, nr=_SIM_NR["prctl"], args=(opt, 0, 0, 0, 0, 0))
+        assert decision == _ALLOW, f"prctl option {opt} must stay silent"
 
 
 def test_parse_notif_roundtrip() -> None:
@@ -164,6 +269,63 @@ def test_arm_then_stop_without_spawn_is_clean() -> None:
     finally:
         m.stop()
         m.stop()  # idempotent
+
+
+# --- PTY session adoption (B-026, portable) ----------------------------------
+#
+# On an unprivileged host the child-side filter install fails (fail-open: the
+# child runs unfiltered, the supervisor degrades) but the parent-side
+# lifecycle is identical to the privileged one — which is exactly the
+# contract these tests pin: the spawn arms the active monitor, the transport
+# adopts it for the session's lifetime, and aclose() stops it.
+
+
+async def test_pty_spawn_adopts_active_monitor_and_aclose_stops_it() -> None:
+    from relay_shell.sessions import LocalPtyTransport
+
+    m = _monitor()
+    token = seccomp.set_active(m)
+    try:
+        tr = await LocalPtyTransport.spawn(
+            ["/bin/echo", "hi"], cwd=None, env=dict(os.environ), cols=80, rows=24
+        )
+    finally:
+        seccomp.clear_active(token)
+    try:
+        assert tr._monitor is m  # the transport owns the monitor now
+        assert m._used  # the spawn armed it (single-use consumed)
+        assert not m._stopped  # ...and did NOT stop it when the call returned
+    finally:
+        await tr.aclose()
+    assert m._stopped  # the session close released the supervisor (B-026)
+
+
+async def test_pty_spawn_failure_stops_adopted_monitor() -> None:
+    from relay_shell.sessions import LocalPtyTransport
+
+    m = _monitor()
+    token = seccomp.set_active(m)
+    try:
+        with pytest.raises(FileNotFoundError):
+            await LocalPtyTransport.spawn(
+                ["/nonexistent-relay-shell-binary"], cwd=None, env={}, cols=80, rows=24
+            )
+    finally:
+        seccomp.clear_active(token)
+    assert m._stopped  # no child: the supervisor must not outlive the attempt
+
+
+async def test_pty_spawn_without_monitor_is_unchanged() -> None:
+    from relay_shell.sessions import LocalPtyTransport
+
+    assert seccomp.get_active() is None
+    tr = await LocalPtyTransport.spawn(
+        ["/bin/echo", "x"], cwd=None, env=dict(os.environ), cols=80, rows=24
+    )
+    try:
+        assert tr._monitor is None  # default spawn path: nothing attached
+    finally:
+        await tr.aclose()
 
 
 # --- supervisor state machine (white-box, no privilege) ---------------------
@@ -519,6 +681,75 @@ async def test_server_info_reports_seccomp_block(tmp_path: Path) -> None:
     assert info["seccomp"]["supported"] is True
     assert info["seccomp"]["cap"] == settings.seccomp_notify_cap
     assert info["seccomp"]["filter_version"] == seccomp.SECCOMP_FILTER_VERSION
+
+
+@pytest.mark.seccomp
+@requires_seccomp
+async def test_prctl_filter_notifies_only_listed_options_live(tmp_path: Path) -> None:
+    # The live half of the B-024 pair: a real child issues one notified and
+    # one near-miss prctl; only the notified option may appear, and every
+    # observed prctl event must carry a listed option.
+    events: list[seccomp.SyscallEvent] = []
+    monitor = seccomp.SeccompMonitor(
+        cap=512, arch=_SUPPORT.arch, on_event=events.append, on_overflow=lambda p: None
+    )
+    body = (
+        "import ctypes; libc = ctypes.CDLL(None); "
+        "libc.prctl(15, b'relay-nm'); "  # PR_SET_NAME: near-miss, must stay silent
+        "libc.prctl(8, 0); "  # PR_SET_KEEPCAPS: notified (harmless no-op value)
+        "print('prctl-done')"
+    )
+    token = seccomp.set_active(monitor)
+    try:
+        out, code = await run_command(f'{sys.executable} -c "{body}"', timeout=30, use_shell=True)
+    finally:
+        seccomp.clear_active(token)
+    assert code == 0 and "prctl-done" in out
+    prctls = [e for e in events if e.syscall == "prctl"]
+    assert any(e.args[0] == 8 for e in prctls), f"PR_SET_KEEPCAPS not observed: {prctls}"
+    for e in prctls:
+        assert e.args[0] in seccomp.PRCTL_NOTIFIED_OPTIONS, f"unlisted option trapped: {e}"
+
+
+@pytest.mark.seccomp
+@requires_seccomp
+async def test_shell_spawn_session_emits_syscall_notify_lines(tmp_path: Path) -> None:
+    # B-026: a PTY session's child carries the filter for the session's whole
+    # life — the spawned shell's own execve and commands run *inside* the
+    # session are observed, and closing the session releases the supervisor.
+    settings = _settings(tmp_path)
+    mcp = build_server(settings)
+
+    def _text(content: object) -> str:
+        return "".join(getattr(b, "text", "") for b in content)  # type: ignore[union-attr]
+
+    content, _ = await mcp.call_tool("shell_spawn", {"command": "/bin/sh"})
+    spawn_out = _text(content)
+    m = re.search(r"session (\S+) started", spawn_out)
+    assert m, spawn_out
+    sid = m.group(1)
+
+    await mcp.call_tool("session_send", {"session_id": sid, "data": "/bin/echo from-session"})
+    seen = ""
+    for _ in range(20):
+        content, _ = await mcp.call_tool("session_recv", {"session_id": sid, "timeout": 1})
+        seen += _text(content)
+        if "from-session" in seen:
+            break
+    assert "from-session" in seen
+    # session_kill closes the session; transport.aclose() joins the
+    # supervisor, so every dispatched event is on disk after this call.
+    await mcp.call_tool("session_kill", {"session_id": sid})
+
+    records = [
+        json.loads(line)
+        for line in Path(settings.audit_path).read_text().splitlines()
+        if line.strip()
+    ]
+    syscall_recs = [r for r in records if r["tool"] == "syscall_notify"]
+    assert any(r["syscall"] == "execve" for r in syscall_recs), (
+        f"PTY session left no execve syscall_notify lines: {[r['tool'] for r in records]}"
+    )
 
 
 @pytest.mark.seccomp

@@ -39,6 +39,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from . import seccomp
 from .errors import SessionError
 from .util import gen_id
 
@@ -73,9 +74,15 @@ def _set_winsize(fd: int, cols: int, rows: int) -> None:
 class LocalPtyTransport:
     """A local child process attached to a pseudo-terminal."""
 
-    def __init__(self, master_fd: int, proc: asyncio.subprocess.Process) -> None:
+    def __init__(
+        self,
+        master_fd: int,
+        proc: asyncio.subprocess.Process,
+        monitor: seccomp.SeccompMonitor | None = None,
+    ) -> None:
         self._fd = master_fd
         self._proc = proc
+        self._monitor = monitor
         self._closed = False
 
     @classmethod
@@ -92,6 +99,15 @@ class LocalPtyTransport:
         _set_winsize(slave_fd, cols, rows)
         flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
         fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        # Optional, opt-in seccomp-notify audit channel (ADR 0006, B-026).
+        # `extras` is {} unless the active per-call monitor armed
+        # (CAP_SYS_ADMIN + enabled), keeping the default spawn byte-identical.
+        # Unlike the one-shot executor (shelltools), the monitor must outlive
+        # the originating tool call: the session child holds the filter for
+        # its whole life, so the transport adopts the monitor and stop()
+        # happens in aclose(), not when shell_spawn returns.
+        monitor = seccomp.get_active()
+        extras = monitor.arm() if monitor is not None else {}
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
@@ -101,10 +117,19 @@ class LocalPtyTransport:
                 cwd=cwd or None,
                 env=env,
                 start_new_session=True,
+                **extras,  # type: ignore[arg-type]
             )
+        except BaseException:
+            # The child never existed: release the supervisor and the master
+            # end (the slave end closes in the finally below either way).
+            if monitor is not None:
+                monitor.stop()
+            with contextlib.suppress(OSError):
+                os.close(master_fd)
+            raise
         finally:
             os.close(slave_fd)
-        return cls(master_fd, proc)
+        return cls(master_fd, proc, monitor)
 
     async def write(self, data: bytes) -> None:
         loop = asyncio.get_running_loop()
@@ -198,6 +223,11 @@ class LocalPtyTransport:
         finally:
             with contextlib.suppress(OSError):
                 os.close(self._fd)
+            if self._monitor is not None:
+                # Session over: the supervisor has already drained (the
+                # notify fd hangs up when the filtered task tree dies); this
+                # joins the thread and releases its fds. Idempotent.
+                self._monitor.stop()
 
 
 @dataclass

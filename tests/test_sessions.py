@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import signal
+from pathlib import Path
 
 import pytest
 
+from relay_shell.config import Settings
 from relay_shell.errors import SessionError
 from relay_shell.sessions import LocalPtyTransport, SessionRegistry
 
@@ -120,3 +123,82 @@ async def test_session_recv_ended_message_shape_without_exit() -> None:
         assert out == f"\n[session {sid} ended]"
     finally:
         await reg.shutdown()
+
+
+async def test_pty_spawn_failure_does_not_leak_master_fd() -> None:
+    """A failed PTY spawn must release both pty ends, not just the slave.
+
+    Pre-fix, ``LocalPtyTransport.spawn`` closed only ``slave_fd`` in its
+    ``finally`` when ``create_subprocess_exec`` raised; the master fd
+    leaked once per failed spawn (e.g. a typo'd binary).
+    """
+    argv = ["/nonexistent-relay-shell-binary"]
+    # Warm-up: the first spawn may lazily allocate event-loop plumbing
+    # (child-watcher pipes); measure only once that exists.
+    with pytest.raises(FileNotFoundError):
+        await LocalPtyTransport.spawn(argv, cwd=None, env={}, cols=80, rows=24)
+    before = sorted(os.listdir("/proc/self/fd"))
+    for _ in range(3):
+        with pytest.raises(FileNotFoundError):
+            await LocalPtyTransport.spawn(argv, cwd=None, env={}, cols=80, rows=24)
+    after = sorted(os.listdir("/proc/self/fd"))
+    assert after == before, "failed PTY spawn leaked a file descriptor"
+
+
+class _RecordingTransport:
+    """Transport double that records ``aclose``; satisfies the Protocol."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def write(self, data: bytes) -> None:  # pragma: no cover - unused
+        pass
+
+    def resize(self, cols: int, rows: int) -> None:  # pragma: no cover - unused
+        pass
+
+    def signal(self, sig: int) -> None:  # pragma: no cover - unused
+        pass
+
+    @property
+    def returncode(self) -> int | None:
+        return None
+
+    async def read_loop(self, sink: object) -> None:
+        # Stay "running" until cancelled at teardown, like a live PTY.
+        await asyncio.Event().wait()
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+async def test_register_session_closes_transport_when_registry_refuses(tmp_path: Path) -> None:
+    """The shared spawn-registration path reaps a refused transport (R-003).
+
+    Pre-fix, ``shell_spawn`` / ``ssh_spawn`` registered the freshly-spawned
+    transport directly with ``sessions.add``; a refusal (session limit)
+    propagated as the tool's error string while the already-running child
+    kept running unsupervised.
+    """
+    from relay_shell.server import Relay
+
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+        max_sessions=1,
+    )
+    app = Relay(settings)
+    first = _RecordingTransport()
+    second = _RecordingTransport()
+    try:
+        await app.register_session(kind="local", title="one", transport=first, cols=80, rows=24)
+        with pytest.raises(SessionError):
+            await app.register_session(
+                kind="local", title="two", transport=second, cols=80, rows=24
+            )
+    finally:
+        await app.sessions.shutdown()
+    assert second.closed, "refused transport must be closed, not leaked"
+    assert first.closed  # closed by the registry shutdown, not the failure path
