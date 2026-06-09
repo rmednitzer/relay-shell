@@ -18,10 +18,12 @@ forbids. So the channel activates **only** when the server process holds
 ``CAP_SYS_ADMIN`` (e.g. runs as root, a supported privileged posture);
 otherwise it cleanly no-ops and the spawn path is byte-identical to today.
 
-Scope (v1): the one-shot local executor (``shell_exec`` / ``shell_script``
-/ ``ssh_keyscan`` via :mod:`relay_shell.shelltools`). Long-lived PTY
-sessions and the SSH-local half are out of scope for this pass (see ADR
-0006 / runbook §7.5). Linux + ``x86_64`` only; every other platform,
+Scope: the one-shot local executor (``shell_exec`` / ``shell_script``
+/ ``ssh_keyscan`` via :mod:`relay_shell.shelltools`) and long-lived local
+PTY sessions (``shell_spawn`` via :mod:`relay_shell.sessions`, where the
+monitor's lifetime follows the session — runbook B-026). SSH sessions have
+no local child (``asyncssh`` runs in-process), so there is nothing local
+to observe on that path. Linux + ``x86_64`` only; every other platform,
 arch, or a kernel below 5.5 makes the feature report ``supported=False``
 and no-op.
 
@@ -54,6 +56,7 @@ from typing import Final
 
 __all__ = [
     "NOTIFIED_SYSCALLS",
+    "PRCTL_NOTIFIED_OPTIONS",
     "SECCOMP_FILTER_VERSION",
     "PlatformSupport",
     "SeccompMonitor",
@@ -71,11 +74,12 @@ _log = logging.getLogger("relay_shell.seccomp")
 # Bump whenever the installed filter or the notified-syscall set changes, so
 # the audit trail and server_info can pin which policy produced an event.
 # Mirrors patterns.PATTERNS_VERSION.
-SECCOMP_FILTER_VERSION: Final = 1
+# 2: prctl joined the notified set, gated on the privilege-relevant
+#    PRCTL_NOTIFIED_OPTIONS via the eq-any predicate (runbook B-024).
+SECCOMP_FILTER_VERSION: Final = 2
 
 # --- kernel ABI constants (validated against a live host; see ADR 0006) -----
 
-_PR_SET_NO_NEW_PRIVS = 38  # referenced only for documentation; never set here
 _SECCOMP_SET_MODE_FILTER = 1
 _SECCOMP_GET_NOTIF_SIZES = 3
 # SECCOMP_FILTER_FLAG_NEW_LISTENER is (1 << 3); (1 << 4) is TSYNC_ESRCH — a
@@ -114,6 +118,7 @@ _SYSCALLS: Final[dict[str, dict[str, int]]] = {
         "setresgid": 119,
         "openat": 257,
         "open": 2,
+        "prctl": 157,
     },
 }
 _AUDIT_ARCH: Final[dict[str, int]] = {"x86_64": _AUDIT_ARCH_X86_64}
@@ -126,21 +131,54 @@ _NR_SECCOMP: Final[dict[str, int]] = {"x86_64": 317}
 # dynamic linker opening libraries does not trap).
 _O_WRITE_MASK = 0o100 | 0o1 | 0o2  # 0x43
 
+# prctl(2) `option` values that change the privilege / capability /
+# traceability posture of the calling process (validated against a live
+# host's <linux/prctl.h>; see ADR 0006 and runbook B-024). The eq-any
+# predicate notifies prctl ONLY for these, which is what keeps the volume
+# bounded: high-frequency benign options (PR_SET_NAME from every thread
+# naming itself, glibc's PR_SET_VMA tagging, ...) never trap.
+_PR_SET_DUMPABLE = 4  # anti-forensics: hides the child from core dumps/ptrace
+_PR_SET_KEEPCAPS = 8  # keep permitted caps across a setuid transition
+_PR_SET_SECCOMP = 22  # child installing its own (nested) filter
+_PR_CAPBSET_DROP = 24  # drop a capability from the bounding set
+_PR_SET_SECUREBITS = 28  # rewire the capability inheritance rules
+_PR_SET_NO_NEW_PRIVS = 38  # never *set* by this module (see docstring); audited
+_PR_CAP_AMBIENT = 47  # raise/lower ambient capabilities
+
+PRCTL_NOTIFIED_OPTIONS: Final[tuple[int, ...]] = (
+    _PR_SET_DUMPABLE,
+    _PR_SET_KEEPCAPS,
+    _PR_SET_SECCOMP,
+    _PR_CAPBSET_DROP,
+    _PR_SET_SECUREBITS,
+    _PR_SET_NO_NEW_PRIVS,
+    _PR_CAP_AMBIENT,
+)
+
 
 @dataclass(frozen=True)
 class _Notify:
-    """One notified syscall: unconditional, or gated on a write-flag arg."""
+    """One notified syscall: unconditional, or gated on one argument predicate.
+
+    ``flag_arg``/``flag_mask`` notify when the argument has any masked bit
+    set (the write-open detection). ``eq_arg``/``eq_values`` notify when the
+    argument equals any listed value (the prctl option filter). At most one
+    predicate kind per entry; both ``None`` means unconditional.
+    """
 
     name: str
-    flag_arg: int | None = None  # None => unconditional; else seccomp_data arg index
+    flag_arg: int | None = None  # None => no flag predicate; else seccomp_data arg index
     flag_mask: int = 0
+    eq_arg: int | None = None  # None => no eq-any predicate; else seccomp_data arg index
+    eq_values: tuple[int, ...] = ()
 
 
 # The forensically-interesting set: process execution, privilege/identity
-# changes, namespace/mount manipulation, debugger attach, and *writing*
-# file opens. Each is low-volume and high-signal; none requires dereferencing
-# a user buffer (we record only the raw scalar register arguments). prctl
-# option-filtering and 32-bit compat syscalls are deferred (ADR 0006).
+# changes, namespace/mount manipulation, debugger attach, *writing* file
+# opens, and privilege-relevant prctl options. Each is low-volume and
+# high-signal; none requires dereferencing a user buffer (we record only the
+# raw scalar register arguments). 32-bit compat syscalls remain deferred
+# (ADR 0006).
 NOTIFIED_SYSCALLS: Final[tuple[_Notify, ...]] = (
     _Notify("execve"),
     _Notify("execveat"),
@@ -159,6 +197,7 @@ NOTIFIED_SYSCALLS: Final[tuple[_Notify, ...]] = (
     _Notify("setresgid"),
     _Notify("openat", flag_arg=2, flag_mask=_O_WRITE_MASK),
     _Notify("open", flag_arg=1, flag_mask=_O_WRITE_MASK),
+    _Notify("prctl", eq_arg=0, eq_values=PRCTL_NOTIFIED_OPTIONS),
 )
 
 _CAP_SYS_ADMIN = 21  # capability bit number
@@ -304,7 +343,9 @@ def build_filter(arch: str) -> bytes:
     Shape: guard on ``data.arch`` (anything else -> ALLOW), then dispatch on
     ``data.nr``. Unconditional syscalls branch straight to NOTIFY; ``open`` /
     ``openat`` first load their flags argument and NOTIFY only when a
-    write/create bit is set. Anything unmatched falls to ALLOW.
+    write/create bit is set; ``prctl`` loads its ``option`` argument and
+    NOTIFYs only when it equals one of :data:`PRCTL_NOTIFIED_OPTIONS`.
+    Anything unmatched falls to ALLOW.
     """
     table = _SYSCALLS[arch]
     arch_const = _AUDIT_ARCH[arch]
@@ -318,7 +359,12 @@ def build_filter(arch: str) -> bytes:
     for spec in NOTIFIED_SYSCALLS:
         if spec.name not in table:  # pragma: no cover - x86_64 table has every notified syscall
             continue
-        if spec.flag_arg is None:
+        if spec.eq_arg is not None and not spec.eq_values:
+            # An empty eq-any set would assemble to a bare argument load that
+            # falls through into the NEXT conditional block — silently testing
+            # the wrong syscall's predicate. Refuse to build instead.
+            raise ValueError(f"{spec.name}: eq_arg set but eq_values is empty")
+        if spec.flag_arg is None and spec.eq_arg is None:
             asm.jump(_JEQ_K, table[spec.name], "notify", _FALL)
         else:
             conditional.append(spec)
@@ -330,11 +376,18 @@ def build_filter(arch: str) -> bytes:
 
     for i, spec in enumerate(conditional):
         asm.label(f"ck{i}")
-        # args[] are 64-bit; the low 32 bits carry the open flags. Little-
-        # endian hosts keep the low word at the slot's start.
-        off = _DATA_ARGS_OFFSET + (spec.flag_arg or 0) * 8
-        asm.stmt(_LD_W_ABS, off)
-        asm.jump(_JSET_K, spec.flag_mask, "notify", "allow")
+        # args[] are 64-bit; the low 32 bits carry the open flags / the prctl
+        # option (both are ints well under 2^32). Little-endian hosts keep
+        # the low word at the slot's start.
+        if spec.flag_arg is not None:
+            asm.stmt(_LD_W_ABS, _DATA_ARGS_OFFSET + spec.flag_arg * 8)
+            asm.jump(_JSET_K, spec.flag_mask, "notify", "allow")
+        else:
+            # eq-any (B-024): any listed value -> NOTIFY, else ALLOW.
+            asm.stmt(_LD_W_ABS, _DATA_ARGS_OFFSET + (spec.eq_arg or 0) * 8)
+            for j, val in enumerate(spec.eq_values):
+                jf = "allow" if j == len(spec.eq_values) - 1 else _FALL
+                asm.jump(_JEQ_K, val, "notify", jf)
 
     asm.label("allow")
     asm.stmt(_RET_K, _SECCOMP_RET_ALLOW)

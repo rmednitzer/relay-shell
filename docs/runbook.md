@@ -317,7 +317,7 @@ Use this for every PR, your own or external.
 | `policy.py`          | Consumes `patterns`; deny list is still the first gate; `_READ_ONLY_TOOLS` / `_MUTATING_TOOLS` membership intact. |
 | `audit.py`           | Output body never written, only `sha256` + `len`. `degraded` path still degrades, not crashes. With `audit_chain` on, `seq`/`prev`/`chain` are appended under `_chain_lock` and `verify_chain` round-trips (ADR 0007); the default-off path is byte-identical. |
 | `redaction.py`       | Consumes `patterns`; the loop order (URL creds → prefix patterns → whole-match patterns → MySQL family) is unchanged. |
-| `sessions.py`        | Lost-wakeup invariant: `recv` clears the event under the buffer lock before awaiting.             |
+| `sessions.py`        | Lost-wakeup invariant: `recv` clears the event under the buffer lock before awaiting. PTY spawn adopts the active seccomp monitor; the transport stops it in `aclose()` — on the failure path too (B-026). |
 | `sshpool.py`         | `known_hosts` arg is validated. Connection cache keyed by `user@host:port`. Forwards leak-free.   |
 | `auth/oauth.py`      | File modes (0o700 dir / 0o600 files), atomic save, lazy expiry, single-client lockdown intact.    |
 | `shelltools.py`      | `start_new_session=True` preserved (so `killpg` works). Env overlay does not propagate JSON errors. |
@@ -551,23 +551,32 @@ Closed (do not re-add):
 
 ### 5.2 Refactor candidates
 
-- **R-001 Extract a `ToolDef` table.** `server.py` is ~720 lines of mostly
-  identical `@mcp.tool()` wrappers. A small table-driven registration
+- **R-001 Extract a `ToolDef` table.** `server.py` is mostly identical
+  `@mcp.tool()` wrappers. A small table-driven registration
   (tool name, default tier override, work function, audit-args extractor)
   would cut the file in half and make adding a tool a one-line change.
   Risky if rushed - keep one PR per row migrated.
-- **R-002 `policy_text` builder.** Each tool inlines its own `policy_text`
-  string. Extract per-tool helpers (`_policy_text_shell_exec`, etc.) so
-  the contract "everything the executor sees, the policy sees" is one
-  function per tool and easy to grep.
-- **R-003 Session backend factory.** `LocalPtyTransport.spawn` and
-  `SshPool.open_process` both return a `Transport`. A tiny factory module
-  would let `shell_spawn` / `ssh_spawn` share the registry-add code path
-  exactly.
 - **R-004 OAuth store backend interface.** `_Store` is hard-coded to JSON
   files. Promote it to a `Protocol` so an operator could plug in a
   Redis-backed store without touching `FileOAuthProvider`. Only worth
   doing if a second store is genuinely on the roadmap.
+
+Closed (do not re-add):
+
+- **R-002** `policy_text` builders extracted: every tool with a non-empty
+  policy surface assembles its probe text through exactly one module-level
+  `_policy_text_<tool>` function in `server.py` (greppable contract:
+  "everything the executor sees, the policy sees"), pinned by
+  `tests/test_tool_wrappers.py::test_policy_text_builders_include_every_executor_visible_part`.
+- **R-003** Shared session registration: `Relay.register_session` is the
+  one registry-add path for `shell_spawn` / `ssh_spawn`. Implemented as a
+  `Relay` method rather than the suggested standalone factory module — ten
+  lines next to their only two callers beat a new architecture-table row.
+  Closing it also fixed a real leak: when `sessions.add` refused (session
+  limit), the already-spawned transport (local PTY child or SSH process)
+  was left running unsupervised; the shared path now closes the transport
+  before the error propagates
+  (`tests/test_sessions.py::test_register_session_closes_transport_when_registry_refuses`).
 
 ### 5.3 Tests to add (gap analysis)
 
@@ -784,22 +793,35 @@ currently empty.)
   `no_new_privs`, so set-uid/`sudo` posture is preserved verbatim;
   Linux/`x86_64`/kernel ≥ 5.5; pure `ctypes`, no new dependency. Follow-ups
   below (B-024/B-025/B-026).
-- **B-024 (P3)** `prctl` option-filtering for the seccomp-notify set.
-  Deferred from B-021: notify only on capability/securebits-relevant `option`
-  values to bound volume. The filter assembler already does flag predicates
-  for `open`/`openat`; extend it to an `eq-any` predicate on `args[0]` and add
-  the paired positive / near-miss tests in `tests/test_seccomp.py`. Bump
-  `SECCOMP_FILTER_VERSION`.
+- **B-024 (P3)** — **Closed**. `prctl` joined the notified set, gated on the
+  privilege-relevant `option` values (`PRCTL_NOTIFIED_OPTIONS` in
+  `seccomp.py`: `PR_SET_DUMPABLE`, `PR_SET_KEEPCAPS`, `PR_SET_SECCOMP`,
+  `PR_CAPBSET_DROP`, `PR_SET_SECUREBITS`, `PR_SET_NO_NEW_PRIVS`,
+  `PR_CAP_AMBIENT`) via a new `eq-any` BPF predicate on `args[0]`, so
+  high-volume benign options (`PR_SET_NAME`, glibc's `PR_SET_VMA`) never
+  trap. `SECCOMP_FILTER_VERSION` bumped to 2. Paired positive / near-miss
+  tests run portably through a classic-BPF simulator in
+  `tests/test_seccomp.py` (the near-misses include the numerically-adjacent
+  `GET` twins), plus a `seccomp`-marked live test that drives a real child
+  through one notified and one near-miss `prctl`.
 - **B-025 (P3)** `aarch64` support for the seccomp-notify channel. Deferred
   from B-021 (v1 ships `x86_64`-validated syscall numbers only; other arches
   no-op). Add the arch's syscall-number + `AUDIT_ARCH` tables and validate the
   notify round-trip on a live `aarch64` host before `platform_support()`
   admits it.
-- **B-026 (P3)** Extend the seccomp-notify channel to PTY sessions
-  (`shell_spawn`) and the SSH-local half. Deferred from B-021 (v1 covers the
-  one-shot local executor). The PTY path spawns via
-  `sessions.LocalPtyTransport.spawn`, not `shelltools`, so the monitor lifetime
-  must follow the long-lived session rather than a single call.
+- **B-026 (P3)** — **Closed**. The seccomp-notify channel now covers local
+  PTY sessions: `sessions.LocalPtyTransport.spawn` consults the same
+  per-call monitor the one-shot executor uses, and the transport *adopts*
+  it — the monitor lifetime follows the session (stopped in `aclose()`),
+  the session child and everything it forks carry the filter, and events
+  keep the spawning call's `request_id`. The cap therefore bounds events
+  per session, not per call. The "SSH-local half" deferred from B-021 turned
+  out to be vacuous as implemented: `asyncssh` runs in-process and
+  `sshpool.py` spawns no local child (no `ProxyCommand` support is wired),
+  so there is nothing local to observe on that path; if a local-subprocess
+  proxy path ever lands, the ambient-monitor pattern covers it the same way.
+  Tests: portable adoption/lifetime tests + a `seccomp`-marked end-to-end
+  `shell_spawn` session test in `tests/test_seccomp.py`.
 - **B-023 (P2)** — **Closed** by
   [ADR 0007](adr/0007-audit-hash-chain.md): an opt-in, additive
   tamper-evident audit hash chain (`RELAY_SHELL_AUDIT_CHAIN`, default

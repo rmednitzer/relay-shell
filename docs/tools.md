@@ -262,8 +262,10 @@ Tests: `tests/test_prompts.py`.
 ## Syscall-notify audit events (ADR 0006)
 
 When `RELAY_SHELL_SECCOMP_NOTIFY=true` and the host supports it (Linux /
-`x86_64` / kernel ≥ 5.5 / `CAP_SYS_ADMIN`), a locally-spawned child
-(`shell_exec` / `shell_script` / `ssh_keyscan`) is observed by a seccomp
+`x86_64` / kernel ≥ 5.5 / `CAP_SYS_ADMIN`), a locally-spawned child — one-shot
+(`shell_exec` / `shell_script` / `ssh_keyscan`) or a local PTY session
+(`shell_spawn`, where the filter rides the session child for the session's
+whole life and the cap applies per session) — is observed by a seccomp
 user-notify supervisor that appends *additional* audit lines to the same
 JSONL stream. These never replace the per-call tool record - they are a
 distinct, narrower shape keyed on `tool`, so log shippers and the ADR 0007
@@ -271,7 +273,7 @@ hash chain handle them like any other line:
 
 | audit `tool`              | fields beyond `ts`/`tool`/`tier`/`request_id`                          | meaning                                                                                                   |
 |---------------------------|------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
-| `syscall_notify`          | `pid`, `syscall`, `nr`, `syscall_args` (six raw scalar register values)| one observed-and-continued syscall in the child (`execve`, a privilege/namespace/mount change, a write-`open`). No user buffer is dereferenced. |
+| `syscall_notify`          | `pid`, `syscall`, `nr`, `syscall_args` (six raw scalar register values)| one observed-and-continued syscall in the child (`execve`, a privilege/namespace/mount change, a write-`open`, a privilege-relevant `prctl`). No user buffer is dereferenced. |
 | `syscall_notify_overflow` | `pid`, `cap`                                                           | emitted once when the child crosses `RELAY_SHELL_SECCOMP_NOTIFY_CAP`; beyond it, emission stops but the child still runs to completion. |
 
 Both are tier 0 (passive observations, not tool calls), and the channel

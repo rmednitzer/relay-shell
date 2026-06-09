@@ -429,3 +429,31 @@ def test_connect_kwargs_zero_overlay_falls_through(settings: Settings) -> None:
     ck_neg = relay.connect_kwargs("", 0, "", "", "", connect_timeout=-1)
     assert "connect_timeout" not in ck_zero
     assert "connect_timeout" not in ck_neg
+
+
+# --- policy_text builder contract (runbook R-002) -----------------------
+#
+# One builder per tool with a non-empty policy surface; each must include
+# every byte the executor will see. Asserting exact output (not just
+# substring presence) also pins the joining scheme, so a refactor cannot
+# silently drop a part or fuse two parts into an unmatchable line.
+
+
+def test_policy_text_builders_include_every_executor_visible_part() -> None:
+    from relay_shell import server as srv
+
+    assert srv._policy_text_shell_exec("CMD", "IN", "ENV") == "CMD\nIN\nENV"
+    assert srv._policy_text_shell_exec("CMD", "", "") == "CMD"
+    assert srv._policy_text_shell_script("BODY", "ENV") == "BODY\nENV"
+    assert srv._policy_text_shell_script("BODY", "") == "BODY"
+    assert srv._policy_text_shell_spawn("CMD", "ENV") == "CMD\nENV"
+    assert srv._policy_text_ssh_exec("CMD") == "CMD"
+    assert srv._policy_text_ssh_spawn("") == ""  # plain login shell
+    assert srv._policy_text_ssh_fanout("CMD") == "CMD"
+    assert srv._policy_text_session_send("DATA") == "DATA"
+    up = srv._policy_text_ssh_upload("h", "/src", "/dst")
+    assert up.startswith("upload ") and "/src" in up and "h:/dst" in up
+    down = srv._policy_text_ssh_download("h", "/rem", "/loc")
+    assert down.startswith("download ") and "h:/rem" in down and "/loc" in down
+    fwd = srv._policy_text_ssh_forward("L:8080:db:5432")
+    assert fwd.startswith("forward ") and "L:8080:db:5432" in fwd

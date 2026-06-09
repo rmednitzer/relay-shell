@@ -8,6 +8,28 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Seccomp-notify follow-ups (`SECCOMP_FILTER_VERSION` 2; closes runbook
+  §7.5 B-024 and B-026, recorded in
+  [ADR 0006](docs/adr/0006-seccomp-notify-audit-channel.md) §"Follow-ups
+  landed 2026-06-09"):
+  - `prctl` joined the notified set, gated on privilege-relevant `option`
+    values (`PR_SET_DUMPABLE`, `PR_SET_KEEPCAPS`, `PR_SET_SECCOMP`,
+    `PR_CAPBSET_DROP`, `PR_SET_SECUREBITS`, `PR_SET_NO_NEW_PRIVS`,
+    `PR_CAP_AMBIENT`) via a new eq-any BPF argument predicate, so
+    high-volume benign options (`PR_SET_NAME`, glibc's `PR_SET_VMA`) never
+    trap. Paired positive / near-miss tests run portably through a small
+    classic-BPF interpreter in `tests/test_seccomp.py` (near-misses include
+    the numerically-adjacent `GET` twins), plus a `seccomp`-marked live
+    test; option values validated against a live host's `<linux/prctl.h>`.
+  - The channel now covers local PTY sessions: `shell_spawn` children get
+    the same filter, the session transport adopts the monitor for the
+    session's lifetime (released in `aclose()`, on the failure path too),
+    events keep the spawning call's `request_id`, and
+    `RELAY_SHELL_SECCOMP_NOTIFY_CAP` bounds events per session. The
+    "SSH-local half" deferred from B-021 was resolved as vacuous:
+    `asyncssh` runs in-process and `sshpool` spawns no local child, so
+    there is nothing local to observe on that path. The off path stays
+    byte-identical; the audit-record shape is unchanged.
 - Syscall-level audit channel (opt-in), implementing
   [ADR 0006](docs/adr/0006-seccomp-notify-audit-channel.md) (now Accepted).
   `RELAY_SHELL_SECCOMP_NOTIFY=true` installs a seccomp-bpf **user-notify**
@@ -118,6 +140,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- `server.py` admission-probe consolidation (closes runbook §5.2 R-002 and
+  R-003, no behavior change): every tool with a non-empty policy surface
+  now builds its `policy_text` through exactly one module-level
+  `_policy_text_<tool>` function, so the "everything the executor sees,
+  the policy sees" contract is greppable per tool and pinned by
+  `tests/test_tool_wrappers.py`; `shell_spawn` / `ssh_spawn` register
+  their transports through one shared `Relay.register_session` path
+  (which also closes the spawn-leak fixed below).
 - Documentation-consistency pass (runbook §8): added a "change a
   redaction/tier pattern" row to the `CONTRIBUTING.md` documentation-
   moves-with-code table (bump `PATTERNS_VERSION`, paired tests in
@@ -166,6 +196,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A `shell_spawn` / `ssh_spawn` whose registry admission failed (most
+  commonly the `RELAY_SHELL_MAX_SESSIONS` limit) leaked the already-spawned
+  child: the tool returned its bounded error string while the local PTY
+  process or remote SSH process kept running unsupervised, invisible to
+  `session_list` and exempt from idle reaping. The shared
+  `Relay.register_session` path now closes the transport (reaping the
+  child and releasing any adopted seccomp monitor) before the error
+  propagates. Regression test in `tests/test_sessions.py`.
+- A failed local PTY spawn (e.g. a nonexistent binary) leaked the PTY
+  master file descriptor: `LocalPtyTransport.spawn` closed only the slave
+  end when `create_subprocess_exec` raised. Both ends are now released on
+  the failure path; pinned by an fd-count regression test.
 - `SshPool.connect` is now single-flight on the cache key: two
   concurrent callers for the same `user@host:port` await one
   underlying `asyncssh.connect` instead of dialling twice and

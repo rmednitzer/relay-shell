@@ -255,14 +255,20 @@ The audit record covers *what the model asked for* and the SHA-256 of the
 output, but not what a spawned child does after `exec` returns. Set
 `RELAY_SHELL_SECCOMP_NOTIFY=true` to add an audit-only seccomp **user-notify**
 channel ([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)):
-locally-spawned children (`shell_exec` / `shell_script` / `ssh_keyscan`) get a
-BPF filter that traps a small, high-signal syscall set (`execve`, the
-`set[re|res]?[ug]id` family, `mount`/`umount2`, `unshare`/`setns`,
-`chroot`/`pivot_root`, `ptrace`, write-`open`/`openat`), and a supervisor
-appends one `syscall_notify` line per observed call to the same JSONL stream
-(it extends the §6a hash chain when that is on). It **never blocks** a syscall
-— the supervisor always answers CONTINUE — so ADR 0002's no-sandbox posture is
-unchanged.
+locally-spawned children — one-shot (`shell_exec` / `shell_script` /
+`ssh_keyscan`) and local PTY sessions (`shell_spawn`) — get a BPF filter that
+traps a small, high-signal syscall set (`execve`, the `set[re|res]?[ug]id`
+family, `mount`/`umount2`, `unshare`/`setns`, `chroot`/`pivot_root`,
+`ptrace`, write-`open`/`openat`, and `prctl` for privilege-relevant options
+such as `PR_SET_SECUREBITS` / `PR_CAP_AMBIENT` / `PR_SET_NO_NEW_PRIVS`), and
+a supervisor appends one `syscall_notify` line per observed call to the same
+JSONL stream (it extends the §6a hash chain when that is on). It **never
+blocks** a syscall — the supervisor always answers CONTINUE — so ADR 0002's
+no-sandbox posture is unchanged. For a PTY session the filter rides the
+session child (and everything it forks) for the session's whole life, and
+events carry the spawning call's `request_id`. SSH sessions have no local
+child (`asyncssh` runs in-process), so nothing is observed — or missed —
+on that path.
 
 **Activation is gated, by design.** A seccomp filter installs with
 `CAP_SYS_ADMIN` *or* by latching `no_new_privs`; the latter would silently
@@ -276,7 +282,10 @@ are byte-identical to the off path — and `server_info.seccomp.supported` is
 package to install: the channel is pure `ctypes`.
 
 `RELAY_SHELL_SECCOMP_NOTIFY_CAP` (default 256, range 1..65536) bounds the
-per-call event volume: beyond it, one `syscall_notify_overflow` line is written
+event volume per spawned child — per call for the one-shot executors, per
+session for `shell_spawn` (a long-lived interactive session runs many
+commands under one filter, so size the cap for the session, not the
+command): beyond it, one `syscall_notify_overflow` line is written
 and emission stops while the child still runs to completion. Watch
 `relay_shell_seccomp_notify_overflow_total` (§9a) and raise the cap if a
 legitimate workload trips it. The events ride the same off-host shipper as the
