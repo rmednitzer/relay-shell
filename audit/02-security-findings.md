@@ -118,7 +118,7 @@ recommended fix, effort.
   on PR events, with a read-only top-level `permissions: contents: read`.
 - Recommended fix: optionally pass the refs to the action explicitly (its
   `base-ref`/`head-ref` inputs) to avoid the credential helper, or accept as
-  documented. Backlog `TOOL-2`.
+  documented. Backlog `SEC-2`.
 - Effort: S
 
 ### S-004 — gitleaks hits are test fixtures + vendored venv (no leak)
@@ -199,7 +199,7 @@ recommended fix, effort.
   observed (both pass clean). This is Renovate-managed and self-correcting.
 - Recommended fix: none in this pass (changing the mirror fights Renovate).
   Optionally pin the CI ruff to the pre-commit `rev` for reproducibility.
-  Backlog `TOOL-3`.
+  Backlog `TOOL-2`.
 - Effort: S
 
 ### Q-002 — `requirements.txt` mirror drifts from a fresh resolve

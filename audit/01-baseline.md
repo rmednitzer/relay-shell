@@ -43,7 +43,7 @@ Command: `.venv/bin/pytest` (default addopts `-q -m "not fuzz"`).
 - Warning noise: one `StarletteDeprecationWarning` from
   `tests/test_metrics.py:15` ("Using `httpx` with `starlette.testclient`
   is deprecated; install `httpx2` instead"). Upstream deprecation, not a
-  failure; tracked as finding Q-005.
+  failure; tracked as finding Q-003.
 
 ## Coverage
 
