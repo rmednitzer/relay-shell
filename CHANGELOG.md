@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- `ssh_keyscan` now feeds its caller-chosen target hosts to the policy layer,
+  so `RELAY_SHELL_POLICY_DENY` can refuse a scan target (audit pass finding
+  SEC-1). Previously the tool's policy probe text was empty, so the deny list
+  never saw the hosts — a gap on the SSRF-shaped surface most worth gating by
+  host, and inconsistent with `ssh_upload` / `ssh_download` / `ssh_forward`,
+  which already name their host. A denied call short-circuits before any
+  subprocess and is audited `denied=True`. Tradeoff: the same text feeds the
+  tier classifier, so a host whose name embeds a `\b`-bounded destructive word
+  (`reboot`, `sudo`, ...) over-classifies above Tier 1 and is refused in
+  `guarded` mode — a conservative false-deny (`open` is advisory, `readonly`
+  already refuses Tier 1, `RELAY_SHELL_POLICY_ALLOW` is the escape hatch),
+  matching the transfer tools. No change to `open` mode's admission of a
+  normally-named host. Tests in `tests/test_ssh_keyscan_tool.py`.
+
 ### Changed
 
 - Documentation: reconciled the `mcp` pin drift (the SDK moved
@@ -20,6 +36,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `.gitleaks.toml` allowlist for the repository's synthetic secret fixtures
+  (audit pass finding TOOL-1). This project is a redaction tool and ships fake
+  secret-shaped values in `tests/`, the runbook redaction sample, and the
+  audit evidence; the config (extending the default ruleset) allowlists only
+  those documented locations so a future `gitleaks detect -c .gitleaks.toml`
+  (or a CI secret-scan job) is not drowned in known fixtures. `src/` is not
+  allowlisted, so a real secret committed there still trips.
 - Seccomp-notify follow-ups (`SECCOMP_FILTER_VERSION` 2; closes runbook
   §7.5 B-024 and B-026, recorded in
   [ADR 0006](docs/adr/0006-seccomp-notify-audit-channel.md) §"Follow-ups

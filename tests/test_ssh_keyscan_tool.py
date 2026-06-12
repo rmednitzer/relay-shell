@@ -175,6 +175,74 @@ async def test_ssh_keyscan_passes_double_dash_separator(settings: Settings) -> N
     assert cmd.index(" -- ") < cmd.index("host.example")
 
 
+async def test_ssh_keyscan_deny_list_gates_scan_targets(tmp_path: Path) -> None:
+    # SEC-1: ssh_keyscan now feeds its caller-chosen hosts to the policy
+    # layer, so RELAY_SHELL_POLICY_DENY can refuse a scan target (the
+    # SSRF-shaped surface). Pre-fix policy_text was empty and the deny
+    # never fired on the host. A denied call must short-circuit before any
+    # subprocess and be audited as denied=True.
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        policy_mode="open",
+        policy_deny=r"169\.254\.169\.254",
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+    )
+
+    async def fake_run_command(_cmd: str, **_kwargs: object) -> tuple[str, int | None]:
+        raise AssertionError("a denied ssh_keyscan must not reach the executor")
+
+    with patch("relay_shell.server.run_command", fake_run_command):
+        mcp = build_server(settings)
+        content, _ = await mcp.call_tool("ssh_keyscan", {"hosts": "169.254.169.254"})
+
+    out = _text(content)
+    assert "DENIED" in out, f"deny pattern on the scan host must fire; got {out!r}"
+    last = _audit_lines(Path(settings.audit_path))[-1]
+    assert last["tool"] == "ssh_keyscan"
+    assert last["denied"] is True
+    # The host is still recorded in the audit args (redaction runs on it).
+    assert last["args"]["hosts"] == "169.254.169.254"
+
+
+async def test_ssh_keyscan_allowed_when_host_not_denied(tmp_path: Path) -> None:
+    # A non-matching host is admitted at the default Tier 1 and runs.
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        policy_mode="open",
+        policy_deny=r"169\.254\.169\.254",
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+    )
+
+    async def fake_run_command(_cmd: str, **_kwargs: object) -> tuple[str, int | None]:
+        return ("host.example ssh-ed25519 AAAA...\n", 0)
+
+    with patch("relay_shell.server.run_command", fake_run_command):
+        mcp = build_server(settings)
+        content, _ = await mcp.call_tool("ssh_keyscan", {"hosts": "host.example"})
+
+    out = _text(content)
+    assert "DENIED" not in out and "ssh-ed25519" in out
+    last = _audit_lines(Path(settings.audit_path))[-1]
+    assert last["denied"] is False
+    assert last["tier"] == int(Tier.REVERSIBLE)
+
+
+def test_ssh_keyscan_hosts_reach_classifier_documents_tradeoff() -> None:
+    # SEC-1 tradeoff (documented in _policy_text_ssh_keyscan + BACKLOG SEC-1):
+    # feeding the hosts to the deny list also feeds them to the tier
+    # classifier, so a host whose name embeds a \b-bounded destructive word
+    # over-classifies above Tier 1. This pins the known behavior so a future
+    # reader is not surprised: it only bites `guarded` mode (open is advisory,
+    # readonly already refuses Tier 1), with POLICY_ALLOW as the escape hatch.
+    assert classify("ssh_keyscan", "web01.example.com") is Tier.REVERSIBLE
+    # "reboot" is a Tier 3 token; a host literally named so trips it.
+    assert classify("ssh_keyscan", "reboot.example.com") is Tier.IRREVERSIBLE
+
+
 async def test_ssh_keyscan_audits_its_args(settings: Settings) -> None:
     async def fake_run_command(_cmd: str, **_kwargs: object) -> tuple[str, int | None]:
         return ("", 0)

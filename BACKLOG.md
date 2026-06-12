@@ -13,11 +13,21 @@ its kind is tracked (runbook §7 for capability/quality/ops/security-hardening,
 
 Severity order within each section: low before info; smaller effort first.
 
+## Closed (follow-up work after the audit pass)
+
+Resolved in the backlog-work PR that followed the 2026-06-12 audit pass.
+Do not re-add.
+
+| ID | Title | Resolution |
+|---|---|---|
+| SEC-1 | `ssh_keyscan` target hosts bypass `RELAY_SHELL_POLICY_DENY` | **Closed.** Added `_policy_text_ssh_keyscan(hosts)` and wired it into the wrapper so the deny list gates scan targets; the call is audited `denied=True` on a match. The tier-over-classification tradeoff was accepted (only bites `guarded` mode; `open` is advisory, `readonly` already refuses Tier 1; `POLICY_ALLOW` is the escape hatch; consistent with the transfer tools) and is documented in the builder docstring. Tests: deny-gates-host, non-denied-host-runs, classifier-tradeoff pin, and the R-002 builder-contract line. |
+| QUAL-1 | A few `seccomp` termination tests assert via "does not hang" | **Closed.** Added explicit observable asserts to the five control-flow tests (`m._count == 0` after a drain break, `== 1` after isolated dispatch, `is None` for the suppressed-ioctl `_respond_continue`). Test-only. |
+| TOOL-1 | gitleaks flags synthetic redaction fixtures as secrets | **Closed.** Added a tightly-scoped `.gitleaks.toml` (extends the default ruleset) allowlisting only `tests/*.py`, `docs/runbook.md`, and `audit/*.md`. Validated: history scan drops from 13 leaks to 0, while a canary key planted under `src/` is still caught. Wiring a CI secret-scan job remains separate. |
+
 ## Security
 
 | ID | Finding | Severity | Effort | Rationale | Suggested approach | Dependencies | Owner role |
 |---|---|---|---|---|---|---|---|
-| SEC-1 | [S-001] `ssh_keyscan` target hosts bypass `RELAY_SHELL_POLICY_DENY` (`server.py:1127`, `policy_text=""`) | info/low | S | The transfer tools (`ssh_upload`/`download`/`forward`) encode the host in synthetic policy text so the deny list gates their targets; `ssh_keyscan` does not. Low impact (Tier 1, regex-validated hosts, key-fetch only), but inconsistent. | Add `_policy_text_ssh_keyscan(hosts)` mirroring the transfer builders. **Decide the tradeoff first** (needs an ADR-lite note): the same text feeds the tier classifier, so an adversarial hostname containing a `\b`-bounded heuristic word (e.g. `sudo.example.com`) would over-classify the scan to Tier 2 and refuse it in `guarded`. A synthetic-prefix form does not avoid this. Pair the change with positive + near-miss tests. | None | maintainer / security |
 | SEC-2 | [S-003] `dependency-review.yml` re-enables `persist-credentials` | low | S | `actions/checkout@v6` defaults it off; the workflow restores it so the action can `git fetch` base/head refs. The token lands in `.git/config` for the job. Very low risk (only the pinned action runs, read-only token). | Try the action's explicit `base-ref`/`head-ref` inputs to drop the credential helper; if that fails, keep the documented justification. | None | maintainer / CI |
 
 ## Reliability
@@ -28,9 +38,7 @@ Severity order within each section: low before info; smaller effort first.
 
 ## Quality
 
-| ID | Finding | Severity | Effort | Rationale | Suggested approach | Dependencies | Owner role |
-|---|---|---|---|---|---|---|---|
-| QUAL-1 | [Q-004] A few `seccomp` termination tests assert via "does not hang" | info | S | `test_drain_breaks_*`, `test_respond_continue_swallows_ioctl_error`, `test_dispatch_callback_exception_is_isolated` verify control-flow termination/exception isolation with no explicit `assert`. Legitimate (a regression hangs and times out) but easy to mistake for a stub. | Where cheap, add a trailing `assert` on an observable (e.g. the dispatch counter, or a flag set by the callback) so intent is explicit. | None | maintainer |
+(Empty — QUAL-1 closed in the follow-up work above.)
 
 ## Documentation
 
@@ -43,8 +51,8 @@ records convention; see `audit/03-final-report.md`.)
 
 | ID | Finding | Severity | Effort | Rationale | Suggested approach | Dependencies | Owner role |
 |---|---|---|---|---|---|---|---|
-| TOOL-1 | [S-004] gitleaks flags synthetic redaction fixtures as secrets | info | S | Every gitleaks hit is a deliberately fake fixture in `tests/` or `docs/runbook.md` (or vendored `.venv`). No real credential. If a CI secret-scan is ever added it will be noisy. | Add a `.gitleaks.toml` allowlist for `tests/` + `docs/runbook.md` before wiring any CI secret-scan job. | TOOL-? (a CI secret-scan job, if pursued) | maintainer / CI |
 | TOOL-2 | [Q-001] ruff pinned at 0.15.16 in `requirements.txt` + `.pre-commit-config.yaml`, but the `dev` floor resolves 0.15.17 | low | S | CI installs the unpinned `dev` extra and runs whatever ruff is latest, which can drift from the pinned pre-commit/requirements. No behavioral diff today; Renovate self-corrects over time. | Optionally pin the CI ruff to the pre-commit `rev` for reproducibility, or accept Renovate's cadence. | Renovate cadence | maintainer / CI |
+| TOOL-3 | A CI secret-scan job (gitleaks) | info | S | `.gitleaks.toml` now exists (TOOL-1), so a CI job would run clean on the current tree. Optional defense-in-depth; not wired yet to avoid adding a required check without a decision. | Add a `gitleaks` workflow using `-c .gitleaks.toml`, pinned by SHA with least-privilege `permissions`. | TOOL-1 (done) | maintainer / CI |
 
 ## Carried forward from prior engagement packs (operator action)
 

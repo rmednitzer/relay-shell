@@ -1,0 +1,27 @@
+# gitleaks configuration for relay-shell.
+#
+# This repository is a secret-redaction tool, so it deliberately ships
+# *synthetic* secret-shaped fixtures: the redaction/policy tests assert that
+# fake tokens (e.g. `ghp_...`, the documented `AKIAIOSFODNN7EXAMPLE` AWS
+# example key, PEM markers with `AAAA` bodies) are scrubbed, and the runbook /
+# audit evidence quote the same shapes. None are real credentials (audit pass
+# finding S-004). This config keeps gitleaks (`gitleaks detect -c .gitleaks.toml`)
+# from flagging those known fixtures so a real leak is not lost in the noise,
+# without weakening detection anywhere else in the tree.
+#
+# Keep the path allowlist tight: only directories/files whose secret-shaped
+# content is, by design, test fixtures or documentation of fixtures. Source
+# under `src/` is NOT allowlisted, so a real secret committed there still trips.
+
+title = "relay-shell"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic secret fixtures: redaction/policy tests, the runbook redaction sample, and the audit evidence that documents the same shapes (finding S-004). Not real credentials."
+paths = [
+  '''tests/.*\.py$''',
+  '''docs/runbook\.md$''',
+  '''audit/.*\.md$''',
+]
