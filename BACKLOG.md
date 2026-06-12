@@ -25,6 +25,7 @@ Do not re-add.
 | TOOL-1 | gitleaks flags synthetic redaction fixtures as secrets | **Closed.** Added a tightly-scoped `.gitleaks.toml` (extends the default ruleset) allowlisting only `tests/*.py`, `docs/runbook.md`, and `audit/*.md`. Validated: history scan drops from 13 leaks to 0, while a canary key planted under `src/` is still caught. The CI job that consumes it landed as TOOL-3. |
 | TOOL-3 | A CI secret-scan job (gitleaks) | **Closed.** Added `.github/workflows/gitleaks.yml` (push to main, PRs, daily, `workflow_dispatch`). Self-contained, supply-chain careful: pinned gitleaks 8.30.1 installed by discovering the exact asset name from the release's own checksums file and verifying the tarball before extracting (no hardcoded checksum, no third-party action / license endpoint); `permissions: contents: read`; `gitleaks detect -c .gitleaks.toml` fails the job on any finding. Validated: YAML parses, the detect command runs clean on the tree, the install asset-discovery + checksum-verify pipeline was dry-run (match OK, tamper FAILS), and both first live runs (PR #90 and the post-merge push to `main`) concluded `success`. Making it a *required* check is a repo-owner branch-protection decision. |
 | SEC-2 | `dependency-review.yml` re-enables `persist-credentials` | **Closed.** Removed the checkout step from the job entirely. Source-verified at the pinned action SHA (`a1d282b`, v5.0.0): for `pull_request` events the action takes base/head SHAs from the event payload (`src/git-refs.ts`) and calls the Dependency Graph compare API (`src/main.ts`); it spawns no git process and never reads the working tree unless a local `config-file` input is used (none is). The recorded "shells out to `git fetch`" rationale does not match this version's source. No checkout means no persisted token and no repo bytes on disk. Self-validated: the change runs on its own PR's `dependency-review` check. |
+| REL-1 | Starlette `TestClient` deprecation in `tests/test_metrics.py` | **Closed.** The "install httpx2" warning came from `starlette.testclient`, not from needing httpx 2 — re-checked this session: driving `/metrics` through httpx's own `ASGITransport` (already pinned, httpx 0.28.1) returns the identical response with **zero** warnings, and the `/metrics` custom route needs no lifespan context. Migrated the four HTTP `/metrics` tests off `starlette.testclient.TestClient` to a small `_http_get` ASGITransport helper. Suite now reports 0 warnings (was 1); `pytest -W error::DeprecationWarning tests/test_metrics.py` passes. No httpx2 bump, no dependency change. The earlier "blocked on upstream" disposition was wrong. |
 
 ## Security
 
@@ -32,9 +33,7 @@ Do not re-add.
 
 ## Reliability
 
-| ID | Finding | Severity | Effort | Rationale | Suggested approach | Dependencies | Owner role |
-|---|---|---|---|---|---|---|---|
-| REL-1 | [Q-003] Starlette `TestClient` deprecation in `tests/test_metrics.py:15` | low | M | `pytest` emits one `StarletteDeprecationWarning` ("install httpx2"). Upstream deprecation; the test passes. Becomes a hard break only when the pinned Starlette removes the shim. | Track the Starlette/httpx2 migration; bump and migrate the test client when the pin advances. No action until then. | upstream Starlette/httpx | maintainer |
+(Empty — REL-1 closed in the follow-up work above.)
 
 ## Quality
 
