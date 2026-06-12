@@ -1,0 +1,73 @@
+name: gitleaks
+
+# Secret scan of the working tree and full git history on every PR + push to
+# main, plus a daily rerun so a credential committed between releases surfaces
+# within 24h. This repository is a redaction tool and deliberately ships
+# *synthetic* secret-shaped fixtures (tests, the runbook redaction sample, the
+# audit evidence); `.gitleaks.toml` allowlists exactly those documented paths,
+# so a finding here means a real secret reached a non-fixture location (e.g.
+# under `src/`). See `.gitleaks.toml` and audit finding S-004/TOOL-1.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # 04:47 UTC daily. The odd minute mirrors nightly-fuzz / pip-audit so the
+    # security signals cluster together in the activity timeline.
+    - cron: "47 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: gitleaks (secret scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history so the scan covers every commit)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks (pinned, checksum-verified)
+        env:
+          # Bump together with any local-tooling expectation; gitleaks is
+          # feature-complete, so updates are security patches only.
+          GITLEAKS_VERSION: "8.30.1"
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          # Download the release's own checksums file, then discover the exact
+          # linux x64/amd64 tarball name from it (the arch token has changed
+          # across gitleaks releases). This avoids hardcoding a checksum here
+          # and fails loudly on any name/integrity mismatch.
+          curl -fsSL -o checksums.txt "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          tarball="$(grep -oE "gitleaks_${GITLEAKS_VERSION}_linux_(x64|amd64)\.tar\.gz" checksums.txt | head -1)"
+          if [ -z "${tarball}" ]; then
+            echo "could not find a linux x64/amd64 asset in the checksums file" >&2
+            cat checksums.txt >&2
+            exit 1
+          fi
+          curl -fsSL -o "${tarball}" "${base}/${tarball}"
+          # Verify the downloaded tarball against the exact line in the
+          # checksums file (field 2 == filename) before extracting anything.
+          awk -v f="${tarball}" '$2 == f' checksums.txt | sha256sum --check -
+          tar -xzf "${tarball}" gitleaks
+          install -m 0755 gitleaks /usr/local/bin/gitleaks
+          rm -f "${tarball}" checksums.txt gitleaks
+          gitleaks version
+
+      - name: Run gitleaks
+        run: |
+          # Default exit code 1 on any finding fails the job. `.gitleaks.toml`
+          # (config auto-discovered at the repo root, passed explicitly here
+          # for clarity) allowlists only the synthetic-fixture paths.
+          gitleaks detect \
+            --source . \
+            --config .gitleaks.toml \
+            --no-banner \
+            --redact \
+            --verbose

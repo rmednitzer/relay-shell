@@ -62,7 +62,8 @@ Do not constrain these capabilities unless explicitly requested.
 ## GitHub optimization checklist
 
 - CI workflow has least-privilege `permissions`.
-- Security workflows exist for CodeQL and dependency review.
+- Security workflows exist for CodeQL, dependency review, dependency CVE
+  scanning (pip-audit), and secret scanning (gitleaks).
 - Dependency update automation is configured.
 - Docs clearly explain secure deployment and privileged deployment tradeoffs.
 
