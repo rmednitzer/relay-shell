@@ -234,6 +234,9 @@ def test_dispatch_callback_exception_is_isolated() -> None:
 
     m = seccomp.SeccompMonitor(cap=10, arch="x86_64", on_event=boom, on_overflow=lambda pid: None)
     m._dispatch(pid=1, nr=59, args=(0, 0, 0, 0, 0, 0))  # must not raise
+    # The throwing sink was reached (count advanced) but its exception was
+    # swallowed by _safe_call, so control returned here normally.
+    assert m._count == 1
 
 
 def test_contextvar_set_get_clear() -> None:
@@ -421,6 +424,7 @@ def test_drain_breaks_on_stop_signal() -> None:
     try:
         os.write(m._stop_w, b"x")  # already-signalled stop
         m._drain(lr)  # stop_r readable -> immediate break
+        assert m._count == 0  # broke on the stop signal before any notification
     finally:
         for fd in (lr, lw, m._stop_r, m._stop_w):
             with contextlib.suppress(OSError, TypeError):
@@ -434,6 +438,7 @@ def test_drain_breaks_on_listener_hangup() -> None:
     os.close(lw)  # POLLHUP on lr
     try:
         m._drain(lr)
+        assert m._count == 0  # broke on POLLHUP before any notification
     finally:
         for fd in (lr, m._stop_r, m._stop_w):
             with contextlib.suppress(OSError, TypeError):
@@ -449,6 +454,7 @@ def test_drain_breaks_on_recv_error() -> None:
     os.write(lw, b"data")  # make lr readable
     try:
         m._drain(lr)
+        assert m._count == 0  # RECV ioctl failed; no notification was dispatched
     finally:
         for fd in (lr, lw, m._stop_r, m._stop_w):
             with contextlib.suppress(OSError, TypeError):
@@ -459,7 +465,9 @@ def test_respond_continue_swallows_ioctl_error() -> None:
     m = _monitor()
     r, w = os.pipe()
     try:
-        m._respond_continue(w, 0xABCDEF)  # ioctl on a pipe fails -> suppressed
+        # ioctl on a pipe fails; the error is suppressed and the call returns
+        # None instead of raising.
+        assert m._respond_continue(w, 0xABCDEF) is None
     finally:
         os.close(r)
         os.close(w)
