@@ -157,6 +157,25 @@ def _policy_text_ssh_forward(spec: str) -> str:
     return f"forward {spec}"
 
 
+def _policy_text_ssh_keyscan(hosts: str) -> str:
+    """The caller-chosen scan targets, so the deny list gates them (SEC-1).
+
+    ``ssh_keyscan`` opens caller-chosen outbound TCP connections — the
+    SSRF-shaped surface most worth gating by host — yet its probe text used to
+    be empty, so ``RELAY_SHELL_POLICY_DENY`` never saw the targets (unlike the
+    ``ssh_upload`` / ``ssh_download`` / ``ssh_forward`` synthetic builders,
+    which already name their host). Returning the raw ``hosts`` string closes
+    that gap and honours the runbook R-002 contract ("everything the executor
+    sees, the policy sees"). Tradeoff: the same text feeds the tier classifier,
+    so a host whose name embeds a ``\\b``-bounded heuristic word (``reboot``,
+    ``sudo``, ...) over-classifies the scan and is refused in ``guarded`` mode
+    (``open`` is advisory; ``readonly`` already refuses Tier 1). That is a
+    conservative false-deny with ``RELAY_SHELL_POLICY_ALLOW`` as the escape
+    hatch, and it matches how the transfer tools already behave.
+    """
+    return hosts
+
+
 class Relay:
     """Holds shared state and runs every tool through the audited path."""
 
@@ -1124,7 +1143,9 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                 "port": port,
                 "key_types": key_types,
             },
-            policy_text="",
+            # The scan targets are the caller-controlled, executor-visible part,
+            # so the deny list must see them (SEC-1). See _policy_text_ssh_keyscan.
+            policy_text=_policy_text_ssh_keyscan(hosts),
             max_output=app.clamp_output(cfg.max_output),
             work=_work,
         )

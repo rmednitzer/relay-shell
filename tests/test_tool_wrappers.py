@@ -457,3 +457,6 @@ def test_policy_text_builders_include_every_executor_visible_part() -> None:
     assert down.startswith("download ") and "h:/rem" in down and "/loc" in down
     fwd = srv._policy_text_ssh_forward("L:8080:db:5432")
     assert fwd.startswith("forward ") and "L:8080:db:5432" in fwd
+    # ssh_keyscan: the caller-chosen scan targets are the executor-visible
+    # part the deny list must see (SEC-1); the builder passes them through.
+    assert srv._policy_text_ssh_keyscan("h1, h2") == "h1, h2"
