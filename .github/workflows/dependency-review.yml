@@ -11,14 +11,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
-        # actions/checkout@v6 ships with persist-credentials default-off;
-        # the dependency-review-action then shells out to `git fetch` for
-        # base/head refs and is prompted for a username (terminal prompts
-        # disabled -> exit 128). Restoring the credential helper here
-        # keeps the workflow byte-cheap and pinned to v6 elsewhere.
-        with:
-          persist-credentials: true
+      # No checkout step, deliberately (audit finding SEC-2). At the pinned
+      # SHA the action is API-only: for `pull_request` events it takes the
+      # base/head SHAs from the event payload (src/git-refs.ts) and calls the
+      # Dependency Graph compare API (src/main.ts); it spawns no git process
+      # and never reads the working tree unless a local `config-file` input
+      # is used (we pass none). Verified against the action source at this
+      # SHA, 2026-06-12. Dropping the checkout removes the persisted-token
+      # surface a checkout would add and the repo bytes on disk. If a future
+      # bump starts needing the workspace, this job fails loudly on the PR
+      # that bumps it; restore a checkout WITHOUT `persist-credentials: true`
+      # and re-verify, rather than reverting to the credential helper.
       - name: Dependency review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
