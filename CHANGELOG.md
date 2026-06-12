@@ -32,6 +32,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Backlog reconciliation: the canonical backlog (`docs/runbook.md` §7) now
+  records the 2026-06-12 audit-pass closures where they belong — §7.2 gains
+  the QUAL-1/REL-1 notes, §7.5 gains SEC-1, TOOL-1+TOOL-3 (which also closes
+  the 2026-06-01 pack's deferred P1-2 gitleaks CI gate), SEC-2, and the
+  F-G2-verified status note; §8 gains a per-file entry (§8.21) for
+  `BACKLOG.md`. In `BACKLOG.md`, TOOL-2 (ruff pin skew) is closed as
+  accepted-as-designed with evidence that Renovate manages both pinned
+  locations (`renovate.json5` pre-commit manager + pip_requirements group;
+  PRs #83/#84/#85), leaving no open in-repo deferral. Docs only.
 - Tests: the four HTTP `/metrics` tests no longer use `starlette.testclient`
   (audit pass finding REL-1). That client warned `StarletteDeprecationWarning:
   ... install httpx2`; the tests now drive the in-process app through httpx's
