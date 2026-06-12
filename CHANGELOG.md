@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- The `dependency-review` CI job no longer persists the workflow token (audit
+  pass finding SEC-2). The checkout step (which carried
+  `persist-credentials: true`) was removed entirely: at the pinned action SHA
+  (v5.0.0) dependency-review-action is API-only for `pull_request` events —
+  base/head SHAs come from the event payload and the comparison runs through
+  the Dependency Graph API — so the job needs neither the repository contents
+  nor a credential helper. Verified against the action source at the pinned
+  SHA; the change validates itself on every PR's `dependency-review` check.
 - `ssh_keyscan` now feeds its caller-chosen target hosts to the policy layer,
   so `RELAY_SHELL_POLICY_DENY` can refuse a scan target (audit pass finding
   SEC-1). Previously the tool's policy probe text was empty, so the deny list
