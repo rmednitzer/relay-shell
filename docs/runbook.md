@@ -767,7 +767,13 @@ commitment.
 
 (Items in this category are tracked here as they land; the queue is
 currently empty. B-022 closed by the sshpool fault-injection PR -
-floor is now 90%, baseline ~92%.)
+floor is now 90%, baseline ~92%. The 2026-06-12 audit pass — evidence
+under `audit/`, deferral register in `BACKLOG.md` — closed two more:
+**QUAL-1** (PR #89), explicit observable asserts on the five seccomp
+termination tests in `tests/test_seccomp.py`; and **REL-1** (PR #92),
+the four HTTP `/metrics` tests migrated off the deprecated
+`starlette.testclient` onto httpx's own `ASGITransport`, taking the
+default suite from one warning to zero with no dependency change.)
 
 ### 7.3 Operations + observability
 
@@ -830,6 +836,40 @@ currently empty.)
   the 2026-06-01 audit pass surfaced: `chattr +a` + off-host shipping do
   not make a single altered record detectable, the chain does.
   Default-off keeps the record byte-identical, so no posture change.
+- **SEC-1 (P3)** — **Closed** (PR #89; from the 2026-06-12 audit pass,
+  IDs per `BACKLOG.md`). `ssh_keyscan` target hosts now reach the policy
+  layer: `_policy_text_ssh_keyscan(hosts)` in `server.py` feeds the scan
+  targets to `RELAY_SHELL_POLICY_DENY` (audited `denied=True` on a match,
+  short-circuiting before any subprocess), closing the one gap in the
+  R-002 contract and matching the transfer tools. Accepted tradeoff,
+  documented in the builder docstring: the same text feeds the tier
+  classifier, so a host name embedding a `\b`-bounded destructive word
+  over-classifies above Tier 1 (bites only `guarded`;
+  `RELAY_SHELL_POLICY_ALLOW` is the escape hatch). Paired tests in
+  `tests/test_ssh_keyscan_tool.py`.
+- **TOOL-1 + TOOL-3 (P3)** — **Closed** (PRs #89/#90). Secret scanning:
+  `.gitleaks.toml` allowlists exactly the synthetic-fixture paths
+  (`tests/*.py`, `docs/runbook.md`, `audit/*.md`; a canary under `src/`
+  still trips), and `.github/workflows/gitleaks.yml` runs the scan on
+  push to `main`, PRs, and daily — pinned gitleaks installed via the
+  release's own checksums file, `permissions: contents: read`, fails on
+  any finding. This also closes the **P1-2 gitleaks** CI gate deferred in
+  `audit/2026-06-01-engagement.md` §7.2. Making the check *required* is
+  a repo-owner branch-protection decision.
+- **SEC-2 (P3)** — **Closed** (PR #91). The `dependency-review` job
+  dropped its checkout step and `persist-credentials: true` entirely:
+  source-verified at the pinned action SHA that for `pull_request`
+  events it reads base/head SHAs from the event payload and uses the
+  Dependency Graph API only (no git subprocess, no working-tree read
+  without a local `config-file` input). Self-validated on its own PR's
+  check. The job now runs with no token persisted and no repo bytes on
+  disk.
+- Status note: **F-G2** (branch protection on `main`, carried since the
+  2026-05-27 pack) was verified **enabled** via the branches API on
+  2026-06-12 — the headline is closed; confirming the granular rules
+  (required reviews, required signed commits) remains an owner action,
+  which also unblocks the prior pack's deferred **P2-3**
+  require-signed-commits item.
 
 ---
 
@@ -1093,6 +1133,22 @@ plan lands in the same PR.)
   `git blame`. Any finding left open (e.g. F-G2 branch protection on
   `main`) must reappear in the next pack's outstanding-risks section
   until it is closed.
+
+### 8.21 `BACKLOG.md`
+
+- Keep: the Closed table (resolutions with their PRs), the per-category
+  open tables with the audit-charter schema (ID, severity, effort,
+  rationale, approach, dependencies, owner role), and the pointer naming
+  this runbook §7 as the canonical living backlog.
+- Add: a row per finding an audit pass defers; move it to the Closed
+  table (never delete it) when the work lands, naming the closing PR.
+- Remove: nothing; like the engagement packs, closed rows are the audit
+  trail.
+- Cross-checks: every open row must trace to a findings-register ID in
+  the `audit/` pack that produced it; anything that belongs to the
+  *ongoing* queue (not an audit deferral) lives in §7 here, not in
+  `BACKLOG.md` — when an item is recorded in both (e.g. SEC-1), the two
+  entries must name the same closing PR.
 
 ---
 
