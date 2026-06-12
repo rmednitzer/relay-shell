@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- Repository governance (GitHub-side, recorded here for the audit trail): the
+  `main-protection` ruleset on `main` now additionally enforces
+  `required_status_checks` — `check (py3.12)` / `check (py3.13)` /
+  `check (py3.14)` / `gitleaks (secret scan)`, bound to GitHub Actions,
+  strict=false — and `required_signatures`, alongside the existing
+  pull_request / non_fast_forward / deletion / required_linear_history rules.
+  Applied 2026-06-12 with explicit operator confirmation and verified
+  effective via the rules API; closes the F-G2 residual and the 2026-06-01
+  pack's deferred P2-3. pip-audit / dependency-review / CodeQL remain
+  advisory by operator choice.
 - The `dependency-review` CI job no longer persists the workflow token (audit
   pass finding SEC-2). The checkout step (which carried
   `persist-credentials: true`) was removed entirely: at the pinned action SHA

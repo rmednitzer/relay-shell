@@ -854,8 +854,8 @@ currently empty.)
   push to `main`, PRs, and daily — pinned gitleaks installed via the
   release's own checksums file, `permissions: contents: read`, fails on
   any finding. This also closes the **P1-2 gitleaks** CI gate deferred in
-  `audit/2026-06-01-engagement.md` §7.2. Making the check *required* is
-  a repo-owner branch-protection decision.
+  `audit/2026-06-01-engagement.md` §7.2. The required-check decision was
+  made and applied 2026-06-12 (see the F-G2 status note below).
 - **SEC-2 (P3)** — **Closed** (PR #91). The `dependency-review` job
   dropped its checkout step and `persist-credentials: true` entirely:
   source-verified at the pinned action SHA that for `pull_request`
@@ -865,11 +865,18 @@ currently empty.)
   check. The job now runs with no token persisted and no repo bytes on
   disk.
 - Status note: **F-G2** (branch protection on `main`, carried since the
-  2026-05-27 pack) was verified **enabled** via the branches API on
-  2026-06-12 — the headline is closed; confirming the granular rules
-  (required reviews, required signed commits) remains an owner action,
-  which also unblocks the prior pack's deferred **P2-3**
-  require-signed-commits item.
+  2026-05-27 pack) is **fully resolved** as of 2026-06-12. Protection is
+  a repository ruleset (`main-protection`, id 17307996; classic
+  protection is unset), enforcing: pull_request (0 approvals,
+  stale-review dismissal, thread resolution), non_fast_forward, deletion,
+  required_linear_history, **required_signatures** (closing the prior
+  pack's deferred **P2-3**), and **required_status_checks** — the three
+  CI legs (`check (py3.12/13/14)`) plus `gitleaks (secret scan)`, all
+  bound to GitHub Actions, strict=false. pip-audit / dependency-review /
+  CodeQL stay advisory by operator choice (an upstream CVE disclosure
+  must not block unrelated merges). Enumerated and applied via the
+  operator's Vertex-held `gh` credential with explicit T3 confirmation;
+  verified effective via `GET /rules/branches/main` after the change.
 
 ---
 
