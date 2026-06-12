@@ -870,13 +870,15 @@ currently empty.)
   protection is unset), enforcing: pull_request (0 approvals,
   stale-review dismissal, thread resolution), non_fast_forward, deletion,
   required_linear_history, **required_signatures** (closing the prior
-  pack's deferred **P2-3**), and **required_status_checks** — the three
-  CI legs (`check (py3.12/13/14)`) plus `gitleaks (secret scan)`, all
-  bound to GitHub Actions, strict=false. pip-audit / dependency-review /
-  CodeQL stay advisory by operator choice (an upstream CVE disclosure
-  must not block unrelated merges). Enumerated and applied via the
-  operator's Vertex-held `gh` credential with explicit T3 confirmation;
-  verified effective via `GET /rules/branches/main` after the change.
+  pack's deferred **P2-3**), and **required_status_checks** — exactly
+  `check (py3.12)`, `check (py3.13)`, `check (py3.14)`, and
+  `gitleaks (secret scan)` (the precise check-run names), all bound to
+  GitHub Actions, strict=false. pip-audit / dependency-review / CodeQL
+  stay advisory by operator choice (an upstream CVE disclosure must not
+  block unrelated merges). Enumerated and applied via the operator's
+  Vertex-held `gh` credential with explicit T3 confirmation; verified
+  effective after the change via
+  `GET /repos/rmednitzer/relay-shell/rules/branches/main`.
 
 ---
 
