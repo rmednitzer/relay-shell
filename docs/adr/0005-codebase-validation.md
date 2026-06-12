@@ -175,6 +175,46 @@ No security regressions. No capability regressions. The trust boundary
 schema change is additive and opt-in (default off), so off-host parsers
 built against the prior shape keep working.
 
+## Validation outcome (2026-06-12)
+
+Re-ran steps 1-4 as part of a full audit / validation / hardening pass
+(evidence pack under `audit/00-inventory.md`, `audit/01-baseline.md`,
+`audit/02-security-findings.md`, `audit/03-final-report.md`). This pass also
+reconciled the `mcp` pin drift surfaced as D-001 below. All gates green; the
+upstream contract holds on the bumped pin.
+
+- 21 MCP tools registered, equal to `tests/test_server.py::_EXPECTED` and
+  `docs/tools.md`; 3 MCP resources; 1 prompt (`operating_guide`, ADR 0008).
+- `ruff check`, `ruff format --check`, `mypy --strict` clean (19 source
+  files).
+- `pytest` — **339 passed, 13 deselected** (the `fuzz` marker is
+  nightly-only by design); `pytest -m fuzz` — **13** property invariants
+  pass. Runtime ~36 s.
+- `coverage` — **93%** with subprocess collection (floor 90%);
+  `patterns.py` / `redaction.py` / `policy.py` / `metrics.py` 100%,
+  `audit.py` 94%, `server.py` 95%, `seccomp.py` 97%.
+- Step 3 upstream surface now resolves on **`mcp==1.27.2`** (the pin moved
+  1.27.1 → 1.27.2 in PR #66, 2026-06-04) / `asyncssh` **2.23.1**: FastMCP
+  kwargs, `Context` ids, the nine OAuth provider methods,
+  `AuthorizationParams` / `OAuthToken` fields, and the `asyncssh.connect`
+  option kwargs all resolve unchanged; `pydantic` `model_validator` resolves
+  on the pinned `pydantic>=2.11`.
+- Step 4 behavior: audit-record schema intact (`ts, tool, tier, denied,
+  args, output_sha256, output_len, exit_code`); a sentinel present only in
+  command *output* does not reach the audit log; `--verify-audit` confirms a
+  freshly chained log (`anchored=True`); tier classification and the
+  redaction sample set match ADR 0003 / `SECURITY.md`. External scanners
+  (semgrep, bandit, pip-audit, trivy) reported zero findings.
+
+| ID    | Severity | Subject                                                                                                                                                                                                                          | Resolution |
+|-------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|
+| D-001 | low (docs) | The `mcp` pin moved 1.27.1 → 1.27.2 in PR #66 (2026-06-04), but the README status line (`README.md:6`) + compatibility matrix (`README.md:151`) and `docs/architecture.md:15` still named 1.27.1, and no ADR 0001 Consequences entry / ADR 0005 outcome had recorded the bump (the runbook §8.9 trigger was missed). | Synced the living docs to 1.27.2 + asyncssh 2.23.1 (this pass); added the ADR 0001 Consequences pin-movement line; recorded this outcome paragraph. Frozen ADR bodies and prior dated outcomes left intact. |
+
+No security regressions. No capability regressions. The trust boundary
+(ADR 0002) and tier semantics (ADR 0003) are unchanged; this pass corrected
+documentation drift and did not touch executor, policy, redaction, or audit
+behavior.
+
 ## Consequences
 
 - The runbook §2 audit pass is now grounded in a concrete, repeatable
@@ -182,7 +222,10 @@ built against the prior shape keep working.
   matter of re-running steps 1-4; deviations become a finding row in this
   table format.
 - Each `mcp` SDK bump triggers a fresh §2 pass (the step-3 symbol set is
-  the diff target). The current `mcp==1.27.1` pin remains validated.
+  the diff target). The latest validated pin is the one named in the most
+  recent dated outcome paragraph above (currently `mcp==1.27.2`, validated
+  2026-06-12), not a hardcoded version here — so this bullet does not drift
+  as the pin moves.
 - Each subsequent ADR landing should record its own validation outcome
   using the same format — terse findings table, severity, resolution —
   so the audit trail of *decisions* and the audit trail of *executions*

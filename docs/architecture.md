@@ -12,7 +12,7 @@ MCP client (Claude / Inspector / SDK)
         |
         |  stdio  |  streamable-HTTP (+ optional OAuth 2.1, behind a TLS/CIDR proxy)
         v
-   FastMCP (mcp==1.27.1)
+   FastMCP (mcp==1.27.2)
         v
    Relay.run()  ── policy.check ──> tier + admit/deny      (deny list first, always)
         |        ── redaction ───> audit args

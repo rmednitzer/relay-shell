@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation: reconciled the `mcp` pin drift (the SDK moved
+  1.27.1 → 1.27.2 in PR #66 but the living docs still named 1.27.1). The
+  README status line + compatibility matrix and `docs/architecture.md` now
+  read `mcp==1.27.2` (and `asyncssh` tested at 2.23.1); ADR 0001 gained a
+  pin-movement Consequences line and ADR 0005 a 2026-06-12 validation
+  outcome, closing the runbook §8.9 follow-through. Recorded as a full
+  audit / validation pass under `audit/` (inventory, baseline, findings
+  register, final report). No code, policy, redaction, or audit-record
+  behavior changed.
+
 ### Added
 
 - Seccomp-notify follow-ups (`SECCOMP_FILTER_VERSION` 2; closes runbook

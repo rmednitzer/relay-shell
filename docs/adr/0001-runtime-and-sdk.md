@@ -12,10 +12,13 @@ type safety, and how much transport/auth code we own versus delegate.
 
 ## Decision
 
-- **Python 3.12+** and the **official `mcp` SDK (FastMCP)**, pinned to
-  `mcp==1.27.1` (a Dependabot-tracked version validated by the test suite),
-  with the surrounding stack pinned in `requirements.txt`. FastMCP provides
-  the protocol, stdio and streamable-HTTP transports, and an OAuth 2.1 hook.
+- **Python 3.12+** and the **official `mcp` SDK (FastMCP)**, initially pinned
+  to `mcp==1.27.1` (a tracked version validated by the test suite), with the
+  surrounding stack pinned in `requirements.txt`. FastMCP provides the
+  protocol, stdio and streamable-HTTP transports, and an OAuth 2.1 hook. The
+  pin moves on a deliberate, tested bump; the *current* validated pin is the
+  one recorded in the latest [ADR 0005](0005-codebase-validation.md) outcome
+  paragraph, not this line (see Consequences).
 - **`asyncssh`** for all SSH. It is pure-Python, asyncio-native, and covers
   the entire required surface (exec, interactive PTY, SFTP, local/remote/
   dynamic forwarding, agent, `ProxyJump`/tunnels, `known_hosts`, keepalive)
@@ -31,6 +34,11 @@ type safety, and how much transport/auth code we own versus delegate.
   upgrades are a deliberate, tested change, not implicit.
 - No reliance on a system `ssh` binary or its version quirks; behaviour is
   reproducible across hosts.
+- Pin movement (one line per validated bump; the runbook §8.9 trigger):
+  - `mcp` 1.27.1 → 1.27.2 (PR #66, 2026-06-04). Validated by the full test
+    suite plus the ADR 0005 step-3 upstream-symbol check (FastMCP/`Context`
+    kwargs and the nine OAuth provider methods resolve unchanged); recorded
+    in the [ADR 0005](0005-codebase-validation.md) 2026-06-12 outcome.
 
 ## Rejected
 

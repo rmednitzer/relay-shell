@@ -3,8 +3,8 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/rmednitzer/relay-shell)
 
 **Status:** v0.1.0 · Python 3.12 / 3.13 / 3.14 · transports: `stdio` and
-`streamable-http` · MCP SDK `mcp==1.27.1` · last validated against
-upstream surfaces on 2026-06-01
+`streamable-http` · MCP SDK `mcp==1.27.2` · last validated against
+upstream surfaces on 2026-06-12
 ([ADR 0005](docs/adr/0005-codebase-validation.md)).
 
 A highly reliable, maximally capable [Model Context Protocol](https://modelcontextprotocol.io)
@@ -148,8 +148,8 @@ Configuration is environment-driven; see [`.env.example`](.env.example) and
 | Host OS (dev)     | macOS                                                      | Unsupported for production; `pty`/SSH paths work for local development.                |
 | Host OS (other)   | Windows                                                    | Out of scope — no PTY contract, no systemd integration.                                |
 | Transports        | `stdio`, `streamable-http`                                 | Stdio is the default. HTTP binds loopback and requires a TLS edge (see `deployment.md`). |
-| SDK               | `mcp==1.27.1`                                              | Pinned (ADR 0001); bumps trigger a fresh validation pass.          |
-| SSH library       | `asyncssh>=2.18` (tested at 2.23.0)                        | Native async; no shell-out to system `ssh`.                                            |
+| SDK               | `mcp==1.27.2`                                              | Pinned (ADR 0001); bumps trigger a fresh validation pass.          |
+| SSH library       | `asyncssh>=2.18` (tested at 2.23.1)                        | Native async; no shell-out to system `ssh`.                                            |
 
 ## Security posture
 
