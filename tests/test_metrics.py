@@ -131,11 +131,13 @@ def _http_settings(tmp_path, policy_mode: str = "open") -> Settings:
 async def _http_get(app, path: str) -> httpx.Response:
     """GET one path against an in-process ASGI app, without starlette.testclient.
 
-    starlette.testclient is deprecated against httpx 1.x (it warns "install
-    httpx2"; REL-1). httpx's own ASGITransport is the supported, warning-free
-    way to exercise the app in-process and needs no extra dependency. The
-    `/metrics` custom route does not touch the MCP session-manager lifespan,
-    so a plain transport GET is sufficient (no lifespan context needed).
+    starlette.testclient warns that pairing it with the `httpx` package is
+    deprecated and tells you to install `httpx2` instead (REL-1) — independent
+    of the installed httpx version (here httpx 0.28.1). Using httpx's own
+    ASGITransport directly sidesteps starlette.testclient entirely, so the
+    warning never fires and no `httpx2` dependency is needed. The `/metrics`
+    custom route does not touch the MCP session-manager lifespan, so a plain
+    transport GET is sufficient (no lifespan context needed).
     """
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
