@@ -11,8 +11,8 @@ Coverage:
 
 from __future__ import annotations
 
+import httpx
 import pytest
-from starlette.testclient import TestClient
 
 from relay_shell.config import Settings
 from relay_shell.metrics import (
@@ -128,6 +128,20 @@ def _http_settings(tmp_path, policy_mode: str = "open") -> Settings:
     )
 
 
+async def _http_get(app, path: str) -> httpx.Response:
+    """GET one path against an in-process ASGI app, without starlette.testclient.
+
+    starlette.testclient is deprecated against httpx 1.x (it warns "install
+    httpx2"; REL-1). httpx's own ASGITransport is the supported, warning-free
+    way to exercise the app in-process and needs no extra dependency. The
+    `/metrics` custom route does not touch the MCP session-manager lifespan,
+    so a plain transport GET is sufficient (no lifespan context needed).
+    """
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.get(path)
+
+
 def test_metrics_route_present_only_on_http(settings: Settings) -> None:
     stdio_mcp = build_server(settings)
     stdio_routes = [r.path for r in stdio_mcp.streamable_http_app().routes if hasattr(r, "path")]
@@ -139,10 +153,9 @@ def test_metrics_route_present_only_on_http(settings: Settings) -> None:
     assert "/metrics" in http_routes
 
 
-def test_metrics_route_serves_exposition(tmp_path) -> None:
+async def test_metrics_route_serves_exposition(tmp_path) -> None:
     mcp = build_server(_http_settings(tmp_path))
-    with TestClient(mcp.streamable_http_app()) as client:
-        resp = client.get("/metrics")
+    resp = await _http_get(mcp.streamable_http_app(), "/metrics")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/plain")
     body = resp.text
@@ -159,8 +172,7 @@ def test_metrics_route_serves_exposition(tmp_path) -> None:
 async def test_tool_call_ok_ticks_counter_via_route(tmp_path) -> None:
     mcp = build_server(_http_settings(tmp_path))
     await mcp.call_tool("shell_exec", {"command": "echo hello"})
-    with TestClient(mcp.streamable_http_app()) as client:
-        body = client.get("/metrics").text
+    body = (await _http_get(mcp.streamable_http_app(), "/metrics")).text
     # `echo hello` has no tier-2/3 keyword; classify() returns REVERSIBLE.
     assert f'{TOOL_CALLS_TOTAL}{{mode="open",outcome="ok",tier="1",tool="shell_exec"}} 1' in body
 
@@ -168,8 +180,7 @@ async def test_tool_call_ok_ticks_counter_via_route(tmp_path) -> None:
 async def test_tool_call_denied_ticks_counter_via_route(tmp_path) -> None:
     mcp = build_server(_http_settings(tmp_path, policy_mode="readonly"))
     await mcp.call_tool("shell_exec", {"command": "rm -rf /"})
-    with TestClient(mcp.streamable_http_app()) as client:
-        body = client.get("/metrics").text
+    body = (await _http_get(mcp.streamable_http_app(), "/metrics")).text
     assert (
         f'{TOOL_CALLS_TOTAL}{{mode="readonly",outcome="denied",tier="3",tool="shell_exec"}} 1'
         in body
@@ -183,7 +194,6 @@ async def test_tool_call_error_ticks_counter_via_route(tmp_path) -> None:
         "ssh_exec",
         {"host": "no-such-host-123.invalid", "command": "true", "timeout": 1},
     )
-    with TestClient(mcp.streamable_http_app()) as client:
-        body = client.get("/metrics").text
+    body = (await _http_get(mcp.streamable_http_app(), "/metrics")).text
     assert 'outcome="error"' in body
     assert 'tool="ssh_exec"' in body
