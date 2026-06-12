@@ -32,6 +32,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Tests: the four HTTP `/metrics` tests no longer use `starlette.testclient`
+  (audit pass finding REL-1). That client warned `StarletteDeprecationWarning:
+  ... install httpx2`; the tests now drive the in-process app through httpx's
+  own `ASGITransport` (the already-pinned httpx, no httpx2 needed), which
+  returns the identical response with no warning. The suite goes from one
+  warning to zero, and `pytest -W error::DeprecationWarning` passes on that
+  module. Test-only; no runtime or dependency change.
 - Documentation: reconciled the `mcp` pin drift (the SDK moved
   1.27.1 → 1.27.2 in PR #66 but the living docs still named 1.27.1). The
   README status line + compatibility matrix and `docs/architecture.md` now
