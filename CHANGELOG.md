@@ -36,13 +36,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- CI secret scanning via `.github/workflows/gitleaks.yml` (audit pass finding
+  TOOL-3). Runs on push to `main`, PRs, and a daily schedule. Self-contained
+  and supply-chain careful: a pinned gitleaks (8.30.1) is installed by
+  discovering the exact release asset from the release's own checksums file
+  and verifying the tarball before extracting — no hardcoded checksum, no
+  third-party action or license endpoint; `permissions: contents: read`;
+  `gitleaks detect -c .gitleaks.toml` fails the job on any finding. Making it
+  a required check is a repo-owner branch-protection decision.
 - `.gitleaks.toml` allowlist for the repository's synthetic secret fixtures
   (audit pass finding TOOL-1). This project is a redaction tool and ships fake
   secret-shaped values in `tests/`, the runbook redaction sample, and the
   audit evidence; the config (extending the default ruleset) allowlists only
-  those documented locations so a future `gitleaks detect -c .gitleaks.toml`
-  (or a CI secret-scan job) is not drowned in known fixtures. `src/` is not
-  allowlisted, so a real secret committed there still trips.
+  those documented locations so the `gitleaks` job above (and any local
+  `gitleaks detect -c .gitleaks.toml`) is not drowned in known fixtures.
+  `src/` is not allowlisted, so a real secret committed there still trips.
 - Seccomp-notify follow-ups (`SECCOMP_FILTER_VERSION` 2; closes runbook
   §7.5 B-024 and B-026, recorded in
   [ADR 0006](docs/adr/0006-seccomp-notify-audit-channel.md) §"Follow-ups

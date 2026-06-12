@@ -291,7 +291,7 @@ Use this for every PR, your own or external.
 ### 3.1 Pre-review checklist
 
 - [ ] CI is green on the PR head commit (lint, type-check, tests, CodeQL,
-      dependency-review).
+      dependency-review, pip-audit, gitleaks).
 - [ ] No new file is undocumented in `docs/architecture.md` module table.
 - [ ] No new tool is missing from `docs/tools.md`,
       `tests/test_server.py::_EXPECTED`, and the README capability tables.

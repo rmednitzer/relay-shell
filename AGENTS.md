@@ -60,7 +60,8 @@ Agents must preserve support for both.
 ### GitHub hygiene
 
 - Keep CI passing (ruff, mypy, pytest).
-- Keep security scanning enabled (CodeQL, dependency review).
+- Keep security scanning enabled (CodeQL, dependency review, pip-audit,
+  gitleaks secret scanning).
 - Prefer pinned major action versions and least-privilege workflow permissions.
 
 ## 5) Change workflow for agents
