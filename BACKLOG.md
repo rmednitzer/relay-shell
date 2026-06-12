@@ -50,7 +50,7 @@ records convention; see `audit/03-final-report.md`.)
 
 | ID | Item | Severity | Effort | Rationale | Owner role |
 |---|---|---|---|---|---|
-| F-G2 | Branch protection on `main` not enabled (carried from `audit/2026-06-01-engagement.md` §7.1, originally 2026-05-27) | high (governance) | S | Until it lands, CODEOWNERS is advisory, `main` accepts direct pushes, and signed-commits cannot be enforced. A ~5 min GitHub Settings → Branches action. **Not re-verified via API this session** — reasserted until closed. `[UNVERIFIED]` this pass. | repo owner |
+| F-G2 | Branch protection on `main` — **now enabled** (status changed since the prior packs) | resolved (headline) | — | Prior packs (`audit/2026-06-01-engagement.md` §7.1) carried this as an open HIGH item ("`main` accepts direct pushes"). **Verified this session** via the GitHub branches API: `main` reports `"protected": true` [V], so the core of F-G2 is closed. The *granular* rules (required reviews, required signed commits, linear history) were not separately enumerable through the available MCP tool surface, so those specifics are `[UNVERIFIED]`; confirm them in Settings → Branches if signed-commit enforcement (prior pack P2-3) is wanted. | repo owner |
 
 ## Notes on items NOT added here
 
