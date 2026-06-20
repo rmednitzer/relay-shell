@@ -6,7 +6,7 @@
 # pyproject.toml — the lower bounds there are the contract.
 mcp==1.27.2
 pydantic==2.13.4
-pydantic-settings==2.14.1
+pydantic-settings==2.14.2
 asyncssh==2.23.1
 uvicorn==0.49.0
 starlette==1.3.1
