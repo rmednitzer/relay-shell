@@ -150,9 +150,19 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             raise ValueError("client_id is required")
         async with self._lock:
             clients = self._clients.load()
-            if self._single_client and clients and cid not in clients:
+            incoming = json.loads(client_info.model_dump_json())
+            # Single-client lockdown freezes registration once the first client
+            # is registered. The earlier guard only refused a *new* client_id
+            # (`cid not in clients`), so an attacker who learned the existing
+            # client_id (and reached the CIDR-allowed registration endpoint)
+            # could re-register it and overwrite its `redirect_uri` — steering
+            # the next authorization code to an attacker URL (AUTH-2). Refuse
+            # anything that would create or *modify* a client under lockdown; a
+            # byte-identical re-registration is a harmless no-op and still
+            # allowed so a client that re-runs DCR is not broken.
+            if self._single_client and clients and clients.get(cid) != incoming:
                 raise ValueError("Dynamic client registration is closed (single-client lockdown).")
-            clients[cid] = json.loads(client_info.model_dump_json())
+            clients[cid] = incoming
             self._clients.save(clients)
 
     # --- authorization codes ---
