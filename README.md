@@ -184,7 +184,8 @@ Safety is achieved with **compensating controls**, not by crippling the tool:
 - **Bounds** - timeout and output caps on every tool; bounded session count
   and buffers; idle/lifetime reaping.
 - **Optional OAuth 2.1** - DCR with single-client lockdown, PKCE, file-backed
-  rotating tokens, lazy expiry (HTTP transport).
+  rotating tokens, lazy expiry (HTTP transport; **opt-in, off by default**).
+  See [`docs/auth.md`](docs/auth.md) for the authentication lifecycle.
 - **Edge** - parameterized Caddy config restricts the endpoint to known
   CIDRs with security headers and automated TLS (ACME / Let's Encrypt)
   installed via `deploy/install-edge.sh`; systemd unit applies resource

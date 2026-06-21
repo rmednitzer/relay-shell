@@ -170,9 +170,15 @@ all that matter.
 
 ## 5. OAuth 2.1 (optional)
 
+Authentication is **opt-in and off by default** (`RELAY_SHELL_AUTH_ENABLED`
+defaults to `false`) and applies only to the HTTP transport. A fresh install
+never stands up an authenticated — or unauthenticated — network listener
+unless you choose the HTTP transport; once you do, enable OAuth for any
+exposure beyond a trusted loopback + edge.
+
 ```bash
 RELAY_SHELL_TRANSPORT=http
-RELAY_SHELL_AUTH_ENABLED=true
+RELAY_SHELL_AUTH_ENABLED=true             # default false — opt in explicitly
 RELAY_SHELL_AUTH_ISSUER=https://relay-shell.example.org
 RELAY_SHELL_AUTH_STATE_DIR=/var/lib/relay-shell/oauth
 RELAY_SHELL_AUTH_SINGLE_CLIENT=true       # lock DCR after the first client registers
@@ -182,7 +188,9 @@ Install the `[http]` extra. Tokens are file-backed under the state dir
 (`clients.json`, `codes.json`, `tokens.json`), access tokens are short-lived,
 refresh tokens rotate on use, and expiry is enforced lazily on read. With
 single-client lockdown, dynamic registration is refused once one client
-exists.
+exists. See [`auth.md`](auth.md) for the full authentication lifecycle — how a
+client registers, obtains tokens, and stays authenticated via refresh
+rotation.
 
 ## 6. Audit
 
