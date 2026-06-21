@@ -1096,7 +1096,7 @@ plan lands in the same PR.)
 
 - Keep: the status-vocabulary table, the indexed ADR list (number /
   title / status / date / one-line subject), the "when to write an
-  ADR" criteria, the next-free-number marker (currently **0008**),
+  ADR" criteria, the next-free-number marker (currently **0009**),
   and the cross-references to `docs/architecture.md` and
   `docs/runbook.md` §6.
 - Add: a row to the index table whenever a new ADR lands. Update the

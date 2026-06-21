@@ -42,6 +42,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Validation pass (2026-06-21) recorded in
+  [ADR 0005](docs/adr/0005-codebase-validation.md): re-ran the steps 1-4
+  upstream-surface + behavior checks on the pinned `mcp==1.27.2` /
+  `asyncssh==2.23.1` — `ruff` / `ruff format` / `mypy --strict` clean,
+  `pytest` 342 passed (+13 fuzz), `coverage` 93% (floor 90%), 21 tools /
+  3 resources / 1 prompt, audit-record schema and output-hash-only invariant
+  intact. One documentation-drift finding (DOC-1): `docs/runbook.md` §8.18
+  named the ADR next-free-number marker as "0008" while `docs/adr/README.md`
+  has read "0009" since ADR 0008 landed; corrected §8.18 to match. Docs only.
 - Backlog reconciliation: the canonical backlog (`docs/runbook.md` §7) now
   records the 2026-06-12 audit-pass closures where they belong — §7.2 gains
   the QUAL-1/REL-1 notes, §7.5 gains SEC-1, TOOL-1+TOOL-3 (which also closes
