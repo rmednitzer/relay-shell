@@ -51,12 +51,12 @@ Closed (engagement PR + 2026-06-21 follow-up PRs):
 | DOC-4 | `CHANGELOG.md` `[Unreleased]` duplicate `### Security` / `### Changed` blocks | **Closed** (P2/P3 follow-up PR). Consolidated to one block per category (Added/Changed/Fixed/Security) via a content-preserving regroup; Keep a Changelog 1.1.0. |
 | SEC-8 | OAuth token-dir `chmod(0o700)` was best-effort | **Closed** (SEC-8 follow-up PR). `_Store` now creates the dir with `mode=0o700` (private at creation; umask can only tighten 0o700), still tightens a pre-existing dir best-effort, and then **fails closed only if the dir remains group/other-accessible**. An exposed token store is refused, while a correctly-`0o700` dir owned by another uid (which we cannot chmod) still passes — so the earlier deferral's false-break concern does not arise. Test `test_state_dir_permission_enforcement` covers both the refuse and accept paths; `test_state_dir_and_files_are_private` still green. |
 | FMT-2 | CEF header field values not passed through an escaper | **Closed** (config/audit-hardening PR). `_format_cef` now builds the header (`vendor\|product\|version\|sig\|name\|severity`) via a new `_cef_header_escape` (escapes `\` and the `\|` separator, not `=`). The fields are constants so the bytes are byte-identical (pinned by `test_audit_cef_format`); the escape is structural insurance against a future dynamic header field splitting a record. Test `test_cef_header_escape_neutralizes_pipe_and_backslash`. |
+| CI-3 | `sbom.yml` artifacts not SLSA-attested | **Closed** (sbom-attest PR). The `sbom` job gained `id-token: write` + `attestations: write` and an `actions/attest-build-provenance` (SHA-pinned v4) step over both `.cdx.{json,xml}` files, mirroring `release.yml`'s wheel attestation. Each SBOM now carries a Sigstore-signed in-toto provenance record in the public transparency log (verify with `gh attestation verify`). actionlint clean. |
 
 Open deferrals (severity order; smaller effort first):
 
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
-| CI-3 | `sbom.yml` artifacts not SLSA-attested | info | S | Add `attest-build-provenance` (release.yml precedent). | maintainer |
 | DOC-5 | `CHANGELOG.md` lacks Keep-a-Changelog version-compare links | info | XS | Deferred until a second release is tagged ("omit rather than fake"). | maintainer |
 
 Accepted as-designed / operator discretion (no action): **SEC-5** (`/metrics`

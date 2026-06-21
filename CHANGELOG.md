@@ -313,6 +313,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- SBOM build-provenance attestation (CI-3, 2026-06-21 backlog). The `sbom`
+  workflow now emits a Sigstore-signed in-toto build-provenance attestation for
+  each generated SBOM (`.cdx.json` / `.cdx.xml`) via SHA-pinned
+  `actions/attest-build-provenance` (`id-token: write` + `attestations: write`),
+  mirroring `release.yml`'s wheel attestation. A consumer can verify an SBOM is
+  the genuine output of this repo's CI — `gh attestation verify <file> --repo
+  rmednitzer/relay-shell` — rather than a swapped artifact. actionlint clean; no
+  change to the SBOM contents.
 - Deploy / edge hardening follow-ups (2026-06-21 backlog):
   - **DEP-1**: `install-edge.sh` no longer trusts the Caddy apt repo signing
     key trust-on-first-use. It dearmors the fetched key to a temp file, logs
