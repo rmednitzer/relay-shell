@@ -41,12 +41,12 @@ Closed in the engagement PR:
 |---|---|---|
 | SEC-3 | `pyproject.toml` dependency lower bounds below patched minimums | **Closed** (this PR). Floors raised: `asyncssh>=2.23.0` (GHSA-g794-3fmp-753h), `starlette>=1.3.0` (BadHost GHSA-86qp-5c8j-p5mr / GHSA-jp82-jpqv-5vv3), `PyJWT>=2.13.0` (HMAC confusion GHSA-xgmm-8j9v-c9wx), `cryptography>=48.0.1` (GHSA-537c-gmf6-5ccf). The pinned set was already safe; this codifies minimum-safe transitive versions, mirroring PR #97's `pydantic-settings` floor. Installed/tested set unchanged; gate green. |
 | TOOL-4 | CODEOWNERS required review on a non-existent `/.github/dependabot.yml` | **Closed** (this PR). The repo uses Renovate; reference corrected to `/renovate.json5`. |
+| SEC-4 | Add Anthropic `sk-ant-` + HuggingFace `hf_` redaction shapes | **Closed** (follow-up PR to the 2026-06-21 audit pass). Added whole-match patterns to `patterns.py` (`sk-ant-[A-Za-z0-9_-]{20,}`, `hf_[A-Za-z0-9]{34,}`), bumped `PATTERNS_VERSION` 4→5, added paired over/under-scrub tests in `tests/test_patterns.py`, and updated the `redaction.py` docstring + `SECURITY.md`. Gate green incl. the `redact` idempotency fuzz. |
 
 Open deferrals (severity order; smaller effort first):
 
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
-| SEC-4 | Add Anthropic `sk-ant-` + HuggingFace `hf_` redaction shapes | P2 | S | High-likelihood secrets in an AI-infra tool's command args; absent from `patterns.py`. Additive whole-match patterns + paired over/under-scrub tests + `PATTERNS_VERSION` 4→5 + docstring/SECURITY.md (F-004 precedent). OWASP Secrets Mgmt [V]. **Recommended next.** | maintainer |
 | DOC-4 | `CHANGELOG.md` `[Unreleased]` has duplicate `### Security` / `### Changed` blocks | P2 | S | Violates Keep a Changelog 1.1.0 + runbook §8.3. Consolidate to one block per category. | maintainer |
 | FMT-1 | LEEF formatter advertises `LEEF:2.0` but omits the mandatory delimiter header field | P3 | S | `audit.py` `_format_leef`: add the 6th `|` delimiter field or label `LEEF:1.0`; update `tests/test_audit.py`. IBM LEEF spec [V]. | maintainer |
 | CI-1 | `release.yml` `verify` job sets `persist-credentials: true` unnecessarily | P3 | XS | Authenticates via `GH_TOKEN` and never pushes; drop it (SEC-2 posture). | maintainer |

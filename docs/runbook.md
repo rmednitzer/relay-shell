@@ -888,14 +888,14 @@ currently empty.)
 - **2026-06-21 full audit pass (open hardening items)** — incremental, no
   posture change. Full register in [`BACKLOG.md`](../BACKLOG.md) (2026-06-21
   section) and [`audit/2026-06-21-engagement.md`](audit/2026-06-21-engagement.md).
-  **SEC-4 (P2)** add Anthropic `sk-ant-` / HuggingFace `hf_` redaction shapes
-  (recommended next); **SEC-5 (P3)** optional `/metrics` auth gate (low residual:
+  **SEC-5 (P3)** optional `/metrics` auth gate (low residual:
   default `http_host=127.0.0.1` + documented Caddy edge); **SEC-6 (P3)** hold the
   provider lock in `oauth.load_refresh_token`; **SEC-7 (P3)** forward the RFC 8707
   `resource` to the SDK `AuthorizationCode`; **SEC-8 (P3)** fail-closed token-dir
   `chmod`; **CI-1 (P3)** drop `release.yml` `persist-credentials`; **CI-2 (P3)**
   `sbom.yml` env-indirection + job-scoped permissions. SEC-3 (dependency floors)
-  and TOOL-4 (CODEOWNERS → Renovate) closed in the pass PR.
+  and TOOL-4 (CODEOWNERS → Renovate) closed in the pass PR; SEC-4 (Anthropic
+  `sk-ant-` / HuggingFace `hf_` redaction shapes) closed in the follow-up PR.
 
 ---
 

@@ -65,7 +65,13 @@ __all__ = [
 #     scanning); every body runs unbounded from its length floor and admits
 #     the token's full alphabet (ya29 dots, OpenAI URL-safe separators) so a
 #     match always collapses the *whole* token rather than leaving a tail.
-PATTERNS_VERSION = "4"
+# v5: REDACTION_PATTERNS gained Anthropic API keys (`sk-ant-...`) and
+#     HuggingFace user access tokens (`hf_...`) — both high-likelihood in an
+#     AI-infrastructure tool's command arguments and previously uncovered (the
+#     `sk-ant-` hyphens break the bare `sk-<alnum>` run; `hf_` had no rule).
+#     Whole-match collapses anchored on prefix + length floor like the rest
+#     (audit pass 2026-06-21, SEC-4).
+PATTERNS_VERSION = "5"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -173,6 +179,13 @@ REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     # the remainder of the key in the audit log.
     re.compile(r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_\-]{16,}"),
     re.compile(r"\bsk-[A-Za-z0-9]{16,}"),
+    # Anthropic API key (`sk-ant-<acct-type><nn>-<body>`). The `sk-ant-`
+    # hyphens break the bare `sk-<alnum>` run above, so it needs its own rule;
+    # the opaque body admits URL-safe `_`/`-` and runs unbounded from the floor
+    # so the whole key collapses rather than stopping at the first separator.
+    re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{20,}"),
+    # HuggingFace user access token (`hf_` + >=34 alnum body).
+    re.compile(r"\bhf_[A-Za-z0-9]{34,}"),
     # AWS access key id (fixed-length AKIA + 16).
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     # Slack token family (bot/user/app/refresh/legacy).

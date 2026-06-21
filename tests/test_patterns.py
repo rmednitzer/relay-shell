@@ -344,6 +344,26 @@ def test_registry_and_jwt_shapes_positive_and_negative() -> None:
     assert "app.eyeball.v2" in redaction.redact("app.eyeball.v2")
 
 
+def test_anthropic_and_huggingface_shapes_positive_and_negative() -> None:
+    # AI-provider tokens that arrive bare in command args (audit pass
+    # 2026-06-21, SEC-4). Built via _synth so the synthetic fixtures do not
+    # trip secret-scanning push protection; assert the full token is gone.
+    for tok in (
+        # Anthropic: the `sk-ant-` hyphens break the bare `sk-<alnum>` run, so
+        # this needs its own rule; the opaque body (URL-safe `_`/`-`) collapses
+        # whole rather than stopping at the first separator.
+        _synth("sk-ant-api03-", "abcdefghij_klmnopqrst-uvwxyz0123456789ABCD"),
+        _synth("sk-ant-admin01-", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"),
+        # HuggingFace user access token (`hf_` + >=34 alnum); unbounded body.
+        _synth("hf_", "a" * 34),
+        _synth("hf_", "Z" * 50),
+    ):
+        assert redaction.redact(tok) == "[REDACTED]", tok
+    # Negatives: short look-alikes stay intact (length floor not met).
+    assert "sk-ant-tier" in redaction.redact("sk-ant-tier list")
+    assert "hf_short" in redaction.redact("hf_short")
+
+
 # --- Policy: positive (classifies high) + negative (near-miss stays low) ---
 
 
