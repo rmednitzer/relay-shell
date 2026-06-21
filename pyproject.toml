@@ -25,7 +25,7 @@ classifiers = [
 dependencies = [
   "mcp==1.27.2",
   "pydantic>=2.11",
-  "pydantic-settings>=2.7",
+  "pydantic-settings>=2.14.2",
   "asyncssh>=2.18",
   "uvicorn>=0.34",
   "starlette>=0.47",
