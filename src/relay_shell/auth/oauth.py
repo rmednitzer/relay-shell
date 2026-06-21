@@ -173,6 +173,11 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                 code_challenge=rec.get("code_challenge", ""),
                 redirect_uri=rec["redirect_uri"],
                 redirect_uri_provided_explicitly=rec.get("redirect_uri_provided_explicitly", True),
+                # Thread the RFC 8707 resource indicator back through so the SDK
+                # can bind the issued token to the requested resource. Stored at
+                # authorize() time; previously dropped here (SEC-7). `.get` keeps
+                # back-compat with code records written before this field.
+                resource=rec.get("resource"),
             )
         except Exception:  # noqa: BLE001
             return None
@@ -271,20 +276,27 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
     async def load_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
-        rec = self._tokens.load().get(_REFRESH_PREFIX + refresh_token)
-        if not rec or rec.get("client_id") != (client.client_id or ""):
-            return None
-        if int(rec.get("expires_at", 0)) < _now():
-            return None
-        try:
-            return RefreshToken(
-                token=rec["token"],
-                client_id=rec["client_id"],
-                scopes=rec["scopes"],
-                expires_at=int(rec["expires_at"]),
-            )
-        except Exception:  # noqa: BLE001
-            return None
+        # Hold the per-provider lock for the read, like every other store
+        # access (SEC-6). Without it a concurrent revoke/rotation between this
+        # load and the subsequent exchange could surface a spurious
+        # invalid_grant to a legitimate refresh. asyncio.Lock is not reentrant,
+        # but no lock-holding path calls this method, so there is no nested
+        # acquire / deadlock.
+        async with self._lock:
+            rec = self._tokens.load().get(_REFRESH_PREFIX + refresh_token)
+            if not rec or rec.get("client_id") != (client.client_id or ""):
+                return None
+            if int(rec.get("expires_at", 0)) < _now():
+                return None
+            try:
+                return RefreshToken(
+                    token=rec["token"],
+                    client_id=rec["client_id"],
+                    scopes=rec["scopes"],
+                    expires_at=int(rec["expires_at"]),
+                )
+            except Exception:  # noqa: BLE001
+                return None
 
     async def exchange_refresh_token(
         self,

@@ -211,6 +211,51 @@ async def test_exchange_authorization_code_consumes_code(tmp_path: Path) -> None
     assert await p.load_authorization_code(client, code.code) is None
 
 
+async def test_authorization_code_forwards_resource(tmp_path: Path) -> None:
+    # SEC-7: the RFC 8707 `resource` indicator stored at authorize() time must
+    # be threaded back through load_authorization_code so the SDK can bind the
+    # token to the resource (it was stored but dropped before).
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path)
+    client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
+    p._codes.save(
+        {
+            "code-r": {
+                "code": "code-r",
+                "client_id": "client-a",
+                "scopes": ["mcp:tools"],
+                "expires_at": 2**31,
+                "code_challenge": "",
+                "redirect_uri": "https://x/cb",
+                "redirect_uri_provided_explicitly": True,
+                "resource": "https://api.example/mcp",
+            }
+        }
+    )
+    loaded = await p.load_authorization_code(client, "code-r")
+    assert loaded is not None
+    assert "api.example/mcp" in str(loaded.resource)
+    # Back-compat: a record written before SEC-7 (no `resource` key) still
+    # loads, with resource None.
+    p._codes.save(
+        {
+            "code-n": {
+                "code": "code-n",
+                "client_id": "client-a",
+                "scopes": ["mcp:tools"],
+                "expires_at": 2**31,
+                "code_challenge": "",
+                "redirect_uri": "https://x/cb",
+                "redirect_uri_provided_explicitly": True,
+            }
+        }
+    )
+    loaded_n = await p.load_authorization_code(client, "code-n")
+    assert loaded_n is not None
+    assert loaded_n.resource is None
+
+
 async def test_register_client_concurrent_no_lost_update(tmp_path: Path) -> None:
     """F-4 regression: concurrent register_client calls don't lose updates.
 

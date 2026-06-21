@@ -775,10 +775,11 @@ the four HTTP `/metrics` tests migrated off the deprecated
 `starlette.testclient` onto httpx's own `ASGITransport`, taking the
 default suite from one warning to zero with no dependency change.)
 
-The 2026-06-21 full audit pass adds **QUAL-2 (P3)** `ssh_forward` error-string
-hygiene (wrap a spec `ValueError` as a structured `RelayError`) and **FMT-1
-(P3)** / **FMT-2 (info)** LEEF/CEF formatter conformance in `audit.py`; full
-detail in [`BACKLOG.md`](../BACKLOG.md) (2026-06-21 section) and
+The 2026-06-21 full audit pass closed **QUAL-2 (P3)** (`ssh_forward` now raises a
+bounded error on a malformed spec) and **FMT-1 (P3)** (the LEEF formatter emits
+the mandatory LEEF 2.0 delimiter field) in the P2/P3 follow-up PR; **FMT-2
+(info)** (CEF header-field escaping — no runtime defect) remains. Full detail in
+[`BACKLOG.md`](../BACKLOG.md) (2026-06-21 section) and
 [`audit/2026-06-21-engagement.md`](audit/2026-06-21-engagement.md).
 
 ### 7.3 Operations + observability
@@ -885,17 +886,18 @@ currently empty.)
   Vertex-held `gh` credential with explicit T3 confirmation; verified
   effective after the change via
   `GET /repos/rmednitzer/relay-shell/rules/branches/main`.
-- **2026-06-21 full audit pass (open hardening items)** — incremental, no
-  posture change. Full register in [`BACKLOG.md`](../BACKLOG.md) (2026-06-21
-  section) and [`audit/2026-06-21-engagement.md`](audit/2026-06-21-engagement.md).
-  **SEC-5 (P3)** optional `/metrics` auth gate (low residual:
-  default `http_host=127.0.0.1` + documented Caddy edge); **SEC-6 (P3)** hold the
-  provider lock in `oauth.load_refresh_token`; **SEC-7 (P3)** forward the RFC 8707
-  `resource` to the SDK `AuthorizationCode`; **SEC-8 (P3)** fail-closed token-dir
-  `chmod`; **CI-1 (P3)** drop `release.yml` `persist-credentials`; **CI-2 (P3)**
-  `sbom.yml` env-indirection + job-scoped permissions. SEC-3 (dependency floors)
-  and TOOL-4 (CODEOWNERS → Renovate) closed in the pass PR; SEC-4 (Anthropic
-  `sk-ant-` / HuggingFace `hf_` redaction shapes) closed in the follow-up PR.
+- **2026-06-21 full audit pass** — incremental hardening, no posture change.
+  Full register in [`BACKLOG.md`](../BACKLOG.md) (2026-06-21 section) and
+  [`audit/2026-06-21-engagement.md`](audit/2026-06-21-engagement.md). Closed:
+  SEC-3 (dependency floors) + TOOL-4 (CODEOWNERS → Renovate) in the pass PR;
+  SEC-4 (Anthropic/HuggingFace redaction) in a follow-up; SEC-6 (refresh-token
+  lock), SEC-7 (RFC 8707 `resource` forwarding), CI-1 (`release.yml`
+  `persist-credentials`), CI-2 (`sbom.yml` interpolation + permissions) in the
+  P2/P3 follow-up. Still open: **SEC-5 (P3)** optional `/metrics` auth gate and
+  **SEC-8 (P3)** token-dir fail-closed chmod — both deferred after review (low
+  residual: `/metrics` is default-`127.0.0.1` + Caddy-firewalled and the gate is
+  an auth-surface design call; token files are already `0o600`); rationale in
+  `BACKLOG.md`.
 
 ---
 

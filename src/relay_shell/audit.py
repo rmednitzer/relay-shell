@@ -68,8 +68,13 @@ def _format_cef(entry: dict[str, Any]) -> str:
 
 
 def _format_leef(entry: dict[str, Any]) -> str:
+    # LEEF 2.0 carries a mandatory delimiter field (the 6th header field) that
+    # declares the character separating the extension's key=value pairs. We use
+    # a tab, expressed as the hex form `x09` per the LEEF 2.0 spec, so a strict
+    # parser reads the extension correctly instead of treating `audit` as the
+    # delimiter (FMT-1).
     ext = "\t".join(f"{k}={_leef_escape(_stringify(v))}" for k, v in sorted(entry.items()))
-    return f"LEEF:2.0|relay-shell|relay-shell|1.0|audit\t{ext}"
+    return f"LEEF:2.0|relay-shell|relay-shell|1.0|audit|x09|{ext}"
 
 
 _FORMATTERS = {"jsonl": _format_jsonl, "cef": _format_cef, "leef": _format_leef}

@@ -70,7 +70,11 @@ jobs:
         with:
           ref: ${{ steps.tag.outputs.tag }}
           fetch-depth: 0
-          persist-credentials: true
+          # No step after checkout uses git auth (the tag signature is
+          # verified via the REST API with an explicit GH_TOKEN, and the
+          # version check reads the working tree), so do not persist the
+          # token in .git/config (CI-2 finding; matches the SEC-2 posture).
+          persist-credentials: false
 
       - name: Assert tag matches pyproject version (at the tagged commit)
         id: version

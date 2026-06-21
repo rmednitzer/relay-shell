@@ -202,7 +202,7 @@ def test_audit_leef_format(tmp_path: Path) -> None:
     log = AuditLogger(str(path), fmt="leef")
     log.record(tool="server_info", args={}, output="ok", exit_code=0, tier=0)
     line = path.read_text(encoding="utf-8").strip()
-    assert line.startswith("LEEF:2.0|relay-shell|relay-shell|1.0|audit\t")
+    assert line.startswith("LEEF:2.0|relay-shell|relay-shell|1.0|audit|x09|")
     assert "tool=server_info" in line
     assert "\toutput_len=" in line
 

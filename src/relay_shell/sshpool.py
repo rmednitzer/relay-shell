@@ -416,31 +416,56 @@ class SshPool:
                 await transfer
         return f"downloaded {target}:{remote} -> {local}"
 
+    @staticmethod
+    def _parse_forward_spec(spec: str) -> tuple[str, int, str, int]:
+        """Parse an L/R/D forward spec into (kind, listen_port, dest_host, dest_port).
+
+        Raises a controlled ``ValueError`` (never a raw Python parse internal
+        such as "invalid literal for int()" or a tuple-unpack error) on a
+        malformed spec, so the message surfaced through the tool wrapper stays
+        bounded (QUAL-2). ``D`` (dynamic SOCKS) has no destination; it returns
+        host="" port=0.
+        """
+        kind, _, rest = spec.partition(":")
+        kind = kind.upper().strip()
+        if kind in ("L", "R"):
+            try:
+                lport_s, dhost, dport_s = rest.split(":")
+                return kind, int(lport_s), dhost, int(dport_s)
+            except ValueError:
+                raise ValueError(
+                    f"invalid {kind} forward spec; expected "
+                    f"{kind}:<listen_port>:<dest_host>:<dest_port>"
+                ) from None
+        if kind == "D":
+            try:
+                return "D", int(rest), "", 0
+            except ValueError:
+                raise ValueError("invalid D forward spec; expected D:<listen_port>") from None
+        raise ValueError("forward spec must start with L:, R: or D:")
+
     async def add_forward(
         self, target: str, spec: str, *, connect_kwargs: dict[str, Any]
     ) -> ForwardHandle:
+        # Validate the spec before opening a connection: a malformed spec now
+        # fails fast with a bounded message instead of connecting first and
+        # then leaking a raw int()/unpack ValueError (QUAL-2).
+        kind, lport, dhost, dport = self._parse_forward_spec(spec)
         conn = await self.connect(target, **connect_kwargs)
-        kind, _, rest = spec.partition(":")
-        kind = kind.upper().strip()
         fid = gen_id("fwd")
         if kind == "L":
-            lport_s, dhost, dport_s = rest.split(":")
-            listener = await conn.forward_local_port("", int(lport_s), dhost, int(dport_s))
+            listener = await conn.forward_local_port("", lport, dhost, dport)
             handle = ForwardHandle(
-                fid, "local", spec, listener.get_port(), f"{dhost}:{dport_s}", listener
+                fid, "local", spec, listener.get_port(), f"{dhost}:{dport}", listener
             )
         elif kind == "R":
-            lport_s, dhost, dport_s = rest.split(":")
-            listener = await conn.forward_remote_port("", int(lport_s), dhost, int(dport_s))
+            listener = await conn.forward_remote_port("", lport, dhost, dport)
             handle = ForwardHandle(
-                fid, "remote", spec, listener.get_port(), f"{dhost}:{dport_s}", listener
+                fid, "remote", spec, listener.get_port(), f"{dhost}:{dport}", listener
             )
-        elif kind == "D":
-            lport = int(rest)
+        else:  # D (validated above)
             listener = await conn.forward_socks("", lport)
             handle = ForwardHandle(fid, "dynamic", spec, listener.get_port(), "socks", listener)
-        else:
-            raise ValueError("forward spec must start with L:, R: or D:")
         async with self._lock:
             self._forwards[fid] = handle
         return handle
