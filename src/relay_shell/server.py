@@ -154,18 +154,30 @@ def _policy_text_session_send(data: str) -> str:
 
 
 def _policy_text_ssh_upload(host: str, local_path: str, remote_path: str) -> str:
-    """A synthetic ``upload`` phrase naming both endpoints, for the deny list."""
-    return f"upload {local_path} {host}:{remote_path}"
+    """A synthetic ``upload`` phrase naming both endpoints, for the deny list.
+
+    Widened with the canonical IP of ``host`` (SSRF-2) so an IP deny is not
+    dodged by a decimal/hex/octal/IPv4-mapped spelling of the destination.
+    """
+    return _with_canonical_ips(f"upload {local_path} {host}:{remote_path}", host)
 
 
 def _policy_text_ssh_download(host: str, remote_path: str, local_path: str) -> str:
-    """A synthetic ``download`` phrase naming both endpoints, for the deny list."""
-    return f"download {host}:{remote_path} {local_path}"
+    """A synthetic ``download`` phrase naming both endpoints, for the deny list.
+
+    Widened with the canonical IP of ``host`` (SSRF-2), as in ``ssh_upload``.
+    """
+    return _with_canonical_ips(f"download {host}:{remote_path} {local_path}", host)
 
 
 def _policy_text_ssh_forward(spec: str) -> str:
-    """A synthetic ``forward`` phrase carrying the spec, for the deny list."""
-    return f"forward {spec}"
+    """A synthetic ``forward`` phrase carrying the spec, for the deny list.
+
+    Widened with the canonical IP of the forward's destination host (SSRF-2):
+    an ``L:/R:`` forward dials ``dhost``, so an IP deny on, say, the cloud
+    metadata address should catch it however the caller spelled it.
+    """
+    return _with_canonical_ips(f"forward {spec}", _forward_dhost(spec))
 
 
 def _canonical_ips(token: str) -> list[str]:
@@ -209,21 +221,48 @@ def _canonical_ips(token: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-def _augment_probe_with_ips(hosts: str) -> str:
-    """Append canonical IP forms of any obfuscated-IP tokens in ``hosts``.
+def _with_canonical_ips(text: str, *host_tokens: str) -> str:
+    """Append the canonical IP form of any of ``host_tokens`` to a probe ``text``.
 
     So an IP-based ``RELAY_SHELL_POLICY_DENY`` matches the address regardless of
-    the encoding the caller used (SSRF-1). Only forms that *differ* from what
-    the caller wrote are appended, keeping the probe clean for plain literals
-    and hostnames. Tokens split on the ssh_keyscan list separators (whitespace
-    and commas).
+    the encoding the caller used (SSRF-1/SSRF-2). Only forms that *differ* from
+    what the caller wrote and are not already present are appended, keeping the
+    probe clean for plain literals and hostnames. The caller passes the exact
+    host tokens (rather than re-tokenizing ``text``) so colon-bearing literals —
+    an IPv6 address, or a ``host:path`` / ``L:port:dhost:port`` phrase — are
+    canonicalized as whole tokens instead of being split apart.
     """
     extra: list[str] = []
-    for tok in (t for t in hosts.replace(",", " ").split() if t):
+    for tok in host_tokens:
         for ip in _canonical_ips(tok):
-            if ip != tok and ip not in extra:
+            if ip != tok and ip not in extra and ip not in text:
                 extra.append(ip)
-    return f"{hosts} {' '.join(extra)}" if extra else hosts
+    return f"{text} {' '.join(extra)}" if extra else text
+
+
+def _augment_probe_with_ips(hosts: str) -> str:
+    """Widen an ``ssh_keyscan`` host-list probe with canonical IP forms (SSRF-1).
+
+    The host list is whitespace/comma-separated; each entry is a candidate host
+    token fed to :func:`_with_canonical_ips`.
+    """
+    tokens = [t for t in hosts.replace(",", " ").split() if t]
+    return _with_canonical_ips(hosts, *tokens)
+
+
+def _forward_dhost(spec: str) -> str:
+    """Best-effort destination host from an ``L:/R:`` forward spec (else "").
+
+    ``L:lport:dhost:dport`` / ``R:rport:dhost:dport`` name a destination host
+    the forward dials; ``D:lport`` (dynamic SOCKS) names none. Lenient and
+    parse-free (the authoritative parse + validation happens later in
+    ``SshPool.add_forward``): a malformed spec just yields no dhost, so the
+    probe is only ever *widened*, never broken.
+    """
+    parts = spec.split(":")
+    if len(parts) >= 4 and parts[0].strip().upper() in ("L", "R"):
+        return parts[2]
+    return ""
 
 
 def _policy_text_ssh_keyscan(hosts: str) -> str:

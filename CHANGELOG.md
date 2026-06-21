@@ -313,6 +313,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- IP-encoding deny bypass closed on the transfer/forward tools too (SSRF-2,
+  2026-06-21 backlog) — the follow-up to SSRF-1. A shared
+  `_with_canonical_ips` helper (SSRF-1's `ssh_keyscan` path now delegates to it)
+  is applied to the `ssh_upload`/`ssh_download` destination `host` and the
+  `ssh_forward` `L:/R:` destination host, so an IP-based `RELAY_SHELL_POLICY_DENY`
+  catches a decimal/hex/octal/IPv4-mapped destination on those tools, not only
+  on `ssh_keyscan`. Still no DNS in the policy path (hostname/rebinding targets
+  need an egress firewall). Additive to the probe; tests in
+  `tests/test_tool_wrappers.py`.
 - SBOM build-provenance attestation (CI-3, 2026-06-21 backlog). The `sbom`
   workflow now emits a Sigstore-signed in-toto build-provenance attestation for
   each generated SBOM (`.cdx.json` / `.cdx.xml`) via SHA-pinned
