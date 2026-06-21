@@ -46,9 +46,9 @@ that a persuaded model still cannot exceed the operator-defined envelope:
   flags (both `--password` and single-dash `-token=` forms),
   URL-embedded credentials, and a set of structurally-anchored provider
   token shapes (Google `AIza`/`ya29.`, Stripe `sk_`/`rk_`, GitLab
-  `glpat-`, npm `npm_`, PyPI `pypi-`, GitHub `gh*_`, OpenAI `sk-`, AWS
-  `AKIA`, Slack `xox*`, and JWTs) that are collapsed even when they
-  arrive bare in a JSON body or log line. Anchors track the canonical
+  `glpat-`, npm `npm_`, PyPI `pypi-`, GitHub `gh*_`, OpenAI `sk-`, Anthropic
+  `sk-ant-`, HuggingFace `hf_`, AWS `AKIA`, Slack `xox*`, and JWTs) that are
+  collapsed even when they arrive bare in a JSON body or log line. Anchors track the canonical
   secret-scanning rulesets; each is keyed on prefix + length, never on
   the value's character class. The compact short-form
   `-p<value>` is intentionally redacted only for MySQL-family commands

@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- Redaction now covers Anthropic API keys (`sk-ant-…`) and HuggingFace user
+  access tokens (`hf_…`) — high-likelihood secrets in an AI-infrastructure
+  tool's command arguments that the prior pattern set missed (audit pass
+  finding SEC-4). Added as whole-match collapses in `patterns.py`
+  (`PATTERNS_VERSION` 4→5) with paired over/under-scrub tests in
+  `tests/test_patterns.py`; `redaction.py` docstring and `SECURITY.md` updated.
+  Additive — the audit-record shape is unchanged and the `redact` idempotency
+  fuzz still passes.
 - Full validation + security audit pass (2026-06-21) —
   [ADR 0005](docs/adr/0005-codebase-validation.md) +
   `audit/2026-06-21-engagement.md`. Scanner battery (pip-audit, trivy, bandit,

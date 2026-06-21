@@ -28,7 +28,8 @@ and ``gh[pousr]_`` tokens, OpenAI ``sk-`` (including the
 ``sk-proj-``/``sk-svcacct-``/``sk-admin-`` prefixes), AWS access key ids,
 Slack ``xox*`` tokens, Google API keys (``AIza``) and OAuth tokens
 (``ya29.``), Stripe ``sk_``/``rk_`` keys, GitLab ``glpat-`` tokens, npm
-``npm_`` tokens, PyPI ``pypi-`` upload tokens, and JWTs. The anchor is the
+``npm_`` tokens, PyPI ``pypi-`` upload tokens, Anthropic ``sk-ant-`` keys,
+HuggingFace ``hf_`` tokens, and JWTs. The anchor is the
 prefix and a length floor, never the value's character class, so the rule
 survives a provider rotating its alphabet.
 
