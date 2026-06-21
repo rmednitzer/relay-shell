@@ -113,7 +113,8 @@ through environment variables and provides:
 
 - automatic TLS via ACME (Let's Encrypt by default, ZeroSSL fallback),
 - an `@blocked` matcher that 403s any source outside the allowlisted CIDRs,
-- HSTS / `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy`,
+- HSTS / `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` /
+  `Content-Security-Policy` (`default-src 'self'; frame-ancestors 'none'`),
 - `reverse_proxy` to the loopback MCP port.
 
 Set the allowlist to the CIDRs of your MCP client only. The OAuth browser
@@ -156,7 +157,12 @@ sudo deploy/install-edge.sh
 | `RELAY_SHELL_EDGE_CADDY_GPG_FPR` | Pin the Caddy apt repo signing key: the installer fails closed if the fetched key's fingerprint does not match (DEP-1). The key is fetched over TLS but otherwise trust-on-first-use; the installer always logs the observed fingerprint, so set this to that value (after confirming it at <https://caddyserver.com/docs/install>) to enforce it. Unset = unpinned, with a warning. Only used when the installer provisions Caddy via apt. |
 
 The installer is idempotent: re-run it after editing the env file to push
-changes. The drop-in at
+changes. Both installers create `/etc/relay-shell` as `0750`
+(`root:relay-shell`), not world-listable — systemd reads the EnvironmentFiles
+as root, so the service is unaffected. To pin the Caddy apt repo signing key,
+set `RELAY_SHELL_EDGE_CADDY_GPG_FPR` (see the env-var table above); otherwise
+the installer logs the fetched key's fingerprint and warns that it is
+unpinned. The drop-in at
 `/etc/systemd/system/caddy.service.d/relay-shell-edge.conf` is static and
 references a managed `EnvironmentFile=/etc/relay-shell/relay-shell-edge.env`,
 so user-supplied values never land inside systemd unit syntax. Cert state

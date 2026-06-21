@@ -119,11 +119,13 @@ worth calling out explicitly:
 
 ## Security-sensitive PRs
 
-A PR is security-sensitive if it touches any of: `audit.py`,
-`redaction.py`, `policy.py`, the `Relay.run()` body in `server.py`,
-`auth/oauth.py`, `deploy/install*.sh`, or `deploy/Caddyfile`. The
-PR-template checklist (under `.github/`) has a section for these;
-tick it and walk the runbook §3.3 checklist before requesting review.
+A PR is security-sensitive if it touches any of: `patterns.py`, `audit.py`,
+`redaction.py`, `policy.py`, the `Relay.run()` body or a resource handler in
+`server.py`, `auth/oauth.py`, `metrics.py`, `seccomp.py`,
+`deploy/install*.sh`, or `deploy/Caddyfile` (the canonical list, with
+per-file rationale, is runbook §3.3). The PR-template checklist (under
+`.github/`) has a section for these; tick it and walk the runbook §3.3
+checklist before requesting review.
 
 For PRs that touch the audit-record shape, the policy admission path,
 or anything that writes systemd units / EnvironmentFiles, expect a

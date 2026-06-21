@@ -165,6 +165,26 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Documentation consistency sweep (all living `.md` + comments) after the
+  2026-06-21 backlog run; docs only, no code/behavior change:
+  - **B-005 reconciliation**: runbook §4.7 said "PyPI publish automation
+    (B-005) is still open", contradicting §6.6 and the `[0.1.0]` "Closes B-005"
+    entry — the `release.yml` OIDC trusted-publishing pipeline has existed since
+    0.1.0. §4.7 now points to §6.6; the only remaining operator action is the
+    one-time PyPI trusted-publisher claim (documented in §6.6).
+  - `docs/deployment.md`: the §4 edge security-header list now includes
+    `Content-Security-Policy` (EDGE-2); the §4a installer note records the
+    `/etc/relay-shell` `0750` hardening (DEP-2) and the
+    `RELAY_SHELL_EDGE_CADDY_GPG_FPR` key-pin (DEP-1).
+  - `.github/PULL_REQUEST_TEMPLATE.md` + `CONTRIBUTING.md`: the
+    security-sensitive-diff trigger list now matches runbook §3.3 (adds
+    `patterns.py`, `metrics.py`, `seccomp.py`), and the PR-template CI checklist
+    matches §3.1 (adds `pip-audit`, `gitleaks`).
+  - runbook §2.6 limits snippet adds `RELAY_SHELL_MAX_FORWARDS` (the SSH-3
+    cap, reported by `server_info`). Verified the rest is current: tool count
+    21, `PATTERNS_VERSION` 7, `mcp==1.27.2`, ADR next-free 0009, the new
+    redaction shapes and `docs/auth.md` cross-links. Frozen records
+    (`audit/*.md`, ADR bodies, released CHANGELOG entries) left as authored.
 - Validation pass (2026-06-21) recorded in
   [ADR 0005](docs/adr/0005-codebase-validation.md): re-ran the steps 1-4
   upstream-surface + behavior checks on the pinned `mcp==1.27.2` /

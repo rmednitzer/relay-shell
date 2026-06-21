@@ -215,6 +215,7 @@ RELAY_SHELL_SSH_CONFIG=/tmp/no \
 RELAY_SHELL_MAX_TIMEOUT=900 \
 RELAY_SHELL_MAX_OUTPUT_HARD=1048576 \
 RELAY_SHELL_MAX_SESSIONS=64 \
+RELAY_SHELL_MAX_FORWARDS=64 \
 python -c "
 import asyncio
 from relay_shell.config import Settings
@@ -505,11 +506,14 @@ Before tagging a release:
 - [ ] ADRs that informed the release are linked from the changelog entry.
 - [ ] `git tag -s vX.Y.Z` (signed) and `git push --tags`.
 
-When the tag lands, `.github/workflows/sbom.yml` generates a CycloneDX
-SBOM (JSON + XML, CDX spec 1.5) for the resolved environment and
-attaches both files to the GitHub release. PyPI publish automation
-(B-005) is still open; tag-driven trusted publishing will land once
-the PyPI trusted-publisher claim is configured on the project side.
+When the tag lands, `.github/workflows/release.yml` builds and publishes to
+PyPI via OIDC trusted publishing (verify → build → publish; the full
+procedure and the one-time PyPI / `pypi`-environment setup are in §6.6), and
+`.github/workflows/sbom.yml` generates a CycloneDX SBOM (JSON + XML, CDX
+spec 1.5) for the resolved environment, attaches both files to the GitHub
+release, and attests their build provenance. B-005 (PyPI publish automation)
+closed in 0.1.0 with `release.yml`; the one-time PyPI trusted-publisher /
+`pypi`-environment setup is documented in §6.6.
 
 ---
 
