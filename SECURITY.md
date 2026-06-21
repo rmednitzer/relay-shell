@@ -108,6 +108,17 @@ credentials reach. In privileged posture, this is effectively root-level host
 control. Scope accounts/keys accordingly and isolate the host. This is stated
 plainly so it can be designed around rather than discovered.
 
+## Supported versions
+
+Security fixes land on the latest released minor. The project is pre-1.0, so
+only the most recent minor receives patches; older minors are not backported.
+Pin to the latest `0.x` minor and upgrade forward.
+
+| Version | Supported          |
+|---------|--------------------|
+| 0.2.x   | :white_check_mark: |
+| 0.1.x   | :x:                |
+
 ## Reporting a vulnerability
 
 Open a private security advisory on the GitHub repository, or open an issue
