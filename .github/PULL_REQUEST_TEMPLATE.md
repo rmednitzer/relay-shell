@@ -30,7 +30,7 @@ backlog item if applicable: "Closes B-007 from docs/runbook.md". -->
 ## Runbook §3.1 checklist
 
 - [ ] CI is green on the PR head commit (lint, type-check, tests,
-      CodeQL, dependency-review).
+      CodeQL, dependency-review, pip-audit, gitleaks).
 - [ ] No new file is undocumented in `docs/architecture.md` module
       table.
 - [ ] No new tool is missing from `docs/tools.md`,
@@ -43,9 +43,10 @@ backlog item if applicable: "Closes B-007 from docs/runbook.md". -->
 
 ## Security-sensitive diff (runbook §3.3)
 
-Tick if this PR touches any of: `audit.py`, `redaction.py`,
-`policy.py`, the `Relay.run()` body in `server.py`, `auth/oauth.py`,
-`deploy/install*.sh`, or `deploy/Caddyfile`.
+Tick if this PR touches any of: `patterns.py`, `audit.py`, `redaction.py`,
+`policy.py`, the `Relay.run()` body or a resource handler in `server.py`,
+`auth/oauth.py`, `metrics.py`, `seccomp.py`, `deploy/install*.sh`, or
+`deploy/Caddyfile`. (Full list with rationale: runbook §3.3.)
 
 - [ ] This PR is security-sensitive.
 
