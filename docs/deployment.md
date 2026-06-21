@@ -316,8 +316,17 @@ accumulate idle handles.
   allowlist of sanctioned change patterns.
 - `readonly` - only Tier 0. Useful for an observation-only client.
 
-`RELAY_SHELL_POLICY_DENY` is enforced first in **every** mode; use it for absolute
-prohibitions regardless of posture.
+`RELAY_SHELL_POLICY_DENY` is a regex evaluated first in **every** mode, against
+the probe text `"<tool> <command>"` (the tool name is prepended, so anchor with
+`\b`/substrings rather than `^command`; you can also deny a whole tool, e.g.
+`^ssh_keyscan`). Use it as an always-on first-line filter — but treat it as
+**defence in depth, not an absolute prohibition**: it matches command *text*, so
+a determined caller can evade it with shell obfuscation (extra whitespace,
+quoting like `r''m`, `${IFS}`, `$(...)`, base64 `| sh`) or alternate encodings
+(e.g. hex/decimal/IPv6-mapped IPs for an SSRF target). Enforce hard prohibitions
+with OS/network controls — an egress firewall, seccomp/AppArmor, a restricted
+service account, `readonly`/`guarded` mode — not the deny list alone. See
+ADR 0003.
 
 ## 9. Health
 

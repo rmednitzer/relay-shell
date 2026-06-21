@@ -270,6 +270,13 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         )
 
     async def load_access_token(self, token: str) -> AccessToken | None:
+        # Refresh tokens live under the `refresh:` key prefix. Reject any bearer
+        # string carrying that prefix so a refresh token presented as an access
+        # token (`Authorization: Bearer refresh:<tok>`) cannot authenticate via
+        # this lookup — token-type confusion that would otherwise grant a
+        # refresh token full access-token scope for the (long) refresh TTL.
+        if token.startswith(_REFRESH_PREFIX):
+            return None
         async with self._lock:
             tokens = self._tokens.load()
             rec = tokens.get(token)

@@ -303,6 +303,45 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- Adversarial (red-team) audit pass (2026-06-21) —
+  `audit/2026-06-21-adversarial-engagement.md`; full register in `BACKLOG.md`
+  (2026-06-21 adversarial section). A systemic Python `\b` word-boundary bug (it
+  fires only at a word↔non-word boundary, so it never matched when the adjacent
+  token char was preceded by another word char incl. `_`) independently broke
+  **two** trust-boundary controls and was fixed in both:
+  - **RED-1 (HIGH)**: compound `*_PASSWORD=` / `*_SECRET=` / `*_TOKEN=` secret
+    values were written to the audit log verbatim because the `key=value`
+    redaction prefix led with `\b` and the keyword was preceded by `_`. Dropped
+    the `\b`; the trailing `\s*[:=]\s*\S+` still gates it to assignment shapes
+    (no over-match on plain words). No FP on `description=` / `--color=auto` /
+    `count=`.
+  - **POL-1 (MED)**: `TIER2_PATTERN` / `TIER3_PATTERN` opened with `\b(`, so
+    every alternative starting with a non-word char was dead code — `> /dev/sda`
+    (disk wipe via redirect), the fork bomb `:(){ :|:& };:`, and `> /etc/passwd`
+    classified **Tier 1** and were admitted in `guarded` mode. Anchor switched
+    to `(?<![\w])(` so they fire at shell-token starts; the existing controls
+    (`rm -rf`, `dd of=/dev/sda`) are unchanged and there are no new false
+    denials (`> /dev/null`, `charm`).
+
+  `PATTERNS_VERSION` 5→6. Also fixed **AUTH-1 (HIGH)** — OAuth token-type
+  confusion: a refresh token presented as `Authorization: Bearer refresh:<tok>`
+  authenticated as a full access token for the refresh TTL; `load_access_token`
+  now rejects any bearer string carrying the `refresh:` key prefix before the
+  store lookup. And **RED-2 (MED)** — the PEM private-key matcher's `.*?` drove
+  O(n²) backtracking on an argument carrying many unterminated `BEGIN` markers
+  (ReDoS on the synchronous audit path); the body is now length-bounded
+  (`[\s\S]{0,8192}?`) and still matches a real key block (6400-marker input
+  7.6s → ~1.0s). Two doc overclaims corrected: **DOC-1** (`SECURITY.md` —
+  state the hash chain is keyless and the off-host copy, not `--verify-audit`,
+  defends against a write-capable attacker) and **DOC-2** (`docs/deployment.md`
+  — the deny list is defence-in-depth over a `"<tool> <command>"` probe, not an
+  absolute prohibition, and a regex over that text is shell-obfuscation /
+  encoding-evadable). Paired regression tests in `tests/test_patterns.py` and
+  `tests/test_oauth.py`; the `redact` idempotency / no-leak fuzz still passes.
+  No P0/critical, no remote-unauthenticated RCE, no auth-bypass-without-a-secret;
+  the remaining MEDIUM/LOW hardening, auditability, DoS-footgun, and deploy
+  items are deferred in `BACKLOG.md`. Additive — the audit-record shape is
+  unchanged.
 - OAuth token-store directory is now created `0o700` and the provider **fails
   closed** if its state dir remains group/other-accessible, rather than relying
   on a best-effort `chmod` (audit finding SEC-8). The secret files were already

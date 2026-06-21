@@ -404,3 +404,17 @@ async def test_exchange_refresh_token_is_single_use_under_race(tmp_path: Path) -
     assert len(failures) == 1
     assert isinstance(failures[0], TokenError)
     assert failures[0].error == "invalid_grant"
+
+
+async def test_load_access_token_rejects_refresh_prefixed_bearer(tmp_path: Path) -> None:
+    # AUTH-1 (adversarial audit): a refresh token presented as a bearer access
+    # token (`Authorization: Bearer refresh:<tok>`) must not authenticate.
+    # load_access_token rejects the `refresh:` key prefix so a refresh token
+    # cannot be used as an access token (token-type confusion).
+    from relay_shell.auth.oauth import _REFRESH_PREFIX
+
+    p = _provider(tmp_path)
+    issued = p._issue("client-a", ["mcp:tools"])
+    assert await p.load_access_token(issued.access_token) is not None
+    assert await p.load_access_token(_REFRESH_PREFIX + issued.refresh_token) is None
+    assert await p.load_access_token(issued.refresh_token) is None

@@ -71,7 +71,21 @@ __all__ = [
 #     `sk-ant-` hyphens break the bare `sk-<alnum>` run; `hf_` had no rule).
 #     Whole-match collapses anchored on prefix + length floor like the rest
 #     (audit pass 2026-06-21, SEC-4).
-PATTERNS_VERSION = "5"
+# v6: adversarial-audit fixes (2026-06-21 red-team pass).
+#     - The `key=value` redaction prefix no longer requires a leading `\b`:
+#       in compound names (`DB_PASSWORD=`, `APP_SECRET=`, `API_TOKEN=`) the
+#       keyword is preceded by `_` (a word char) so `\b` never fired and the
+#       value leaked to the audit log (RED-1). The trailing `\s*[:=]\s*\S+`
+#       still gates it to assignment shapes, so removing `\b` does not
+#       over-match plain words.
+#     - TIER2/TIER3 classification anchors switched from `\b` to `(?<![\w])`
+#       so the alternatives that start with a non-word char (`>`/`/`/`:` —
+#       device-write redirects, `>/etc/`, the fork bomb) actually fire instead
+#       of being dead code (POL-1).
+#     - The PEM block matcher's `.*?` is now length-bounded to stop O(n²)
+#       backtracking on many unterminated BEGIN markers (ReDoS on the audit
+#       path, RED-2).
+PATTERNS_VERSION = "6"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -116,7 +130,7 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # token=... / api[_-]?key=... / password: ...
     (
         re.compile(
-            r"(?i)\b(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*)\S+"
+            r"(?i)(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*)\S+"
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -163,8 +177,12 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     # PEM / OpenSSH private key blocks
     re.compile(
-        r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
-        re.DOTALL,
+        # Length-bound the body (a real PEM key block is < ~8 KB) so a large
+        # argument carrying many unterminated `-----BEGIN ... KEY-----` markers
+        # cannot drive O(n^2) backtracking and stall the (synchronous) audit
+        # redaction path. `[\s\S]` spans newlines without needing DOTALL.
+        r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----[\s\S]{0,8192}?"
+        r"-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----",
     ),
     # GitHub: classic/fine-grained PAT, plus the gh[pousr]_ token family
     # (personal, OAuth, user-to-server, server-to-server, refresh).
@@ -236,7 +254,7 @@ MYSQL_COMPACT_PASSWORD_PATTERN = re.compile(r"(?<![A-Za-z0-9-])(-p)[^\s=-]\S*")
 
 # Substrings that strongly imply an irreversible / high-blast action.
 TIER3_PATTERN = re.compile(
-    r"(?ix)\b("
+    r"(?ix)(?<![\w])("
     r"rm\s+-[rf]|rm\s+-[a-z]*f|shred|mkfs|fdisk|sgdisk|wipefs|"
     r"dd\s+[^|]*of=/dev/|>\s*/dev/[sh]d|"
     r"shutdown|reboot|halt|poweroff|init\s+0|init\s+6|"
@@ -250,7 +268,7 @@ TIER3_PATTERN = re.compile(
 
 # Substrings that imply a stateful, visible change.
 TIER2_PATTERN = re.compile(
-    r"(?ix)\b("
+    r"(?ix)(?<![\w])("
     r"systemctl\s+(stop|restart|disable|mask|kill)|service\s+\S+\s+(stop|restart)|"
     r"apt(-get)?\s+(install|remove|purge|upgrade|dist-upgrade)|"
     r"yum\s+(install|remove)|dnf\s+(install|remove)|pip\s+install|npm\s+(install|i)\b|"
