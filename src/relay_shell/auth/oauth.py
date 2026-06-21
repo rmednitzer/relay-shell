@@ -65,13 +65,29 @@ class _Store:
     def __init__(self, path: Path) -> None:
         self._path = path
         parent = self._path.parent
-        parent.mkdir(parents=True, exist_ok=True)
-        # mkdir(mode=...) only applies when the directory is freshly
-        # created and never to existing parents; chmod is idempotent and
-        # covers both. Best-effort: a parent we cannot chmod (e.g. owned
-        # by another user) is the operator's responsibility, not fatal.
+        # Create the store dir private *at creation*: mkdir's mode is masked
+        # by umask, but 0o700 carries no group/other bits to begin with, so a
+        # dir we create is 0o700 regardless of the caller's umask — no
+        # world-readable window before the chmod below. `mode=` applies only
+        # to a freshly-created leaf, never to an existing dir.
+        parent.mkdir(mode=_DIR_MODE, parents=True, exist_ok=True)
+        # Tighten a pre-existing dir too; best-effort, since a dir owned by
+        # another user (e.g. operator-provisioned) is not ours to chmod.
         with contextlib.suppress(OSError):
             parent.chmod(_DIR_MODE)
+        # Fail closed on an actually-insecure store (SEC-8). The secret files
+        # are written 0o600 regardless, but a group/other-accessible store dir
+        # lets other local users list or tamper with the token files. If the
+        # dir is still group/other-accessible here — we could neither create
+        # nor tighten it to 0o700 — refuse rather than run with an exposed
+        # token store. A correctly-0o700 dir owned by any user passes.
+        mode = parent.stat().st_mode & 0o777
+        if mode & 0o077:
+            raise PermissionError(
+                f"OAuth state dir {parent} is group/other-accessible "
+                f"(mode {mode:#o}); expected 0o700. Refusing to use an exposed "
+                "token store."
+            )
 
     def load(self) -> dict[str, Any]:
         try:

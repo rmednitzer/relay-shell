@@ -896,8 +896,11 @@ currently empty.)
   P2/P3 follow-up. **SEC-5** (`/metrics` auth) was accepted as-designed (operator decision
   2026-06-21: keep the default-`127.0.0.1` + Caddy-firewalled design rather than
   gating in-app, preserving the standard unauthenticated Prometheus-scrape
-  model). Still open: **SEC-8 (P3)** token-dir fail-closed chmod — deferred after
-  review (the secret files are already `0o600`); rationale in `BACKLOG.md`.
+  model). **SEC-8** also closed in a follow-up: `_Store` creates the OAuth state dir
+  `mode=0o700` and fails closed if it remains group/other-accessible (a
+  correctly-`0o700` dir owned by another uid still passes). Remaining 2026-06-21
+  items are info-only (**FMT-2** / **CI-3** / **DOC-5**) and out-of-scope
+  **B-025** (aarch64); see `BACKLOG.md`.
 
 ---
 
