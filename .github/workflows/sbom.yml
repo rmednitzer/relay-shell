@@ -29,6 +29,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write   # final step uploads the SBOM assets to the release
+      id-token: write   # CI-3: OIDC token for Sigstore build-provenance signing
+      attestations: write   # CI-3: write the provenance attestation
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
@@ -107,6 +109,19 @@ jobs:
                   print(f"::warning::relay-shell version in SBOM ({rs}) does not match tag ({tag})")
           print(f"SBOM OK: relay-shell={rs}, components={len(comps)}")
           PY
+
+      - name: Attest SBOM build provenance
+        # CI-3: emit a Sigstore-signed in-toto build-provenance attestation for
+        # each SBOM file, mirroring release.yml's attestation of the wheels.
+        # This records, in the public transparency log, which workflow run and
+        # commit produced this SBOM — so a consumer can verify the SBOM is the
+        # genuine output of this repo's CI (`gh attestation verify <file>
+        # --repo ${{ github.repository }}`) rather than a swapped artifact.
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4
+        with:
+          subject-path: |
+            relay-shell-${{ steps.tag.outputs.name }}.cdx.json
+            relay-shell-${{ steps.tag.outputs.name }}.cdx.xml
 
       - name: Upload SBOM as workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
