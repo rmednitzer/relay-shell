@@ -54,13 +54,16 @@ Open deferrals (severity order; smaller effort first):
 
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
-| SEC-5 | `/metrics` endpoint bypasses OAuth | P3 | S | **Deferred after review (2026-06-21 follow-up).** Architecturally significant: gating it changes a documented design decision (the `custom_route` OAuth bypass) and the standard *unauthenticated* Prometheus-scrape model. Residual is low — `http_host` defaults to `127.0.0.1` and the Caddy edge firewalls it in the supported deployment. Recommended if pursued: an opt-in `auth_metrics` flag (default off) gating the route on a valid bearer token, or a separate metrics bind. Operator design call. | maintainer/operator |
 | SEC-8 | OAuth token-dir `chmod(0o700)` is best-effort | P3 | XS | **Deferred after review (2026-06-21 follow-up).** The secret *files* are already created `0o600` via `os.open` regardless of the directory mode (asserted by `test_state_dir_and_files_are_private`), so the residual is directory-listing visibility only; a fail-closed dir chmod would break a legitimate operator-pre-created parent owned by another uid, and systemd `UMask=0077` already covers the supported deployment. | maintainer |
 | FMT-2 | CEF header field values not passed through `_cef_escape` | info | XS | No runtime defect (header fields are pipe/backslash-free constants); defensive only. | maintainer |
 | CI-3 | `sbom.yml` artifacts not SLSA-attested | info | S | Add `attest-build-provenance` (release.yml precedent). | maintainer |
 | DOC-5 | `CHANGELOG.md` lacks Keep-a-Changelog version-compare links | info | XS | Deferred until a second release is tagged ("omit rather than fake"). | maintainer |
 
-Accepted as-designed / operator discretion (no action): pre-commit hooks pinned
+Accepted as-designed / operator discretion (no action): **SEC-5** (`/metrics`
+OAuth bypass) — operator decision (2026-06-21): keep the documented design
+(default `http_host=127.0.0.1` bind + Caddy-edge firewall), not gated in-app, so
+the standard unauthenticated Prometheus-scrape model is preserved; pre-commit
+hooks pinned
 to tags (Renovate-managed; TOOL-2 rationale); hygiene bumps `cryptography` 49 /
 `anyio` 4.14 / `mcp` 1.28 (Renovate); `RestrictSUIDSGID` absent from the systemd
 hardening drop-in (ADR 0002 full-capability posture; operator call); the ADR 0006
