@@ -9,8 +9,10 @@
 #
 # GitHub Pages enables the jekyll-relative-links and jekyll-optional-front-matter
 # plugins by default, so the existing inter-document `.md` links resolve to the
-# rendered pages and the front-matter-less docs render unmodified. No content in
-# docs/ uses Liquid (`{{ }}` / `{% %}`), so Jekyll processing is safe.
+# rendered pages and the front-matter-less docs render unmodified. The only
+# Liquid-looking tokens in docs/ are the GitHub Actions `${{ ... }}` style
+# examples in runbook.md, which sit inside a `{% raw %}` guard so Liquid does
+# not try to evaluate them — an unguarded `{{` / `{%` aborts the whole build.
 title: relay-shell
 description: >-
   A governed Model Context Protocol relay for complete shell and SSH operation:
