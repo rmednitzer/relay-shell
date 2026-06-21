@@ -30,11 +30,11 @@
 /deploy/systemd/                        @rmednitzer
 /deploy/logrotate/                      @rmednitzer
 
-# CI / supply chain: workflow definitions, Dependabot config, release
+# CI / supply chain: workflow definitions, Renovate config, release
 # automation, SBOM generation.
 /.github/                               @rmednitzer
 /.github/workflows/                     @rmednitzer
-/.github/dependabot.yml                 @rmednitzer
+/renovate.json5                         @rmednitzer
 /.github/CODEOWNERS                     @rmednitzer
 
 # Project + governance manifests.

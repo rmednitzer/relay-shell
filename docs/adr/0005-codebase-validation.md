@@ -253,6 +253,37 @@ No security findings. No capability regressions. The trust boundary
 documentation drift and did not touch executor, policy, redaction, or audit
 behavior.
 
+## Validation outcome (2026-06-21, full audit pass)
+
+A full validation + security audit, run the same day as the doc-drift pass above;
+evidence pack:
+[`audit/2026-06-21-engagement.md`](../../audit/2026-06-21-engagement.md). Steps
+1-4 were re-run on a clean venv at the pinned `mcp==1.27.2` / `asyncssh==2.23.1`
+(a `semgrep`-into-the-project-venv `mcp` downgrade to 1.23.3 was caught and the
+venv rebuilt clean, with `semgrep` thereafter run isolated via `uvx`), plus an
+external scanner battery and reviews of the trust boundary, the CI supply chain,
+and structure-vs-spec conformance against trusted external sources.
+
+- Gates green: `ruff` / `ruff format` / `mypy --strict` clean (19 files);
+  `pytest` **342 passed, 13 deselected**; `pytest -m fuzz` **13**; `coverage`
+  **93%** (floor 90%). 21 tools / 3 resources / 1 prompt; upstream surface
+  resolves; the audit-record output-hash-only invariant holds.
+- Scanner battery all clean: pip-audit (OSV/PyPA), trivy fs
+  (vuln/secret/misconfig), bandit (0 medium+; 12 benign Low), semgrep (0
+  findings, 183 rules), actionlint, shellcheck, gitleaks. No pinned dependency
+  carries a known CVE at its pinned version.
+
+| ID | Severity | Subject | Resolution |
+|----|----------|---------|------------|
+| SEC-3 | P2 | `pyproject.toml` lower bounds sat below the patched minimum for `asyncssh` (GHSA-g794-3fmp-753h), `starlette` (BadHost GHSA-86qp-5c8j-p5mr / GHSA-jp82-jpqv-5vv3), `PyJWT` (HMAC confusion GHSA-xgmm-8j9v-c9wx), and `cryptography` (GHSA-537c-gmf6-5ccf) — a cold `pip install` resolver could pick a vulnerable transitive version, though the *pinned* set was already safe. | Floors raised to `asyncssh>=2.23.0`, `starlette>=1.3.0`, `PyJWT>=2.13.0`, `cryptography>=48.0.1` (mirrors PR #97's `pydantic-settings` floor bump). Installed/tested set unchanged; gate green. |
+| TOOL-4 | info | `.github/CODEOWNERS` required review on a non-existent `/.github/dependabot.yml`; the repo uses Renovate. | Reference corrected to `/renovate.json5`. |
+
+The remaining findings are incremental hardening / format-conformance with no
+P0/P1 (SEC-4 Anthropic `sk-ant-` / HuggingFace `hf_` redaction shapes is the
+recommended next item); they are registered in the engagement pack §7 and
+deferred to `BACKLOG.md` / runbook §7. No security regression; the ADR 0002
+trust boundary and ADR 0003 tier semantics are unchanged.
+
 ## Consequences
 
 - The runbook §2 audit pass is now grounded in a concrete, repeatable

@@ -28,6 +28,45 @@ Do not re-add.
 | REL-1 | Starlette `TestClient` deprecation in `tests/test_metrics.py` | **Closed** (PR #92). The "install httpx2" warning came from `starlette.testclient`, not from needing httpx 2 — re-checked this session: driving `/metrics` through httpx's own `ASGITransport` (already pinned, httpx 0.28.1) returns the identical response with **zero** warnings, and the `/metrics` custom route needs no lifespan context. Migrated the four HTTP `/metrics` tests off `starlette.testclient.TestClient` to a small `_http_get` ASGITransport helper. Suite now reports 0 warnings (was 1); `pytest -W error::DeprecationWarning tests/test_metrics.py` passes. No httpx2 bump, no dependency change. The earlier "blocked on upstream" disposition was wrong. |
 | TOOL-2 | ruff pin skew across `requirements.txt` / `.pre-commit-config.yaml` / the `dev` extra resolve | **Closed** (PR #93; accepted as designed, evidence-verified — a disposition, no code change). `renovate.json5` enables the `pre-commit` manager and groups `pip_requirements` updates on the weekly schedule, and the history shows it updating both pinned locations in practice (#83 pre-commit ruff `v0.15.16`, #84 python dependencies, #85 pre-commit `v6`). The skew window is therefore bounded by the weekly Renovate cadence, both versions lint the tree identically, and a manual pin would only fight the bot. No change needed; re-open only if a ruff release ever splits lint behavior inside one cadence window. |
 
+## 2026-06-21 full audit pass
+
+Findings from the 2026-06-21 full validation + security audit
+([`audit/2026-06-21-engagement.md`](audit/2026-06-21-engagement.md)). The scanner
+battery (pip-audit, trivy, bandit, semgrep, actionlint, shellcheck, gitleaks) was
+clean and no pinned dependency carries a known CVE; there were no P0/P1 findings.
+
+Closed in the engagement PR:
+
+| ID | Title | Resolution |
+|---|---|---|
+| SEC-3 | `pyproject.toml` dependency lower bounds below patched minimums | **Closed** (this PR). Floors raised: `asyncssh>=2.23.0` (GHSA-g794-3fmp-753h), `starlette>=1.3.0` (BadHost GHSA-86qp-5c8j-p5mr / GHSA-jp82-jpqv-5vv3), `PyJWT>=2.13.0` (HMAC confusion GHSA-xgmm-8j9v-c9wx), `cryptography>=48.0.1` (GHSA-537c-gmf6-5ccf). The pinned set was already safe; this codifies minimum-safe transitive versions, mirroring PR #97's `pydantic-settings` floor. Installed/tested set unchanged; gate green. |
+| TOOL-4 | CODEOWNERS required review on a non-existent `/.github/dependabot.yml` | **Closed** (this PR). The repo uses Renovate; reference corrected to `/renovate.json5`. |
+
+Open deferrals (severity order; smaller effort first):
+
+| ID | Item | Sev | Effort | Rationale / approach | Owner role |
+|---|---|---|---|---|---|
+| SEC-4 | Add Anthropic `sk-ant-` + HuggingFace `hf_` redaction shapes | P2 | S | High-likelihood secrets in an AI-infra tool's command args; absent from `patterns.py`. Additive whole-match patterns + paired over/under-scrub tests + `PATTERNS_VERSION` 4→5 + docstring/SECURITY.md (F-004 precedent). OWASP Secrets Mgmt [V]. **Recommended next.** | maintainer |
+| DOC-4 | `CHANGELOG.md` `[Unreleased]` has duplicate `### Security` / `### Changed` blocks | P2 | S | Violates Keep a Changelog 1.1.0 + runbook §8.3. Consolidate to one block per category. | maintainer |
+| FMT-1 | LEEF formatter advertises `LEEF:2.0` but omits the mandatory delimiter header field | P3 | S | `audit.py` `_format_leef`: add the 6th `|` delimiter field or label `LEEF:1.0`; update `tests/test_audit.py`. IBM LEEF spec [V]. | maintainer |
+| CI-1 | `release.yml` `verify` job sets `persist-credentials: true` unnecessarily | P3 | XS | Authenticates via `GH_TOKEN` and never pushes; drop it (SEC-2 posture). | maintainer |
+| CI-2 | `sbom.yml` interpolates `inputs.tag` / `github.ref_name` into `run:`; `contents: write` not job-scoped | P3 | S | Env-var indirection + job-level permissions (GitHub Actions hardening guide [V]). | maintainer |
+| SEC-5 | `/metrics` endpoint bypasses OAuth | P3 | S | Low residual (default `http_host=127.0.0.1` + documented Caddy edge). Optional token gate or separate bind. | maintainer/operator |
+| SEC-6 | `oauth.load_refresh_token` reads without the per-provider lock | P3 | S | Concurrent `revoke` → spurious `invalid_grant` (minor DoS; rotation invariant still holds at the locked exchange). Hold the lock; verify no nested-call deadlock first. | maintainer |
+| SEC-7 | OAuth `resource` (RFC 8707) not forwarded to the SDK `AuthorizationCode` | P3 | S | Verify the SDK signature accepts it before threading through. | maintainer |
+| SEC-8 | OAuth token-dir `chmod(0o700)` is best-effort | P3 | XS | Fail-closed when `auth_enabled` (systemd `UMask=0077` mitigates today). | maintainer |
+| QUAL-2 | `ssh_forward` spec parse leaks a raw `ValueError` message | P3 | XS | Wrap as a structured `RelayError` (no-raw-traceback hygiene). | maintainer |
+| FMT-2 | CEF header field values not passed through `_cef_escape` | info | XS | No runtime defect (header fields are pipe/backslash-free constants); defensive only. | maintainer |
+| CI-3 | `sbom.yml` artifacts not SLSA-attested | info | S | Add `attest-build-provenance` (release.yml precedent). | maintainer |
+| DOC-5 | `CHANGELOG.md` lacks Keep-a-Changelog version-compare links | info | XS | Deferred until a second release is tagged ("omit rather than fake"). | maintainer |
+
+Accepted as-designed / operator discretion (no action): pre-commit hooks pinned
+to tags (Renovate-managed; TOOL-2 rationale); hygiene bumps `cryptography` 49 /
+`anyio` 4.14 / `mcp` 1.28 (Renovate); `RestrictSUIDSGID` absent from the systemd
+hardening drop-in (ADR 0002 full-capability posture; operator call); the ADR 0006
+hybrid status string and ADR 0005's frozen "next free 0006" line
+(no-retro-edit-of-decision-records).
+
 ## Security
 
 (Empty — SEC-1 and SEC-2 closed in the follow-up work above.)
