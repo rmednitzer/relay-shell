@@ -49,12 +49,12 @@ Closed (engagement PR + 2026-06-21 follow-up PRs):
 | FMT-1 | LEEF formatter omitted the mandatory LEEF 2.0 delimiter field | **Closed** (P2/P3 follow-up PR). `_format_leef` now emits `…\|audit\|x09\|<ext>`; `tests/test_audit.py` updated. |
 | QUAL-2 | `ssh_forward` spec parse leaked a raw `ValueError` | **Closed** (P2/P3 follow-up PR). Extracted `SshPool._parse_forward_spec` (validated before connecting) raising a bounded message; paired unit test. |
 | DOC-4 | `CHANGELOG.md` `[Unreleased]` duplicate `### Security` / `### Changed` blocks | **Closed** (P2/P3 follow-up PR). Consolidated to one block per category (Added/Changed/Fixed/Security) via a content-preserving regroup; Keep a Changelog 1.1.0. |
+| SEC-8 | OAuth token-dir `chmod(0o700)` was best-effort | **Closed** (SEC-8 follow-up PR). `_Store` now creates the dir with `mode=0o700` (private at creation; umask can only tighten 0o700), still tightens a pre-existing dir best-effort, and then **fails closed only if the dir remains group/other-accessible**. An exposed token store is refused, while a correctly-`0o700` dir owned by another uid (which we cannot chmod) still passes — so the earlier deferral's false-break concern does not arise. Test `test_state_dir_permission_enforcement` covers both the refuse and accept paths; `test_state_dir_and_files_are_private` still green. |
 
 Open deferrals (severity order; smaller effort first):
 
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
-| SEC-8 | OAuth token-dir `chmod(0o700)` is best-effort | P3 | XS | **Deferred after review (2026-06-21 follow-up).** The secret *files* are already created `0o600` via `os.open` regardless of the directory mode (asserted by `test_state_dir_and_files_are_private`), so the residual is directory-listing visibility only; a fail-closed dir chmod would break a legitimate operator-pre-created parent owned by another uid, and systemd `UMask=0077` already covers the supported deployment. | maintainer |
 | FMT-2 | CEF header field values not passed through `_cef_escape` | info | XS | No runtime defect (header fields are pipe/backslash-free constants); defensive only. | maintainer |
 | CI-3 | `sbom.yml` artifacts not SLSA-attested | info | S | Add `attest-build-provenance` (release.yml precedent). | maintainer |
 | DOC-5 | `CHANGELOG.md` lacks Keep-a-Changelog version-compare links | info | XS | Deferred until a second release is tagged ("omit rather than fake"). | maintainer |

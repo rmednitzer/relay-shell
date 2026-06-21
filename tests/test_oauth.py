@@ -36,6 +36,33 @@ def test_make_provider_from_settings(tmp_path: Path) -> None:
     assert isinstance(make_oauth_provider(s), FileOAuthProvider)
 
 
+def test_state_dir_permission_enforcement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEC-8: refuse a group/other-accessible token-store dir we cannot tighten,
+    # but accept a correctly-0o700 dir even when we cannot chmod it (e.g. one
+    # provisioned by the operator and owned by another uid) — so the check
+    # hardens real exposure without breaking a legitimate locked-down setup.
+    def make(mode: int) -> Path:
+        d = tmp_path / f"oauth{mode:o}"
+        d.mkdir()
+        os.chmod(d, mode)
+        return d
+
+    # Simulate "cannot tighten" (chmod is a no-op, as for a dir we don't own).
+    monkeypatch.setattr(Path, "chmod", lambda self, mode: None)
+
+    loose = make(0o755)
+    with pytest.raises(PermissionError, match="group/other-accessible"):
+        FileOAuthProvider(
+            str(loose), single_client=True, access_ttl=3600, refresh_ttl=86400, code_ttl=300
+        )
+
+    tight = make(0o700)
+    p = FileOAuthProvider(
+        str(tight), single_client=True, access_ttl=3600, refresh_ttl=86400, code_ttl=300
+    )
+    assert p is not None
+
+
 async def test_issue_and_load_access_token(tmp_path: Path) -> None:
     p = _provider(tmp_path)
     token = p._issue("client-a", ["mcp:tools"])

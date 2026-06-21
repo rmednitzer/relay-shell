@@ -303,6 +303,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- OAuth token-store directory is now created `0o700` and the provider **fails
+  closed** if its state dir remains group/other-accessible, rather than relying
+  on a best-effort `chmod` (audit finding SEC-8). The secret files were already
+  `0o600`; this closes the directory-exposure residual without rejecting a
+  correctly-`0o700` dir owned by another uid (which we cannot `chmod`). Test
+  `test_state_dir_permission_enforcement`.
 - 2026-06-21 audit-pass P2/P3 follow-ups (`BACKLOG.md` 2026-06-21 section; no
   P0/P1). OAuth: **SEC-6** `load_refresh_token` now holds the per-provider lock
   so a concurrent revoke cannot surface a spurious `invalid_grant`; **SEC-7**
