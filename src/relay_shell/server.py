@@ -167,8 +167,8 @@ def _policy_text_ssh_keyscan(hosts: str) -> str:
     which already name their host). Returning the raw ``hosts`` string closes
     that gap and honours the runbook R-002 contract ("everything the executor
     sees, the policy sees"). Tradeoff: the same text feeds the tier classifier,
-    so a host whose name embeds a ``\\b``-bounded heuristic word (``reboot``,
-    ``sudo``, ...) over-classifies the scan and is refused in ``guarded`` mode
+    so a host whose name embeds a heuristic word (``reboot``, ``sudo``, ...) at
+    a token start over-classifies the scan and is refused in ``guarded`` mode
     (``open`` is advisory; ``readonly`` already refuses Tier 1). That is a
     conservative false-deny with ``RELAY_SHELL_POLICY_ALLOW`` as the escape
     hatch, and it matches how the transfer tools already behave.

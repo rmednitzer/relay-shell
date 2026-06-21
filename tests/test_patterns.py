@@ -370,11 +370,11 @@ def test_anthropic_and_huggingface_shapes_positive_and_negative() -> None:
 def test_tier3_positive_and_negative() -> None:
     assert policy.classify("shell_exec", "rm -rf /tmp/x").name == "IRREVERSIBLE"
     assert policy.classify("shell_exec", "shutdown -h now").name == "IRREVERSIBLE"
-    # Negative: the heuristic is bounded by `\b` at the start, so an
-    # embedded substring with no word boundary before "shutdown" does not
-    # match. (Note: the heuristic IS intentionally conservative for
-    # boundary-adjacent forms like "graceful-shutdown.md" — `-` is a word
-    # boundary in regex - so do not over-narrow this test.)
+    # Negative: the heuristic's start is anchored with `(?<![\w])`, so an
+    # embedded substring with a word char before "shutdown" does not match.
+    # (Note: the heuristic IS intentionally conservative for boundary-adjacent
+    # forms like "graceful-shutdown.md" — `-` is a non-word char so the anchor
+    # still fires there - so do not over-narrow this test.)
     assert policy.classify("shell_exec", "echo theshutdown").name == "REVERSIBLE"
 
 
