@@ -1,0 +1,18 @@
+# GitHub Pages (Jekyll) configuration for the relay-shell documentation site.
+#
+# Build & deployment is enabled once, in the repository settings:
+#   Settings -> Pages -> Build and deployment
+#     Source: Deploy from a branch
+#     Branch: main   /   folder: /docs
+# GitHub then builds this folder with Jekyll and serves it at
+#   https://rmednitzer.github.io/relay-shell/
+#
+# GitHub Pages enables the jekyll-relative-links and jekyll-optional-front-matter
+# plugins by default, so the existing inter-document `.md` links resolve to the
+# rendered pages and the front-matter-less docs render unmodified. No content in
+# docs/ uses Liquid (`{{ }}` / `{% %}`), so Jekyll processing is safe.
+title: relay-shell
+description: >-
+  A governed Model Context Protocol relay for complete shell and SSH operation:
+  central audit, tiered authority, secret redaction, and resource bounds.
+theme: jekyll-theme-cayman

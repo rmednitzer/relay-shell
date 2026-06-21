@@ -1223,6 +1223,23 @@ plan lands in the same PR.)
   `docs/auth.md`, `deployment.md` §5, `SECURITY.md`, and the README OAuth
   bullet together.
 
+### 8.23 `docs/index.md` + `docs/_config.yml` (GitHub Pages)
+
+- Keep: `index.md` as the documentation-site landing page (links every guide
+  plus the ADR index); `_config.yml` as the Jekyll config (title, description,
+  theme) for the `/docs`-folder Pages build.
+- Enable (one-time, repo settings): Settings → Pages → Deploy from a branch →
+  `main` / `/docs`. GitHub builds with Jekyll; the default `jekyll-relative-links`
+  plugin resolves the inter-doc `.md` links, and `jekyll-optional-front-matter`
+  renders the front-matter-less docs. Site:
+  `https://rmednitzer.github.io/relay-shell/`.
+- Add: a link in `index.md` whenever a new top-level guide lands under `docs/`
+  (keep it in step with the README and the doc list here).
+- Cross-checks: every guide linked from `index.md` must exist under `docs/`;
+  `_config.yml`'s `theme` must be a GitHub-Pages-supported theme; no doc may
+  introduce raw Liquid (`{{` / `{%`) without `{% raw %}` guards, or the Pages
+  build breaks.
+
 ---
 
 ## 9. Appendix - useful one-liners
