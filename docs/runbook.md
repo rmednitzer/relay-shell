@@ -1237,8 +1237,8 @@ plan lands in the same PR.)
   (keep it in step with the README and the doc list here).
 - Cross-checks: every guide linked from `index.md` must exist under `docs/`;
   `_config.yml`'s `theme` must be a GitHub-Pages-supported theme; no doc may
-  introduce raw Liquid (`{{` / `{%`) without `{% raw %}` guards, or the Pages
-  build breaks.
+  introduce raw Liquid ({% raw %}`{{` / `{%`) without `{% raw %}`{% endraw %} guards, or the Pages
+  build breaks (these example tokens are wrapped in a raw guard).
 
 ---
 
