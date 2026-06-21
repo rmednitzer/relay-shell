@@ -103,6 +103,58 @@ async def test_single_client_lockdown(tmp_path: Path, single: bool) -> None:
         await p.register_client(c2)
 
 
+async def test_single_client_lockdown_refuses_redirect_uri_overwrite(tmp_path: Path) -> None:
+    # AUTH-2: under lockdown, re-registering the *existing* client_id with a
+    # different redirect_uri must be refused (it would steer the next auth code
+    # to an attacker URL) — and the stored redirect_uri must be unchanged.
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path, single_client=True)
+    await p.register_client(
+        OAuthClientInformationFull(client_id="c1", redirect_uris=["https://good/cb"])
+    )
+    evil = OAuthClientInformationFull(client_id="c1", redirect_uris=["https://attacker/cb"])
+    with pytest.raises(ValueError, match="closed"):
+        await p.register_client(evil)
+    got = await p.get_client("c1")
+    assert got is not None
+    assert [str(u) for u in got.redirect_uris] == ["https://good/cb"]
+
+
+async def test_single_client_lockdown_allows_identical_reregistration(tmp_path: Path) -> None:
+    # AUTH-2: a byte-identical re-registration of the existing client is a
+    # harmless no-op and stays allowed, so a client that re-runs DCR with the
+    # same metadata is not broken by the lockdown tightening.
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path, single_client=True)
+    c1 = OAuthClientInformationFull(client_id="c1", redirect_uris=["https://good/cb"])
+    await p.register_client(c1)
+    # Same fields again — must not raise.
+    await p.register_client(
+        OAuthClientInformationFull(client_id="c1", redirect_uris=["https://good/cb"])
+    )
+    got = await p.get_client("c1")
+    assert got is not None and got.client_id == "c1"
+
+
+async def test_non_lockdown_still_allows_client_update(tmp_path: Path) -> None:
+    # Guard against over-tightening: with lockdown OFF, updating a client's
+    # metadata still works (the freeze only applies under single-client mode).
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path, single_client=False)
+    await p.register_client(
+        OAuthClientInformationFull(client_id="c1", redirect_uris=["https://a/cb"])
+    )
+    await p.register_client(
+        OAuthClientInformationFull(client_id="c1", redirect_uris=["https://b/cb"])
+    )
+    got = await p.get_client("c1")
+    assert got is not None
+    assert [str(u) for u in got.redirect_uris] == ["https://b/cb"]
+
+
 async def test_revoke_access_token_removes_only_access(tmp_path: Path) -> None:
     """Revoking an access token must not cascade to its paired refresh token.
 

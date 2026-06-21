@@ -303,6 +303,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- OAuth single-client lockdown can no longer be bypassed by re-registering the
+  existing client (AUTH-2, adversarial pass). The lockdown guard previously
+  refused only a *new* `client_id` (`cid not in clients`), so an attacker who
+  learned the existing `client_id` and reached the (CIDR-allowed) registration
+  endpoint could re-register it and overwrite its `redirect_uri`, steering the
+  next authorization code to an attacker URL. `register_client` now refuses any
+  registration that would create *or modify* a client while locked down
+  (`clients.get(cid) != incoming`); a byte-identical re-registration stays a
+  harmless no-op, so a client that re-runs DCR with the same metadata is not
+  broken. With lockdown off, client updates still work. Tests in
+  `tests/test_oauth.py` (`..._refuses_redirect_uri_overwrite`,
+  `..._allows_identical_reregistration`, `test_non_lockdown_still_allows_client_update`).
 - `ssh_keyscan` deny gate no longer dodged by IP-encoding (SSRF-1, adversarial
   pass). `RELAY_SHELL_POLICY_DENY` matches probe *text*, so a caller could spell
   a denied address another way the OS resolver still accepts — decimal
