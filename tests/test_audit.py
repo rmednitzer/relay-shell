@@ -502,3 +502,25 @@ def test_verify_chain_tail_truncation_is_a_valid_prefix(tmp_path: Path) -> None:
     assert r.ok
     assert r.anchored is True
     assert r.records == 3
+
+
+def test_audit_degrades_on_non_regular_sink() -> None:
+    # OBS-1: /dev/null opens and accepts writes but stores nothing durable, so
+    # the logger must flag `degraded` (surfaced on /metrics + server_info)
+    # rather than report a healthy audit trail. Must not raise.
+    log = AuditLogger("/dev/null")
+    assert log.degraded is True
+    assert "regular file" in log.degraded_reason
+    log.record(tool="t", args={}, output="x", exit_code=None, tier=0)
+
+
+def test_cef_header_escape_neutralizes_pipe_and_backslash() -> None:
+    # FMT-2: the header fields are constants today (byte-identical output is
+    # pinned by test_audit_cef_format), but the header escaper must neutralize
+    # the `|` separator and backslash so a future dynamic header field cannot
+    # split a record. `=` is an extension-only escape, untouched in the header.
+    from relay_shell.audit import _cef_header_escape
+
+    assert _cef_header_escape("a|b") == "a\\|b"
+    assert _cef_header_escape("a\\b") == "a\\\\b"
+    assert _cef_header_escape("a=b") == "a=b"

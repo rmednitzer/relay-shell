@@ -84,3 +84,22 @@ def test_seccomp_notify_cap_floor(clean_env: None, monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("RELAY_SHELL_SECCOMP_NOTIFY_CAP", "0")
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_limit_upper_bounds_reject_absurd_values(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CFG-1: every limit has an `le=` cap, so an absurd env value is rejected at
+    # load instead of silently producing a clamp that never bites.
+    for var, val in (
+        ("RELAY_SHELL_MAX_OUTPUT", "1000000000000"),
+        ("RELAY_SHELL_MAX_OUTPUT_HARD", "1000000000000"),
+        ("RELAY_SHELL_DEFAULT_TIMEOUT", "1000000000"),
+        ("RELAY_SHELL_MAX_TIMEOUT", "1000000000"),
+        ("RELAY_SHELL_SESSION_IDLE_TIMEOUT", "1000000000"),
+        ("RELAY_SHELL_SESSION_BUFFER_BYTES", "1000000000000"),
+    ):
+        monkeypatch.setenv(var, val)
+        with pytest.raises(ValidationError):
+            Settings()
+        monkeypatch.delenv(var)

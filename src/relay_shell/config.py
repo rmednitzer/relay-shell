@@ -35,15 +35,19 @@ class Settings(BaseSettings):
     http_host: str = "127.0.0.1"
     http_port: int = Field(default=8080, ge=1, le=65535)
 
-    # Limits
-    max_output: int = Field(default=65536, ge=1024)
-    max_output_hard: int = Field(default=1_048_576, ge=4096)
-    default_timeout: int = Field(default=60, ge=1)
-    max_timeout: int = Field(default=900, ge=1)
+    # Limits. Every bound carries an explicit `le=` upper cap (CFG-1): without
+    # one, an operator who env-sets an absurd value (e.g. a 1 TB output cap)
+    # gets a clamp that never bites and a self-inflicted memory/DoS footgun.
+    # The caps are deliberately generous — far above any real config — so they
+    # reject only nonsense, never a legitimate large deployment.
+    max_output: int = Field(default=65536, ge=1024, le=16_777_216)
+    max_output_hard: int = Field(default=1_048_576, ge=4096, le=134_217_728)
+    default_timeout: int = Field(default=60, ge=1, le=86_400)
+    max_timeout: int = Field(default=900, ge=1, le=86_400)
     max_sessions: int = Field(default=64, ge=1, le=1024)
     max_forwards: int = Field(default=64, ge=1, le=1024)
-    session_idle_timeout: int = Field(default=1800, ge=10)
-    session_buffer_bytes: int = Field(default=262_144, ge=4096)
+    session_idle_timeout: int = Field(default=1800, ge=10, le=86_400)
+    session_buffer_bytes: int = Field(default=262_144, ge=4096, le=16_777_216)
 
     # Policy
     policy_mode: str = "open"

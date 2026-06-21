@@ -51,6 +51,15 @@ def _cef_escape(value: str) -> str:
     )
 
 
+def _cef_header_escape(value: str) -> str:
+    # CEF *header* fields escape backslash and the `|` field separator only
+    # (not `=`, which is an extension-only escape). The header fields below are
+    # constants today, so this changes nothing on the wire (FMT-2, defensive):
+    # if any header field ever becomes dynamic, a stray `|` or `\` cannot break
+    # the header structure and split a record.
+    return value.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "\\n").replace("\r", "\\r")
+
+
 def _leef_escape(value: str) -> str:
     # LEEF extension escaping with tab-separated key-value fields.
     return (
@@ -63,8 +72,15 @@ def _leef_escape(value: str) -> str:
 
 
 def _format_cef(entry: dict[str, Any]) -> str:
+    # Header fields (vendor|product|version|signatureID|name|severity) run
+    # through _cef_header_escape (FMT-2). They are constants, so the bytes are
+    # identical to the prior literal; the escape is structural insurance.
+    header = "|".join(
+        _cef_header_escape(f)
+        for f in ("relay-shell", "relay-shell", "1.0", "audit", "tool-call", "5")
+    )
     ext = " ".join(f"{k}={_cef_escape(_stringify(v))}" for k, v in sorted(entry.items()))
-    return f"CEF:0|relay-shell|relay-shell|1.0|audit|tool-call|5|{ext}"
+    return f"CEF:0|{header}|{ext}"
 
 
 def _format_leef(entry: dict[str, Any]) -> str:
@@ -330,6 +346,18 @@ class AuditLogger:
             # Defensive for existing files that might already be too permissive.
             with contextlib.suppress(OSError):
                 target.chmod(0o600)
+            # OBS-1: a non-regular sink (e.g. `/dev/null`, a device, a FIFO)
+            # opens and accepts writes but stores nothing durable — the audit
+            # trail is silently discarded. Flag it as degraded so the
+            # `relay_shell_audit_degraded` gauge and `server_info.audit`
+            # surface the misconfiguration instead of reporting a healthy log.
+            # The sink still points where the operator configured it; this only
+            # makes the "audit goes nowhere" case visible.
+            if not target.is_file():
+                self.degraded = True
+                self.degraded_reason = (
+                    f"audit path is not a regular file (records not durably stored): {path}"
+                )
             sink = WatchedFileHandler(str(target), encoding="utf-8")
         except OSError as exc:  # unwritable path -> degrade, never crash
             self.degraded = True
