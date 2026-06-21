@@ -666,8 +666,9 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
 1. Edit `src/relay_shell/patterns.py` (the single source). Bump
    `PATTERNS_VERSION` if the addition changes classification semantics.
 2. Add a paired test in `tests/test_patterns.py`: one *positive* case
-   (classifies as expected) and one *negative* near-miss case
-   (`\b`-bounded text that does not over-match).
+   (classifies as expected) and one *negative* near-miss case (a form the
+   start anchor rejects — the keyword sitting mid-token, so `(?<![\w])`
+   for TIER2/TIER3, or `\b` for `PRIV_ESC_PATTERN`, does not fire).
 3. Document the addition in `docs/adr/0003-tiered-authority.md` if the
    heuristic represents a new category (not just another verb).
 4. Never replaces the deny list as a security control. The heuristics
@@ -850,7 +851,7 @@ currently empty.)
   short-circuiting before any subprocess), closing the one gap in the
   R-002 contract and matching the transfer tools. Accepted tradeoff,
   documented in the builder docstring: the same text feeds the tier
-  classifier, so a host name embedding a `\b`-bounded destructive word
+  classifier, so a host name embedding a destructive word at a token start
   over-classifies above Tier 1 (bites only `guarded`;
   `RELAY_SHELL_POLICY_ALLOW` is the escape hatch). Paired tests in
   `tests/test_ssh_keyscan_tool.py`.

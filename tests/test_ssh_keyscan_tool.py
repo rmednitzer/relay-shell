@@ -234,8 +234,8 @@ async def test_ssh_keyscan_allowed_when_host_not_denied(tmp_path: Path) -> None:
 def test_ssh_keyscan_hosts_reach_classifier_documents_tradeoff() -> None:
     # SEC-1 tradeoff (documented in _policy_text_ssh_keyscan + BACKLOG SEC-1):
     # feeding the hosts to the deny list also feeds them to the tier
-    # classifier, so a host whose name embeds a \b-bounded destructive word
-    # over-classifies above Tier 1. This pins the known behavior so a future
+    # classifier, so a host whose name embeds a destructive word at a token
+    # start over-classifies above Tier 1. This pins the known behavior so a future
     # reader is not surprised: it only bites `guarded` mode (open is advisory,
     # readonly already refuses Tier 1), with POLICY_ALLOW as the escape hatch.
     assert classify("ssh_keyscan", "web01.example.com") is Tier.REVERSIBLE
