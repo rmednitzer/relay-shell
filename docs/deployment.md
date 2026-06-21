@@ -153,6 +153,7 @@ sudo deploy/install-edge.sh
 | `RELAY_SHELL_EDGE_OPEN_FIREWALL` | Set to `1` to `ufw allow 80,443/tcp` if `ufw` is present. |
 | `RELAY_SHELL_EDGE_DRY_RUN` | Set to `1` to log the resolved values and print the parameterized Caddyfile template, then exit without installing. Caddy substitutes the `{$RELAY_SHELL_EDGE_*}` placeholders at service start. |
 | `RELAY_SHELL_EDGE_FORCE` | Set to `1` to overwrite an existing `/etc/caddy/Caddyfile` that this installer did not write. Without it, the installer refuses to clobber a Caddyfile that may serve other sites on the host. |
+| `RELAY_SHELL_EDGE_CADDY_GPG_FPR` | Pin the Caddy apt repo signing key: the installer fails closed if the fetched key's fingerprint does not match (DEP-1). The key is fetched over TLS but otherwise trust-on-first-use; the installer always logs the observed fingerprint, so set this to that value (after confirming it at <https://caddyserver.com/docs/install>) to enforce it. Unset = unpinned, with a warning. Only used when the installer provisions Caddy via apt. |
 
 The installer is idempotent: re-run it after editing the env file to push
 changes. The drop-in at

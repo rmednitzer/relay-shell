@@ -134,9 +134,33 @@ if ! command -v caddy >/dev/null 2>&1; then
     apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl gnupg
     install -d -m 0755 /etc/apt/keyrings
     if [ ! -f /etc/apt/keyrings/caddy-stable-archive-keyring.gpg ]; then
+        # DEP-1: the Caddy repo key is fetched over TLS but is otherwise
+        # trust-on-first-use. Dearmor to a temp file, print the fingerprint,
+        # and -- if the operator pinned one via RELAY_SHELL_EDGE_CADDY_GPG_FPR
+        # -- refuse to install unless it matches, so a swapped key (compromised
+        # mirror, MITM past TLS) is caught before apt ever trusts it. We do not
+        # ship a default fingerprint: Caddy/cloudsmith do not publish a
+        # canonical one to verify against, so pin the value you confirm at
+        # https://caddyserver.com/docs/install rather than one baked in here.
+        tmp_key="$(mktemp)"
         curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
-            | gpg --dearmor -o /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
-        chmod 0644 /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
+            | gpg --dearmor -o "$tmp_key"
+        observed_fpr="$(gpg --show-keys --with-colons --with-fingerprint "$tmp_key" \
+            | awk -F: '$1 == "fpr" { print $10; exit }')"
+        log "Caddy repo key fingerprint: ${observed_fpr:-<unreadable>}"
+        expected_fpr="$(printf '%s' "${RELAY_SHELL_EDGE_CADDY_GPG_FPR:-}" | tr -dc 'A-Fa-f0-9')"
+        if [ -n "$expected_fpr" ]; then
+            if [ "$(printf '%s' "$expected_fpr" | tr 'a-f' 'A-F')" != \
+                 "$(printf '%s' "$observed_fpr" | tr 'a-f' 'A-F')" ]; then
+                rm -f "$tmp_key"
+                die "Caddy repo key fingerprint mismatch: expected $expected_fpr, got ${observed_fpr:-<unreadable>} - refusing to trust the key"
+            fi
+            log "Caddy repo key fingerprint matches the pinned value"
+        else
+            warn "Caddy repo key is unpinned (trust-on-first-use). After verifying it at https://caddyserver.com/docs/install, set RELAY_SHELL_EDGE_CADDY_GPG_FPR=${observed_fpr:-<fpr>} to pin it."
+        fi
+        install -m 0644 "$tmp_key" /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
+        rm -f "$tmp_key"
     fi
     if [ ! -f /etc/apt/sources.list.d/caddy-stable.list ]; then
         cat >/etc/apt/sources.list.d/caddy-stable.list <<'REPO'
@@ -210,7 +234,12 @@ emit_env() {
 }
 
 log "Installing edge env file at $EDGE_ENV_FILE"
-install -d -m 0755 /etc/relay-shell
+# DEP-2: 0750, not world-listable. Prefer group relay-shell (matches the main
+# installer); fall back to root:root if this is an edge-only host where the
+# relay-shell group was never created. systemd reads the EnvironmentFile as
+# root either way, so the world bit is all we are dropping.
+install -d -m 0750 -o root -g relay-shell /etc/relay-shell 2>/dev/null \
+    || install -d -m 0750 /etc/relay-shell
 umask 077
 {
     echo "# Managed by relay-shell deploy/install-edge.sh - do not hand-edit."
