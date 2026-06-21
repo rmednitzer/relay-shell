@@ -901,6 +901,26 @@ currently empty.)
   correctly-`0o700` dir owned by another uid still passes). Remaining 2026-06-21
   items are info-only (**FMT-2** / **CI-3** / **DOC-5**) and out-of-scope
   **B-025** (aarch64); see `BACKLOG.md`.
+- **2026-06-21 adversarial (red-team) pass** — incremental hardening, no
+  posture change. Full register in [`BACKLOG.md`](../BACKLOG.md) (2026-06-21
+  adversarial section) and
+  [`audit/2026-06-21-adversarial-engagement.md`](audit/2026-06-21-adversarial-engagement.md).
+  The pass actively attacked the trust boundary with PoCs and found a systemic
+  Python `\b` word-boundary bug that independently broke **two** controls.
+  Closed in the engagement PR: **RED-1** (HIGH — compound `*_PASSWORD=` /
+  `*_SECRET=` / `*_TOKEN=` secrets leaked to the audit log because `\b` never
+  fired against a leading `_`; fixed by dropping the `\b`), **AUTH-1** (HIGH —
+  `Bearer refresh:<tok>` authenticated as an access token; `load_access_token`
+  now rejects the `refresh:` prefix), **POL-1** (MED — `>/dev/sda`, the fork
+  bomb, `>/etc/` classified Tier 1 in `guarded`; `TIER2/TIER3` anchor `\b(` →
+  `(?<![\w])(`), **RED-2** (MED — PEM-matcher ReDoS on the synchronous audit
+  path; body length-bounded), and the two doc overclaims **DOC-1**
+  (`SECURITY.md` keyless-chain / off-host caveat) and **DOC-2**
+  (`docs/deployment.md` deny-list defence-in-depth + probe-format footgun).
+  `PATTERNS_VERSION` 5→6. Open MEDIUM/LOW deferrals (AUTH-2, SSH-1/2/3,
+  SSRF-1, RED-3/4/5, CFG-1, OBS-1, DEP-1/2, EDGE-1/2) and the BY-DESIGN
+  challenge results are in `BACKLOG.md`. No P0/critical, no
+  remote-unauthenticated RCE, no auth-bypass-without-a-secret.
 
 ---
 

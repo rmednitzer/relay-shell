@@ -31,11 +31,17 @@ that a persuaded model still cannot exceed the operator-defined envelope:
   [`docs/audit-shipper.md`](docs/audit-shipper.md) for worked Vector,
   Fluent Bit, and `systemd-journal-remote` recipes. Optionally set
   `RELAY_SHELL_AUDIT_CHAIN=true` for a per-record hash chain
-  (`docs/adr/0007-audit-hash-chain.md`) so an in-place edit, insertion,
-  reorder, or interior deletion is detectable with
-  `relay-shell --verify-audit` — in-record tamper-evidence that does not
-  depend on the filesystem attribute the residual-risk attacker below can
-  clear. `relay-shell --verify-audit` is fail-closed: a missing / empty
+  (`docs/adr/0007-audit-hash-chain.md`) so a *naive* in-place edit,
+  insertion, reorder, or interior deletion is detectable with
+  `relay-shell --verify-audit`. The chain is **keyless** by deliberate
+  design (ADR 0007): it is in-record tamper-evidence against accidental or
+  unsophisticated corruption and does not depend on the filesystem attribute
+  the residual-risk attacker below can clear — but it is **not** a defence
+  against an attacker who can both rewrite the log and recompute the chain
+  from genesis. That attacker is caught only by the off-host copy (compare
+  the cross-rotation seam: the prior file's last `chain` against the next
+  file's first `prev`), so off-host shipping is required, not optional, where
+  audit integrity is load-bearing. `relay-shell --verify-audit` is fail-closed: a missing / empty
   log or a head-truncated chain (a non-genesis start) fails by default, so
   the check never blesses an absent or front-excised trail; `--segment`
   accepts a legitimate mid-stream rotation segment. Tail-truncation and

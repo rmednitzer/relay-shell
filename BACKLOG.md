@@ -70,6 +70,69 @@ hardening drop-in (ADR 0002 full-capability posture; operator call); the ADR 000
 hybrid status string and ADR 0005's frozen "next free 0006" line
 (no-retro-edit-of-decision-records).
 
+## 2026-06-21 adversarial (red-team) pass
+
+Findings from the extremely-adversarial follow-up review
+([`audit/2026-06-21-adversarial-engagement.md`](audit/2026-06-21-adversarial-engagement.md)),
+which actively attacked the trust boundary (get a secret into the audit log,
+forge audit integrity, bypass the deny/tier policy, SSRF, path traversal, OAuth
+token confusion, DoS the audit path) with runnable PoCs. No P0/critical, no
+remote-unauthenticated RCE, no auth-bypass-without-a-secret. Two HIGH (a
+secret-leak and a token-type confusion), both fixed in the engagement PR; the
+rest are MEDIUM/LOW hardening, auditability, DoS-footgun, deploy hygiene, and
+doc accuracy.
+
+Headline: a single Python `\b` word-boundary mistake (it only fires at a
+word↔non-word boundary, so it never matches when the adjacent token char is
+preceded by another word char incl. `_`) independently broke **two**
+trust-boundary controls — redaction (RED-1) and tier classification (POL-1).
+
+Closed (engagement PR):
+
+| ID | Sev | Title | Resolution |
+|---|---|---|---|
+| RED-1 | **HIGH** | Compound `*_PASSWORD=`/`*_SECRET=`/`*_TOKEN=` secrets leaked to the audit log | **Closed** (this PR). Dropped the leading `\b` from the `key=value` redaction prefix in `patterns.py`; the trailing `\s*[:=]\s*\S+` still gates it to assignment shapes (no over-match on plain words). `PATTERNS_VERSION` 5→6. Paired over/under-scrub tests in `tests/test_patterns.py` (no FP on `description=`/`--color=auto`/`count=`). |
+| AUTH-1 | **HIGH** | OAuth token-type confusion: `Bearer refresh:<tok>` authenticated as an access token for the refresh TTL | **Closed** (this PR). `load_access_token` now rejects any bearer string carrying the `refresh:` key prefix before the store lookup. Test `test_load_access_token_rejects_refresh_prefixed_bearer`. |
+| POL-1 | MED | Tier dead-patterns: disk-wipe-via-redirect (`> /dev/sda`), fork bomb, `>/etc/` classified Tier 1 in `guarded` | **Closed** (this PR). `TIER2_PATTERN`/`TIER3_PATTERN` anchor switched `\b(` → `(?<![\w])(` so alternatives starting with a non-word char fire at shell-token starts. Controls (`rm -rf`, `dd of=/dev/sda`) unchanged; no new FP (`> /dev/null`, `charm`). Pinned by `tests/test_patterns.py`. |
+| RED-2 | MED | ReDoS on the synchronous audit path via the PEM matcher (`.*?` → O(n²) on many unterminated `BEGIN` markers) | **Closed** (this PR). Length-bounded the PEM body (`[\s\S]{0,8192}?`); still matches a real key block. 6400-marker input 7.6s → ~1.0s; regression timing guard in `tests/test_patterns.py`. |
+| DOC-1 | overclaim | `SECURITY.md` implied `--verify-audit` detects in-place tamper without the keyless / off-host caveat | **Closed** (this PR). Reworded to state the chain is keyless (ADR 0007) and a write-capable attacker recomputes a valid chain — the off-host copy is the real control, required not optional where audit integrity is load-bearing. |
+| DOC-2 | overclaim | `docs/deployment.md` called the deny list "absolute prohibitions"; probe-format footgun undocumented | **Closed** (this PR). Reworded to defence-in-depth (not a sandbox); documents the `"<tool> <command>"` probe shape and that a regex over that text is shell-obfuscation/encoding-evadable and `^command` anchors silently miss. |
+
+Open deferrals (severity order; smaller effort first):
+
+| ID | Item | Sev | Effort | Rationale / approach | Owner role |
+|---|---|---|---|---|---|
+| AUTH-2 | Single-client lockdown bypass via re-registration of the existing `client_id` (overwrites `redirect_uri`) | MED | S | `register_client` allows an update when `cid in clients`; refuse any registration once one client exists (verify no legitimate re-register flow first). Attacker needs the `client_id` + CIDR access. | maintainer |
+| SSH-1 | `known_hosts="ignore"` (per-call MITM downgrade) not recorded in `audit_args` | MED | S | Add `known_hosts` to `audit_args` for the 5 SSH tools — auditability gap vs CLAUDE.md ("meaningful metadata when safe"). | maintainer |
+| SSH-2 | `ssh_check` has no host cap and runs sequentially | MED | S | `ssh_fanout`/`ssh_keyscan` are capped; add a host cap (and/or bounded concurrency) so a large list cannot stall the loop. | maintainer |
+| SSH-3 | `SshPool._forwards` unbounded — repeated `ssh_forward` exhausts fds/ports | MED | S | Add a max-active-forwards cap with a bounded error, mirroring `RELAY_SHELL_MAX_SESSIONS`. | maintainer |
+| SSRF-1 | `ssh_keyscan` deny gate is text-match → evadable by hex/decimal/octal/IPv6-mapped IP encodings | MED | M | Normalize literal IPs (no DNS) into the probe so an IP deny catches all encodings; document that hard SSRF blocking needs an egress firewall (DNS-rebinding-proof), not a text deny. | maintainer |
+| RED-3 | Redaction coverage gaps: `AWS_SECRET_ACCESS_KEY=` (keyword mid-name), Azure connection strings/SAS, Slack webhooks, bare GCP service-account creds | MED | M | Additive patterns + paired fuzz tests; the mid-name-keyword case needs careful FP control. | maintainer |
+| RED-4 | `bytes` args bypass `_scrub` (`else: return value`) | LOW | XS | Latent — no current wrapper passes `bytes` in audit args; decode+redact defensively so a future caller cannot leak. | maintainer |
+| RED-5 | Dict **keys** not scrubbed (only values) | LOW | XS | Low-probability (arg names are developer-chosen, not attacker-supplied); scrub keys too for completeness. | maintainer |
+| CFG-1 | `max_output[_hard]` / `*_timeout` / `session_buffer_bytes` have `ge=` but no `le=` upper bound | LOW | XS | Operator footgun (env-set 1 TB → the clamp never fires); add sane `le=` caps. | maintainer |
+| OBS-1 | `RELAY_SHELL_AUDIT_PATH=/dev/null` silently discards audit with `degraded=False` | LOW | S | Detect a non-regular sink / mark `degraded` so a misconfigured audit path is visible on `/metrics` and `server_info`. | maintainer |
+| DEP-1 | `install-edge.sh` adds the Caddy GPG key without fingerprint pinning (TOFU) | LOW | S | Pin and assert the expected fingerprint before `apt-get install`. | maintainer |
+| DEP-2 | `/etc/relay-shell` created `0755` (filenames world-listable; content is `0640`) | LOW | XS | `install -d -m 0750 -o root -g relay-shell`. | maintainer |
+| EDGE-1 | Caddy `/authorize` + `/.well-known/*` handled before the CIDR `@blocked` rule (reachable from any IP) | info | XS | Correct for browser OAuth redirect flows; document, or CIDR-gate if the deployment is machine-only. | maintainer |
+| EDGE-2 | No `Content-Security-Policy` header on the `/authorize` HTML | info | XS | Add `default-src 'self'` in the Caddyfile header block. | maintainer |
+
+Verified BY-DESIGN / not a bug (challenged, held up — no action): audit
+hash-chain "forgery" (keyless by ADR 0007; off-host seam is the control;
+only the SECURITY.md wording overclaimed → DOC-1); deny/tier heuristic
+bypass via shell obfuscation / alternate encodings (defence-in-depth, not a
+sandbox — policy.py / ADR 0003; wiring is sound, residual is inherent to
+text-matching → DOC-2); wide-open outbound / SSRF baseline (intended fleet
+posture, ADR 0002); TOFU `accept-new` known_hosts default (documented;
+`ignore` per-call is the SSH-1 auditability gap, not the default);
+revoke not cross-revoking access↔refresh (intentional, **tested** opt-out;
+RFC 7009 leaves it unspecified); `/metrics` unauthenticated (SEC-5,
+operator-accepted); MCP resources/prompts bypassing `Policy.check` (documented;
+expose only Tier-0 host metadata); no injection in the non-shell tools
+(`asyncssh` protocol, stdin, `shlex.quote` + `--`); log/format injection
+(formatters escape `\n`/`\r`/`|`/`=`/`\t`; constant keys); empty `client_id` /
+PKCE / code-replay / refresh single-use / lazy expiry (PoC-confirmed safe).
+
 ## Security
 
 (Empty — SEC-1 and SEC-2 closed in the follow-up work above.)

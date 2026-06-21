@@ -390,3 +390,71 @@ def test_priv_esc_positive_and_negative() -> None:
     assert policy.classify("shell_exec", "doas ls /root").name == "STATEFUL"
     # Negative: "sudoku" must not match `\bsudo\b`.
     assert policy.classify("shell_exec", "echo sudoku-fan").name == "REVERSIBLE"
+
+
+def test_tier_anchor_catches_nonword_start_alternatives() -> None:
+    # POL-1 (adversarial audit): the classification anchor must let alternatives
+    # that begin with a non-word char (> / :) fire. The old leading `\b` made
+    # them dead code, so disk-wipe-by-redirect, the fork bomb, and >/etc/ writes
+    # classified Tier 1 and were admitted in guarded mode.
+    from relay_shell.policy import Tier, classify
+
+    assert classify("shell_exec", "> /dev/sda") == Tier.IRREVERSIBLE
+    assert classify("shell_exec", "cat /dev/zero > /dev/sda") == Tier.IRREVERSIBLE
+    assert classify("shell_exec", ":(){ :|:& };:") == Tier.IRREVERSIBLE
+    assert classify("shell_exec", "echo x >> /etc/passwd") == Tier.STATEFUL
+    assert classify("shell_exec", "echo x > /etc/sudoers") == Tier.STATEFUL
+    # Controls still classify high.
+    assert classify("shell_exec", "rm -rf /") == Tier.IRREVERSIBLE
+    assert classify("shell_exec", "dd if=/dev/zero of=/dev/sda") == Tier.IRREVERSIBLE
+    assert classify("shell_exec", "systemctl restart nginx") == Tier.STATEFUL
+    # No new false positives where the verb is only a substring.
+    assert classify("shell_exec", "echo hello > /dev/null") == Tier.REVERSIBLE
+    assert classify("shell_exec", "charm install foo") == Tier.REVERSIBLE
+    assert classify("shell_exec", "ls -la") == Tier.REVERSIBLE
+
+
+def test_redaction_compound_keyword_assignments() -> None:
+    # RED-1 (adversarial audit): a secret keyword that is the suffix of a
+    # compound name (DB_PASSWORD=, APP_SECRET=, API_TOKEN=) is preceded by `_`,
+    # so the old `\b`-anchored prefix pattern never fired and the value leaked
+    # into the audit log. The trailing `\s*[:=]\s*\S+` still gates it.
+    for c in (
+        "export DB_PASSWORD=prod-p@ss",
+        "docker run -e API_TOKEN=abc123xyz svc",
+        "REDIS_PASSWORD=hunter2",
+        "myapp_secret=topsecret",
+    ):
+        out = redaction.redact(c)
+        assert "[REDACTED]" in out, c
+    joined = " ".join(
+        redaction.redact(c)
+        for c in (
+            "export DB_PASSWORD=prod-p@ss",
+            "API_TOKEN=abc123xyz",
+            "REDIS_PASSWORD=hunter2",
+            "myapp_secret=topsecret",
+        )
+    )
+    for leaked in ("prod-p@ss", "abc123xyz", "hunter2", "topsecret"):
+        assert leaked not in joined, leaked
+    # Negative: ordinary key=value args are not over-redacted.
+    for c in ("description=hello", "ls --color=auto", "filename=report.csv", "count=42"):
+        assert "[REDACTED]" not in redaction.redact(c), c
+
+
+def test_pem_redaction_matches_and_is_redos_bounded() -> None:
+    import time
+
+    # Still redacts a real PEM private-key block.
+    key = "-----BEGIN RSA PRIVATE KEY-----\n" + "MIIBdummy" * 40 + "\n-----END RSA PRIVATE KEY-----"
+    assert redaction.redact(key) == "[REDACTED]"
+    # RED-2: many unterminated BEGIN markers must not drive O(n^2) backtracking
+    # on the synchronous audit redaction path. The length-bounded matcher keeps
+    # it linear; the generous guard catches an O(n^2) regression (this input was
+    # ~7.6s before the fix, ~1s after).
+    blob = "-----BEGIN PRIVATE KEY-----\n" * 6400
+    t0 = time.perf_counter()
+    out = redaction.redact(blob)
+    assert time.perf_counter() - t0 < 5.0
+    assert "[REDACTED]" not in out  # no closing END -> no match
