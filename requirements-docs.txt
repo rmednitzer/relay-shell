@@ -1,0 +1,5 @@
+# Build dependency for the MkDocs Material documentation site, installed by
+# .github/workflows/docs.yml. Pinned for reproducible builds; Renovate /
+# Dependabot can bump it. `mkdocs-material` pulls in mkdocs, pymdown-extensions,
+# and the rest of the toolchain transitively.
+mkdocs-material==9.7.6

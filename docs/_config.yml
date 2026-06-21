@@ -1,3 +1,9 @@
+# LEGACY Jekyll config for the relay-shell documentation site. The site is now
+# built with MkDocs Material (../mkdocs.yml + .github/workflows/docs.yml). This
+# file is retained only so the old "Deploy from a branch" Pages source keeps
+# serving during the switch to the "GitHub Actions" source; remove it once the
+# switch is confirmed.
+#
 # GitHub Pages (Jekyll) configuration for the relay-shell documentation site.
 #
 # Build & deployment is enabled once, in the repository settings:
