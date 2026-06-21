@@ -259,3 +259,69 @@ async def test_ssh_keyscan_audits_its_args(settings: Settings) -> None:
     assert last["args"]["hosts"] == "host.example"
     assert last["args"]["port"] == 22
     assert last["args"]["key_types"] == "rsa"
+
+
+# --- SSRF-1: IP-encoding normalization into the deny probe ----------------
+
+
+def test_canonical_ips_normalizes_obfuscated_ipv4() -> None:
+    from relay_shell.server import _canonical_ips
+
+    # Decimal / hex / octal / dotted-short all collapse to the dotted quad.
+    assert "127.0.0.1" in _canonical_ips("2130706433")
+    assert "127.0.0.1" in _canonical_ips("0x7f000001")
+    assert "127.0.0.1" in _canonical_ips("0177.0.0.1")
+    assert "127.0.0.1" in _canonical_ips("127.1")
+    # IPv4-mapped IPv6 exposes the embedded v4 address.
+    assert "127.0.0.1" in _canonical_ips("::ffff:127.0.0.1")
+    # A standard literal canonicalizes to itself.
+    assert _canonical_ips("169.254.169.254") == ["169.254.169.254"]
+
+
+def test_canonical_ips_ignores_hostnames_and_ports() -> None:
+    from relay_shell.server import _canonical_ips
+
+    # Hostnames are never resolved (no DNS in the policy path).
+    assert _canonical_ips("web01.example.com") == []
+    assert _canonical_ips("localhost") == []
+    # A bare small integer (port/count) is not turned into 0.0.0.N.
+    assert _canonical_ips("22") == []
+
+
+def test_augment_probe_appends_only_differing_forms() -> None:
+    from relay_shell.server import _augment_probe_with_ips
+
+    assert _augment_probe_with_ips("2130706433") == "2130706433 127.0.0.1"
+    # Plain literals and hostnames are left untouched (no noisy duplicates).
+    assert _augment_probe_with_ips("127.0.0.1") == "127.0.0.1"
+    assert _augment_probe_with_ips("web01.example.com") == "web01.example.com"
+
+
+async def test_ssh_keyscan_deny_not_dodged_by_ip_encoding(tmp_path: Path) -> None:
+    # SSRF-1: an operator deny on the dotted-quad metadata IP must still fire
+    # when the caller spells it as a packed decimal (or any other encoding),
+    # because the canonical form is appended to the deny probe.
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        policy_mode="open",
+        policy_deny=r"169\.254\.169\.254",
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+    )
+
+    async def fake_run_command(_cmd: str, **_kwargs: object) -> tuple[str, int | None]:
+        raise AssertionError("a denied ssh_keyscan must not reach the executor")
+
+    # 169.254.169.254 packed as a single decimal integer (0xA9FEA9FE).
+    obfuscated = "2852039166"
+    with patch("relay_shell.server.run_command", fake_run_command):
+        mcp = build_server(settings)
+        content, _ = await mcp.call_tool("ssh_keyscan", {"hosts": obfuscated})
+
+    out = _text(content)
+    assert "DENIED" in out, f"obfuscated-IP scan target must be denied; got {out!r}"
+    last = _audit_lines(Path(settings.audit_path))[-1]
+    assert last["denied"] is True
+    # The raw caller token is what is audited (redaction runs on it).
+    assert last["args"]["hosts"] == obfuscated

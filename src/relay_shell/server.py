@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ import pwd
 import re
 import shlex
 import signal
+import socket
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -166,6 +168,64 @@ def _policy_text_ssh_forward(spec: str) -> str:
     return f"forward {spec}"
 
 
+def _canonical_ips(token: str) -> list[str]:
+    """Canonical IP form(s) a *literal-IP* host token encodes (no DNS).
+
+    SSRF-1: ``RELAY_SHELL_POLICY_DENY`` matches the probe *text*, so a caller
+    can dodge an IP-based deny by spelling the same address another way the OS
+    resolver still accepts — decimal (``2130706433``), hex (``0x7f000001`` /
+    ``0x7f.0.0.1``), octal (``0177.0.0.1``), dotted-short (``127.1``), or
+    IPv4-mapped IPv6 (``::ffff:127.0.0.1``). This returns the canonical
+    dotted/colon form(s) of any literal IP a token encodes so the caller can
+    append them to the probe and an operator's IP deny catches every spelling.
+
+    Hostnames return ``[]``: we never resolve DNS here — that would block the
+    event loop and a rebinding answer could differ from the one the eventual
+    connection dials. Hard egress control needs a network firewall, not a text
+    deny (see ``docs/deployment.md``). Purely additive — a stray canonical form
+    only *widens* what a deny can match; it never admits or blocks on its own.
+    """
+    t = token.strip().strip("[]")
+    if not t:
+        return []
+    found: list[str] = []
+    # Standard IPv4 / IPv6 (incl. IPv4-mapped). Strict: a bare port like "22"
+    # raises here, so small integers are not mis-canonicalised.
+    try:
+        ip = ipaddress.ip_address(t)
+        found.append(str(ip))
+        mapped = getattr(ip, "ipv4_mapped", None)
+        if mapped is not None:
+            found.append(str(mapped))
+    except ValueError:
+        pass
+    # Obfuscated IPv4 the libc resolver still accepts (inet_aton grammar:
+    # decimal / octal / hex / short). Gate on an "IP-ish" shape so a bare
+    # port or small count is not turned into 0.0.0.N noise.
+    looks_ipish = "." in t or t.lower().startswith("0x") or (t.isdigit() and int(t) > 65535)
+    if looks_ipish:
+        with contextlib.suppress(OSError):
+            found.append(socket.inet_ntoa(socket.inet_aton(t)))
+    return list(dict.fromkeys(found))
+
+
+def _augment_probe_with_ips(hosts: str) -> str:
+    """Append canonical IP forms of any obfuscated-IP tokens in ``hosts``.
+
+    So an IP-based ``RELAY_SHELL_POLICY_DENY`` matches the address regardless of
+    the encoding the caller used (SSRF-1). Only forms that *differ* from what
+    the caller wrote are appended, keeping the probe clean for plain literals
+    and hostnames. Tokens split on the ssh_keyscan list separators (whitespace
+    and commas).
+    """
+    extra: list[str] = []
+    for tok in (t for t in hosts.replace(",", " ").split() if t):
+        for ip in _canonical_ips(tok):
+            if ip != tok and ip not in extra:
+                extra.append(ip)
+    return f"{hosts} {' '.join(extra)}" if extra else hosts
+
+
 def _policy_text_ssh_keyscan(hosts: str) -> str:
     """The caller-chosen scan targets, so the deny list gates them (SEC-1).
 
@@ -173,16 +233,19 @@ def _policy_text_ssh_keyscan(hosts: str) -> str:
     SSRF-shaped surface most worth gating by host — yet its probe text used to
     be empty, so ``RELAY_SHELL_POLICY_DENY`` never saw the targets (unlike the
     ``ssh_upload`` / ``ssh_download`` / ``ssh_forward`` synthetic builders,
-    which already name their host). Returning the raw ``hosts`` string closes
-    that gap and honours the runbook R-002 contract ("everything the executor
-    sees, the policy sees"). Tradeoff: the same text feeds the tier classifier,
-    so a host whose name embeds a heuristic word (``reboot``, ``sudo``, ...) at
-    a token start over-classifies the scan and is refused in ``guarded`` mode
-    (``open`` is advisory; ``readonly`` already refuses Tier 1). That is a
-    conservative false-deny with ``RELAY_SHELL_POLICY_ALLOW`` as the escape
-    hatch, and it matches how the transfer tools already behave.
+    which already name their host). Returning the ``hosts`` string closes that
+    gap and honours the runbook R-002 contract ("everything the executor sees,
+    the policy sees"). It is also widened with the canonical form of any literal
+    IP the caller wrote in an alternate encoding (SSRF-1, via
+    ``_augment_probe_with_ips``) so an IP deny is not dodged by
+    decimal/hex/octal/IPv4-mapped spellings. Tradeoff: the same text feeds the
+    tier classifier, so a host whose name embeds a heuristic word (``reboot``,
+    ``sudo``, ...) at a token start over-classifies the scan and is refused in
+    ``guarded`` mode (``open`` is advisory; ``readonly`` already refuses
+    Tier 1). That is a conservative false-deny with ``RELAY_SHELL_POLICY_ALLOW``
+    as the escape hatch, and it matches how the transfer tools already behave.
     """
-    return hosts
+    return _augment_probe_with_ips(hosts)
 
 
 class Relay:

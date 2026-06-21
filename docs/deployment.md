@@ -322,11 +322,15 @@ the probe text `"<tool> <command>"` (the tool name is prepended, so anchor with
 `^ssh_keyscan`). Use it as an always-on first-line filter — but treat it as
 **defence in depth, not an absolute prohibition**: it matches command *text*, so
 a determined caller can evade it with shell obfuscation (extra whitespace,
-quoting like `r''m`, `${IFS}`, `$(...)`, base64 `| sh`) or alternate encodings
-(e.g. hex/decimal/IPv6-mapped IPs for an SSRF target). Enforce hard prohibitions
-with OS/network controls — an egress firewall, seccomp/AppArmor, a restricted
-service account, `readonly`/`guarded` mode — not the deny list alone. See
-ADR 0003.
+quoting like `r''m`, `${IFS}`, `$(...)`, base64 `| sh`) or alternate encodings.
+`ssh_keyscan` normalizes any *literal* IP in its target list into the probe, so
+an IP deny (e.g. on the cloud metadata address) is not dodged by a
+decimal/hex/octal/IPv4-mapped spelling of the same address (SSRF-1) — but this
+cannot help for hostnames (no DNS is resolved in the policy path; a DNS or
+rebinding answer can differ from the one the connection dials). Enforce hard
+prohibitions with OS/network controls — an egress firewall (DNS-rebinding-proof),
+seccomp/AppArmor, a restricted service account, `readonly`/`guarded` mode — not
+the deny list alone. See ADR 0003.
 
 ## 9. Health
 

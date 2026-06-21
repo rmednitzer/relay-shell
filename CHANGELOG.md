@@ -303,6 +303,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- `ssh_keyscan` deny gate no longer dodged by IP-encoding (SSRF-1, adversarial
+  pass). `RELAY_SHELL_POLICY_DENY` matches probe *text*, so a caller could spell
+  a denied address another way the OS resolver still accepts — decimal
+  (`2130706433`), hex (`0x7f000001`), octal (`0177.0.0.1`), dotted-short
+  (`127.1`), or IPv4-mapped IPv6 (`::ffff:127.0.0.1`). The keyscan policy probe
+  now appends the canonical dotted/colon form of any **literal** IP in the
+  target list (`_canonical_ips` / `_augment_probe_with_ips`, via `inet_aton` +
+  `ipaddress`), so an IP-based deny catches every spelling of the same address.
+  No DNS is resolved in the policy path (it would block the event loop and a
+  rebinding answer can differ from the dialled one), so hostname/DNS targets
+  still need an egress firewall — documented in `docs/deployment.md`. The change
+  is purely additive to the probe (a canonical form is appended only when it
+  differs from what the caller wrote); plain literals and hostnames are
+  untouched. Tests in `tests/test_ssh_keyscan_tool.py`. The same normalization
+  for the other host-bearing probes (`ssh_upload`/`ssh_download`/`ssh_forward`)
+  is tracked as SSRF-2 in `BACKLOG.md`.
 - SSH-surface hardening — bounds + auditability follow-ups to the 2026-06-21
   adversarial pass (`BACKLOG.md`; no posture change, capability preserved):
   - **SSH-1**: the five SSH tools (`ssh_exec` / `ssh_spawn` / `ssh_upload` /
