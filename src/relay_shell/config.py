@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     default_timeout: int = Field(default=60, ge=1)
     max_timeout: int = Field(default=900, ge=1)
     max_sessions: int = Field(default=64, ge=1, le=1024)
+    max_forwards: int = Field(default=64, ge=1, le=1024)
     session_idle_timeout: int = Field(default=1800, ge=10)
     session_buffer_bytes: int = Field(default=262_144, ge=4096)
 

@@ -56,6 +56,15 @@ _SUDO_SEARCH_PATHS = (Path("/usr/bin/sudo"), Path("/bin/sudo"), Path("/usr/local
 # sshd auth log entry), turning the tool into a noisy sweep surface.
 _SSH_FANOUT_MAX_HOSTS = 100
 
+# ssh_check: like ssh_fanout, cap the per-call host count and bound how many
+# probes run at once (SSH-2). Without the cap the inventory-wide default could
+# fan a large fleet into one call; without bounded concurrency the probes ran
+# strictly sequentially, so a big list multiplied by the connect timeout into a
+# long-blocking call. The probe is read-only ("echo ok"); output order follows
+# the input list regardless of completion order.
+_SSH_CHECK_MAX_HOSTS = 100
+_SSH_CHECK_CONCURRENCY = 8
+
 # ssh_keyscan: validate host tokens at the boundary so the eventual
 # shell concatenation is safe. Hostnames (and bracketed IPv6 literals) only;
 # no whitespace, no shell metacharacters, no path separators.
@@ -581,7 +590,13 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         return await app.run(
             tool="ssh_exec",
             ctx=ctx,
-            audit_args={"host": host, "command": command, "timeout": t, "jump": jump},
+            audit_args={
+                "host": host,
+                "command": command,
+                "timeout": t,
+                "jump": jump,
+                "known_hosts": known_hosts or app.settings.ssh_known_hosts,
+            },
             policy_text=_policy_text_ssh_exec(command),
             max_output=65536,
             work=lambda: app.ssh.run(host, command, timeout=t, connect_kwargs=ck),
@@ -626,7 +641,12 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         return await app.run(
             tool="ssh_spawn",
             ctx=ctx,
-            audit_args={"host": host, "command": command or "shell", "size": f"{cols}x{rows}"},
+            audit_args={
+                "host": host,
+                "command": command or "shell",
+                "size": f"{cols}x{rows}",
+                "known_hosts": known_hosts or app.settings.ssh_known_hosts,
+            },
             policy_text=_policy_text_ssh_spawn(command),
             max_output=4096,
             work=_work,
@@ -778,7 +798,13 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         return await app.run(
             tool="ssh_upload",
             ctx=ctx,
-            audit_args={"host": host, "local": local_path, "remote": remote_path, "timeout": t},
+            audit_args={
+                "host": host,
+                "local": local_path,
+                "remote": remote_path,
+                "timeout": t,
+                "known_hosts": known_hosts or app.settings.ssh_known_hosts,
+            },
             policy_text=_policy_text_ssh_upload(host, local_path, remote_path),
             max_output=2048,
             work=_work,
@@ -817,7 +843,13 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         return await app.run(
             tool="ssh_download",
             ctx=ctx,
-            audit_args={"host": host, "remote": remote_path, "local": local_path, "timeout": t},
+            audit_args={
+                "host": host,
+                "remote": remote_path,
+                "local": local_path,
+                "timeout": t,
+                "known_hosts": known_hosts or app.settings.ssh_known_hosts,
+            },
             policy_text=_policy_text_ssh_download(host, remote_path, local_path),
             max_output=2048,
             work=_work,
@@ -852,7 +884,11 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         return await app.run(
             tool="ssh_forward",
             ctx=ctx,
-            audit_args={"host": host, "spec": spec},
+            audit_args={
+                "host": host,
+                "spec": spec,
+                "known_hosts": known_hosts or app.settings.ssh_known_hosts,
+            },
             policy_text=_policy_text_ssh_forward(spec),
             max_output=1024,
             work=_work,
@@ -903,16 +939,30 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             )
             if not names:
                 return ("[no hosts configured; pass hosts= or add an inventory]", None)
+            if len(names) > _SSH_CHECK_MAX_HOSTS:
+                return (
+                    f"[ERROR: {len(names)} hosts exceeds the per-call cap of "
+                    f"{_SSH_CHECK_MAX_HOSTS}; split into smaller batches]",
+                    None,
+                )
             tmo = clamp(timeout, 1, 60)
             ck = app.connect_kwargs("", 0, "", "", "", connect_timeout=tmo)
-            lines: list[str] = []
-            for name in names:
-                try:
-                    out, code = await app.ssh.run(name, "echo ok", timeout=tmo, connect_kwargs=ck)
-                    ok = code == 0 and "ok" in out
-                    lines.append(f"{name}: {'ok' if ok else 'UNREACHABLE'}")
-                except Exception as exc:  # noqa: BLE001
-                    lines.append(f"{name}: UNREACHABLE ({exc.__class__.__name__})")
+            sem = asyncio.Semaphore(_SSH_CHECK_CONCURRENCY)
+
+            async def _probe(name: str) -> str:
+                async with sem:
+                    try:
+                        out, code = await app.ssh.run(
+                            name, "echo ok", timeout=tmo, connect_kwargs=ck
+                        )
+                        ok = code == 0 and "ok" in out
+                        return f"{name}: {'ok' if ok else 'UNREACHABLE'}"
+                    except Exception as exc:  # noqa: BLE001
+                        return f"{name}: UNREACHABLE ({exc.__class__.__name__})"
+
+            # gather preserves input order in the result list regardless of
+            # which probe finishes first.
+            lines = await asyncio.gather(*(_probe(n) for n in names))
             return ("\n".join(lines), None)
 
         return await app.run(
@@ -1196,6 +1246,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                     "max_output": cfg.max_output,
                     "max_output_hard": cfg.max_output_hard,
                     "max_sessions": cfg.max_sessions,
+                    "max_forwards": cfg.max_forwards,
                 },
                 "audit": {
                     "path": app.audit.path,

@@ -98,14 +98,19 @@ Closed (engagement PR):
 | DOC-1 | overclaim | `SECURITY.md` implied `--verify-audit` detects in-place tamper without the keyless / off-host caveat | **Closed** (this PR). Reworded to state the chain is keyless (ADR 0007) and a write-capable attacker recomputes a valid chain — the off-host copy is the real control, required not optional where audit integrity is load-bearing. |
 | DOC-2 | overclaim | `docs/deployment.md` called the deny list "absolute prohibitions"; probe-format footgun undocumented | **Closed** (this PR). Reworded to defence-in-depth (not a sandbox); documents the `"<tool> <command>"` probe shape and that a regex over that text is shell-obfuscation/encoding-evadable and `^command` anchors silently miss. |
 
+Closed in follow-up PRs (2026-06-21 adversarial backlog work):
+
+| ID | Sev | Title | Resolution |
+|---|---|---|---|
+| SSH-1 | MED | `known_hosts="ignore"` (per-call MITM downgrade) not recorded in `audit_args` | **Closed** (SSH-hardening PR). The 5 SSH tools (`ssh_exec`/`ssh_spawn`/`ssh_upload`/`ssh_download`/`ssh_forward`) now record the effective per-call host-key verification mode (`known_hosts or settings.ssh_known_hosts`) in `audit_args`, so a per-call `ignore` downgrade is visible in the audit trail. Test `test_ssh_tools_record_known_hosts_in_audit`. |
+| SSH-2 | MED | `ssh_check` has no host cap and runs sequentially | **Closed** (SSH-hardening PR). Added a per-call host cap (`_SSH_CHECK_MAX_HOSTS=100`, bounded error like `ssh_fanout`) and bounded-concurrency probing (`_SSH_CHECK_CONCURRENCY=8`, output order preserved). Test `test_ssh_check_caps_host_count`. |
+| SSH-3 | MED | `SshPool._forwards` unbounded — repeated `ssh_forward` exhausts fds/ports | **Closed** (SSH-hardening PR). Added `RELAY_SHELL_MAX_FORWARDS` (default 64, `ge=1, le=1024`, mirroring `max_sessions`); `add_forward` pre-checks before dialling and re-checks under the lock (closing the just-opened listener on a lost race) so the cap is never exceeded and nothing leaks. New `ForwardError`; surfaced in `server_info.config.max_forwards`. Test `test_add_forward_enforces_cap`. |
+
 Open deferrals (severity order; smaller effort first):
 
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
 | AUTH-2 | Single-client lockdown bypass via re-registration of the existing `client_id` (overwrites `redirect_uri`) | MED | S | `register_client` allows an update when `cid in clients`; refuse any registration once one client exists (verify no legitimate re-register flow first). Attacker needs the `client_id` + CIDR access. | maintainer |
-| SSH-1 | `known_hosts="ignore"` (per-call MITM downgrade) not recorded in `audit_args` | MED | S | Add `known_hosts` to `audit_args` for the 5 SSH tools — auditability gap vs CLAUDE.md ("meaningful metadata when safe"). | maintainer |
-| SSH-2 | `ssh_check` has no host cap and runs sequentially | MED | S | `ssh_fanout`/`ssh_keyscan` are capped; add a host cap (and/or bounded concurrency) so a large list cannot stall the loop. | maintainer |
-| SSH-3 | `SshPool._forwards` unbounded — repeated `ssh_forward` exhausts fds/ports | MED | S | Add a max-active-forwards cap with a bounded error, mirroring `RELAY_SHELL_MAX_SESSIONS`. | maintainer |
 | SSRF-1 | `ssh_keyscan` deny gate is text-match → evadable by hex/decimal/octal/IPv6-mapped IP encodings | MED | M | Normalize literal IPs (no DNS) into the probe so an IP deny catches all encodings; document that hard SSRF blocking needs an egress firewall (DNS-rebinding-proof), not a text deny. | maintainer |
 | RED-3 | Redaction coverage gaps: `AWS_SECRET_ACCESS_KEY=` (keyword mid-name), Azure connection strings/SAS, Slack webhooks, bare GCP service-account creds | MED | M | Additive patterns + paired fuzz tests; the mid-name-keyword case needs careful FP control. | maintainer |
 | RED-4 | `bytes` args bypass `_scrub` (`else: return value`) | LOW | XS | Latent — no current wrapper passes `bytes` in audit args; decode+redact defensively so a future caller cannot leak. | maintainer |

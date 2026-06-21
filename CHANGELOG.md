@@ -303,6 +303,28 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- SSH-surface hardening — bounds + auditability follow-ups to the 2026-06-21
+  adversarial pass (`BACKLOG.md`; no posture change, capability preserved):
+  - **SSH-1**: the five SSH tools (`ssh_exec` / `ssh_spawn` / `ssh_upload` /
+    `ssh_download` / `ssh_forward`) now record the effective per-call host-key
+    verification mode in their audit args (`known_hosts` =
+    the call's value, else the server default), so a per-call `known_hosts=
+    "ignore"` MITM downgrade is visible in the audit trail instead of silent.
+  - **SSH-2**: `ssh_check` gained a per-call host cap (100, bounded error like
+    `ssh_fanout`) and runs its probes with bounded concurrency (8) instead of
+    strictly sequentially, so a large/inventory-wide list cannot turn one call
+    into a long-blocking sweep. Output order is unchanged.
+  - **SSH-3**: active SSH port forwards are now capped by
+    `RELAY_SHELL_MAX_FORWARDS` (default 64, mirroring `RELAY_SHELL_MAX_SESSIONS`).
+    `SshPool.add_forward` pre-checks before dialling and re-checks under the lock
+    — closing the just-opened listener on a lost race — so the cap is never
+    exceeded and a refused forward leaks nothing. A new `ForwardError` returns a
+    bounded message; `server_info.config` reports `max_forwards`.
+
+  Tests: `test_ssh_tools_record_known_hosts_in_audit`,
+  `test_ssh_check_caps_host_count` (`tests/test_tool_wrappers.py`), and
+  `test_add_forward_enforces_cap` (`tests/test_sshpool_unit.py`). Audit-record
+  shape is otherwise unchanged (the new `known_hosts` arg is additive).
 - Adversarial (red-team) audit pass (2026-06-21) —
   `audit/2026-06-21-adversarial-engagement.md`; full register in `BACKLOG.md`
   (2026-06-21 adversarial section). A systemic Python `\b` word-boundary bug (it

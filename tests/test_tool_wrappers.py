@@ -460,3 +460,41 @@ def test_policy_text_builders_include_every_executor_visible_part() -> None:
     # ssh_keyscan: the caller-chosen scan targets are the executor-visible
     # part the deny list must see (SEC-1); the builder passes them through.
     assert srv._policy_text_ssh_keyscan("h1, h2") == "h1, h2"
+
+
+async def test_ssh_check_caps_host_count(settings: Settings) -> None:
+    # SSH-2: a host list over the per-call cap returns a bounded error before
+    # any connection is attempted (mirrors ssh_fanout / ssh_keyscan).
+    mcp = build_server(settings)
+    hosts = " ".join(f"h{i}.invalid" for i in range(101))
+    content, _ = await mcp.call_tool("ssh_check", {"hosts": hosts, "timeout": 1})
+    out = _text(content)
+    assert "exceeds the per-call cap" in out
+
+
+async def test_ssh_tools_record_known_hosts_in_audit(settings: Settings) -> None:
+    # SSH-1: the per-call host-key verification mode is recorded in the audit
+    # args, so a per-call `ignore` MITM downgrade is visible. An explicit value
+    # is recorded verbatim; absent one, the effective server default is used
+    # (the fixture default is "ignore").
+    mcp = build_server(settings)
+    await mcp.call_tool(
+        "ssh_exec",
+        {
+            "host": "no-such-host-123.invalid",
+            "command": "true",
+            "known_hosts": "strict",
+            "timeout": 1,
+        },
+    )
+    await mcp.call_tool(
+        "ssh_exec", {"host": "no-such-host-123.invalid", "command": "true", "timeout": 1}
+    )
+    recs = [
+        json.loads(ln)
+        for ln in Path(settings.audit_path).read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    ssh_recs = [r for r in recs if r["tool"] == "ssh_exec"]
+    assert ssh_recs[0]["args"]["known_hosts"] == "strict"
+    assert ssh_recs[1]["args"]["known_hosts"] == "ignore"
