@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-21
+
 ### Added
 
 - `docs/auth.md` — an authentication-lifecycle guide for the OAuth 2.1 layer:
@@ -997,3 +999,7 @@ All notable changes to this project are documented here. The format follows
 - Treat the audit log as evidence only until shipped off-host; the
   bundled logrotate config drops and restores the append-only attribute
   across rotation. See `docs/deployment.md` §6.
+
+[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/rmednitzer/relay-shell/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/rmednitzer/relay-shell/releases/tag/v0.1.0

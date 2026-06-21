@@ -41,4 +41,13 @@ jobs:
           pip install -e ".[dev,http]"
 
       - name: Run pip-audit
-        run: pip-audit --strict
+        # `--skip-editable` excludes the local editable `relay-shell` install:
+        # pip-audit resolves each distribution on PyPI for known CVEs, but the
+        # project itself is not a third-party dependency to audit, and an
+        # unreleased in-repo version (e.g. a release-prep bump before the tag is
+        # published) is not on PyPI. `--strict` is intentionally NOT combined
+        # with it: --strict treats the skipped editable project as an incomplete
+        # audit and fails ("distribution marked as editable"). Every actual
+        # third-party dependency (incl. the [dev]/[http] extras) is on PyPI and
+        # still audited, and pip-audit still exits non-zero on any CVE found.
+        run: pip-audit --skip-editable
