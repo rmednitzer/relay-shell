@@ -1,0 +1,103 @@
+# MkDocs Material configuration for the relay-shell documentation site.
+#
+# Built from docs/ and published to GitHub Pages by .github/workflows/docs.yml.
+# One-time repo setting required:
+#   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"
+# (this replaces the former Jekyll "Deploy from a branch" source).
+# Local preview:  pip install -r requirements-docs.txt && mkdocs serve
+site_name: relay-shell
+site_description: >-
+  A governed Model Context Protocol relay for complete shell and SSH operation:
+  central audit, tiered authority, secret redaction, and resource bounds.
+site_url: https://rmednitzer.github.io/relay-shell/
+site_author: Roman Mednitzer
+repo_url: https://github.com/rmednitzer/relay-shell
+repo_name: rmednitzer/relay-shell
+edit_uri: edit/main/docs/
+copyright: Apache-2.0 licensed.
+docs_dir: docs
+
+# docs/_config.yml is the legacy Jekyll config, retained only so the old
+# "Deploy from a branch" build keeps serving during the switch to GitHub
+# Actions. It is not part of this site.
+exclude_docs: |
+  _config.yml
+
+theme:
+  name: material
+  palette:
+    # Dark by default (per the site's design), with a one-click light toggle.
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.action.edit
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+nav:
+  - Overview: index.md
+  - Guides:
+      - Architecture: architecture.md
+      - Tool reference: tools.md
+      - Deployment: deployment.md
+      - Authentication: auth.md
+      - Audit shipping: audit-shipper.md
+      - Maintenance runbook: runbook.md
+  - Decision records:
+      - Overview: adr/README.md
+      - 0001 · Runtime, SDK & SSH library: adr/0001-runtime-and-sdk.md
+      - 0002 · Unsandboxed full-access posture: adr/0002-no-sandbox-full-access.md
+      - 0003 · Tiered authority: adr/0003-tiered-authority.md
+      - 0004 · Automated TLS at the edge: adr/0004-edge-tls-automation.md
+      - 0005 · Codebase validation: adr/0005-codebase-validation.md
+      - 0006 · seccomp-bpf audit channel: adr/0006-seccomp-notify-audit-channel.md
+      - 0007 · Tamper-evident audit hash chain: adr/0007-audit-hash-chain.md
+      - 0008 · Operating-guidance prompt: adr/0008-operating-guidance-prompt.md

@@ -15,7 +15,7 @@ ingests).
 
 Cross-references:
 
-- The audit-file contract and `chattr +a` posture: [`SECURITY.md`](../SECURITY.md)
+- The audit-file contract and `chattr +a` posture: [`SECURITY.md`](https://github.com/rmednitzer/relay-shell/blob/main/SECURITY.md)
   and [`docs/deployment.md`](deployment.md) §6.
 - The runbook's "audit-the-audit" procedure: [`docs/runbook.md`](runbook.md) §2.3.
 

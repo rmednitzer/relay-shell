@@ -142,7 +142,7 @@ Re-ran steps 1-4. This pass also landed [ADR 0007](0007-audit-hash-chain.md)
 (tamper-evident audit hash chain) in the same PR, so the behavior
 validation in step 4 was extended to cover the new chain surface. The
 broader engagement is recorded in
-[`audit/2026-06-01-engagement.md`](../../audit/2026-06-01-engagement.md).
+[`audit/2026-06-01-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-01-engagement.md).
 
 - 21 MCP tools and 3 resources registered, matching
   `tests/test_server.py::_EXPECTED` and `docs/tools.md`. ADR 0007 adds a
@@ -257,7 +257,7 @@ behavior.
 
 A full validation + security audit, run the same day as the doc-drift pass above;
 evidence pack:
-[`audit/2026-06-21-engagement.md`](../../audit/2026-06-21-engagement.md). Steps
+[`audit/2026-06-21-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-21-engagement.md). Steps
 1-4 were re-run on a clean venv at the pinned `mcp==1.27.2` / `asyncssh==2.23.1`
 (a `semgrep`-into-the-project-venv `mcp` downgrade to 1.23.3 was caught and the
 venv rebuilt clean, with `semgrep` thereafter run isolated via `uvx`), plus an

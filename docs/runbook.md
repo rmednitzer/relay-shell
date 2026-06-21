@@ -1,8 +1,8 @@
 # Maintenance Runbook
 
 A working procedure for auditing, reviewing, enhancing, validating, and
-extending `relay-shell`. Pair it with [`AGENTS.md`](../AGENTS.md) and
-[`CLAUDE.md`](../CLAUDE.md): those define the operating contract, this is
+extending `relay-shell`. Pair it with [`AGENTS.md`](https://github.com/rmednitzer/relay-shell/blob/main/AGENTS.md) and
+[`CLAUDE.md`](https://github.com/rmednitzer/relay-shell/blob/main/CLAUDE.md): those define the operating contract, this is
 the step-by-step playbook for executing against it.
 
 Anything that touches the audit pipeline, the policy layer, redaction, or a
@@ -784,8 +784,8 @@ The 2026-06-21 full audit pass closed **QUAL-2 (P3)** (`ssh_forward` now raises 
 bounded error on a malformed spec) and **FMT-1 (P3)** (the LEEF formatter emits
 the mandatory LEEF 2.0 delimiter field) in the P2/P3 follow-up PR; **FMT-2
 (info)** (CEF header-field escaping — no runtime defect) remains. Full detail in
-[`BACKLOG.md`](../BACKLOG.md) (2026-06-21 section) and
-[`audit/2026-06-21-engagement.md`](audit/2026-06-21-engagement.md).
+[`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md) (2026-06-21 section) and
+[`audit/2026-06-21-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-21-engagement.md).
 
 ### 7.3 Operations + observability
 
@@ -892,8 +892,8 @@ currently empty.)
   effective after the change via
   `GET /repos/rmednitzer/relay-shell/rules/branches/main`.
 - **2026-06-21 full audit pass** — incremental hardening, no posture change.
-  Full register in [`BACKLOG.md`](../BACKLOG.md) (2026-06-21 section) and
-  [`audit/2026-06-21-engagement.md`](audit/2026-06-21-engagement.md). Closed:
+  Full register in [`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md) (2026-06-21 section) and
+  [`audit/2026-06-21-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-21-engagement.md). Closed:
   SEC-3 (dependency floors) + TOOL-4 (CODEOWNERS → Renovate) in the pass PR;
   SEC-4 (Anthropic/HuggingFace redaction) in a follow-up; SEC-6 (refresh-token
   lock), SEC-7 (RFC 8707 `resource` forwarding), CI-1 (`release.yml`
@@ -907,9 +907,9 @@ currently empty.)
   items are info-only (**FMT-2** / **CI-3** / **DOC-5**) and out-of-scope
   **B-025** (aarch64); see `BACKLOG.md`.
 - **2026-06-21 adversarial (red-team) pass** — incremental hardening, no
-  posture change. Full register in [`BACKLOG.md`](../BACKLOG.md) (2026-06-21
+  posture change. Full register in [`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md) (2026-06-21
   adversarial section) and
-  [`audit/2026-06-21-adversarial-engagement.md`](audit/2026-06-21-adversarial-engagement.md).
+  [`audit/2026-06-21-adversarial-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-21-adversarial-engagement.md).
   The pass actively attacked the trust boundary with PoCs and found a systemic
   Python `\b` word-boundary bug that independently broke **two** controls.
   Closed in the engagement PR: **RED-1** (HIGH — compound `*_PASSWORD=` /
@@ -1223,22 +1223,26 @@ plan lands in the same PR.)
   `docs/auth.md`, `deployment.md` §5, `SECURITY.md`, and the README OAuth
   bullet together.
 
-### 8.23 `docs/index.md` + `docs/_config.yml` (GitHub Pages)
+### 8.23 Documentation site (MkDocs Material + GitHub Pages)
 
-- Keep: `index.md` as the documentation-site landing page (links every guide
-  plus the ADR index); `_config.yml` as the Jekyll config (title, description,
-  theme) for the `/docs`-folder Pages build.
-- Enable (one-time, repo settings): Settings → Pages → Deploy from a branch →
-  `main` / `/docs`. GitHub builds with Jekyll; the default `jekyll-relative-links`
-  plugin resolves the inter-doc `.md` links, and `jekyll-optional-front-matter`
-  renders the front-matter-less docs. Site:
-  `https://rmednitzer.github.io/relay-shell/`.
-- Add: a link in `index.md` whenever a new top-level guide lands under `docs/`
-  (keep it in step with the README and the doc list here).
-- Cross-checks: every guide linked from `index.md` must exist under `docs/`;
-  `_config.yml`'s `theme` must be a GitHub-Pages-supported theme; no doc may
-  introduce raw Liquid ({% raw %}`{{` / `{%`) without `{% raw %}`{% endraw %} guards, or the Pages
-  build breaks (these example tokens are wrapped in a raw guard).
+- Stack: the docs site is built with MkDocs + the Material theme from the
+  `docs/` folder, configured by `mkdocs.yml` (repo root) and published to
+  GitHub Pages by `.github/workflows/docs.yml`. Build deps are pinned in
+  `requirements-docs.txt`. Site: `https://rmednitzer.github.io/relay-shell/`.
+- Enable (one-time, repo settings): Settings → Pages → Build and deployment →
+  Source → "GitHub Actions". This supersedes the former Jekyll "Deploy from a
+  branch" source; `docs/_config.yml` is kept only so that legacy source keeps
+  serving during the switch, and can be removed once Pages runs on Actions.
+- Keep: `index.md` as the landing page (links every guide plus the ADR index);
+  `mkdocs.yml` `nav:` as the single source of navigation order.
+- Add: when a new guide lands under `docs/`, add it to `mkdocs.yml` `nav:` and
+  to the `index.md` guide list (keep both in step with the README).
+- Local preview: `pip install -r requirements-docs.txt && mkdocs serve`.
+- Cross-checks: every file in `nav:` must exist under `docs/`; inter-doc links
+  use relative `.md` paths (MkDocs resolves them to the built pages). The
+  workflow runs `mkdocs build --strict`, so a broken link or missing nav
+  target fails CI before anything deploys. MkDocs does not run a Liquid-style
+  templating pass over the Markdown, so the Jekyll-era raw guards are gone.
 
 ---
 

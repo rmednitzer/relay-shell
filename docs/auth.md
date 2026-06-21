@@ -3,7 +3,7 @@
 > **Opt-in — disabled by default.** `relay-shell` runs with **no
 > authentication** unless you turn it on. The OAuth 2.1 layer applies **only**
 > to the HTTP transport and **only** when `RELAY_SHELL_AUTH_ENABLED=true`
-> (default `false`, [`config.py`](../src/relay_shell/config.py) `auth_enabled`).
+> (default `false`, [`config.py`](https://github.com/rmednitzer/relay-shell/blob/main/src/relay_shell/config.py) `auth_enabled`).
 > The stdio transport has no network surface, so it has no auth layer — the
 > transport itself is the trust boundary there.
 
@@ -11,7 +11,7 @@ This document explains how a client authenticates and, in particular, **how a
 single client stays authenticated over time**. For the operational enable
 steps (env vars, the `[http]` extra, the Caddy edge) see
 [`deployment.md` §5](deployment.md). For the threat model see
-[`SECURITY.md`](../SECURITY.md).
+[`SECURITY.md`](https://github.com/rmednitzer/relay-shell/blob/main/SECURITY.md).
 
 ## Opt-in by default — and what "off" means
 
@@ -22,14 +22,14 @@ steps (env vars, the `[http]` extra, the Caddy edge) see
 | `http` | `true` | OAuth 2.1 enforced: every tool call needs a valid bearer access token. |
 
 Only when both conditions hold is the provider constructed
-([`server.py`](../src/relay_shell/server.py): `if cfg.transport == "http" and
+([`server.py`](https://github.com/rmednitzer/relay-shell/blob/main/src/relay_shell/server.py): `if cfg.transport == "http" and
 cfg.auth_enabled`). Authentication is therefore a deliberate operator choice,
 never on implicitly. If you expose the HTTP transport beyond loopback, enable
 it.
 
 ## The provider
 
-`FileOAuthProvider` ([`auth/oauth.py`](../src/relay_shell/auth/oauth.py)) is an
+`FileOAuthProvider` ([`auth/oauth.py`](https://github.com/rmednitzer/relay-shell/blob/main/src/relay_shell/auth/oauth.py)) is an
 OAuth 2.1 **authorization server**: dynamic client registration (DCR) with
 optional single-client lockdown, PKCE (the SDK enforces the challenge),
 short-lived authorization codes, and **rotating** refresh tokens. State is
@@ -170,7 +170,7 @@ treats the edge controls **and** OAuth as required.
 ## References
 
 - Operational setup: [`deployment.md` §5](deployment.md) (enable) and §4 (edge).
-- Threat model and trust boundary: [`SECURITY.md`](../SECURITY.md).
+- Threat model and trust boundary: [`SECURITY.md`](https://github.com/rmednitzer/relay-shell/blob/main/SECURITY.md).
 - Runtime/no-sandbox posture: [ADR 0002](adr/0002-no-sandbox-full-access.md).
 - Adding another provider: [`runbook.md` §6.3](runbook.md).
 - RFCs: OAuth 2.1 (draft), PKCE (RFC 7636), token revocation (RFC 7009),
