@@ -18,6 +18,7 @@ from typing import Any
 
 import asyncssh
 
+from .errors import ForwardError
 from .inventory import HostSpec, Inventory
 from .util import gen_id, truncate
 
@@ -451,6 +452,17 @@ class SshPool:
         # fails fast with a bounded message instead of connecting first and
         # then leaking a raw int()/unpack ValueError (QUAL-2).
         kind, lport, dhost, dport = self._parse_forward_spec(spec)
+        # Cap active forwards (SSH-3): a persuaded client looping ssh_forward
+        # would otherwise exhaust local fds / listen ports. Pre-check before
+        # dialling so a saturated pool fails fast without opening anything; the
+        # authoritative check under the lock below closes the listener if a
+        # concurrent caller took the last slot, so the cap is never exceeded.
+        cap = self.settings.max_forwards
+        async with self._lock:
+            if len(self._forwards) >= cap:
+                raise ForwardError(
+                    f"forward limit reached ({cap}); close an existing forward first"
+                )
         conn = await self.connect(target, **connect_kwargs)
         fid = gen_id("fwd")
         if kind == "L":
@@ -467,6 +479,13 @@ class SshPool:
             listener = await conn.forward_socks("", lport)
             handle = ForwardHandle(fid, "dynamic", spec, listener.get_port(), "socks", listener)
         async with self._lock:
+            if len(self._forwards) >= cap:
+                with contextlib.suppress(Exception):
+                    listener.close()
+                    await listener.wait_closed()
+                raise ForwardError(
+                    f"forward limit reached ({cap}); close an existing forward first"
+                )
             self._forwards[fid] = handle
         return handle
 

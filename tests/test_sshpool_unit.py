@@ -296,3 +296,33 @@ def test_parse_forward_spec_valid_and_malformed() -> None:
         assert frag in msg, bad
         assert "invalid literal for int" not in msg
         assert "unpack" not in msg
+
+
+async def test_add_forward_enforces_cap(tmp_path: Path) -> None:
+    """SSH-3: a saturated forward pool refuses new forwards.
+
+    A persuaded client looping ``ssh_forward`` would otherwise grow
+    ``_forwards`` without bound and exhaust local fds / listen ports. The
+    pre-check fires before any dial, so this needs no real connection.
+    """
+    from relay_shell.errors import ForwardError
+    from relay_shell.sshpool import ForwardHandle
+
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+        max_forwards=2,
+    )
+    inv = Inventory(str(tmp_path / "no_ssh_config"), "").load()
+    pool = SshPool(settings=settings, inventory=inv)
+    for i in range(2):
+        pool._forwards[f"fwd-{i}"] = ForwardHandle(
+            f"fwd-{i}", "local", "L:0:localhost:22", 1000 + i, "localhost:22", object()
+        )
+    assert pool.forward_count() == 2
+    with pytest.raises(ForwardError, match="forward limit reached"):
+        await pool.add_forward("h", "L:0:localhost:22", connect_kwargs={})
+    # The refused call neither dialled nor grew the registry.
+    assert pool.forward_count() == 2

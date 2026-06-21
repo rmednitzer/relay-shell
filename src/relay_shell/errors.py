@@ -6,7 +6,7 @@ auditable string. These helpers make that consistent.
 
 from __future__ import annotations
 
-__all__ = ["PolicyDenied", "RelayError", "SessionError", "fmt_exc"]
+__all__ = ["ForwardError", "PolicyDenied", "RelayError", "SessionError", "fmt_exc"]
 
 
 class RelayError(Exception):
@@ -19,6 +19,10 @@ class PolicyDenied(RelayError):
 
 class SessionError(RelayError):
     """Raised when a session id is unknown or a session operation fails."""
+
+
+class ForwardError(RelayError):
+    """Raised when an SSH port-forward operation fails or hits its cap."""
 
 
 def fmt_exc(exc: BaseException) -> str:
