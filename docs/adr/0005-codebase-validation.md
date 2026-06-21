@@ -215,6 +215,44 @@ No security regressions. No capability regressions. The trust boundary
 documentation drift and did not touch executor, policy, redaction, or audit
 behavior.
 
+## Validation outcome (2026-06-21)
+
+Re-ran steps 1-4 on the pinned upstream surfaces. No dependency change since
+the 2026-06-12 pass; this is a documentation-drift reconciliation pass whose
+single finding (DOC-1) is a stale cross-reference, fixed in the same PR that
+records this outcome. All gates green; the upstream contract holds.
+
+- 21 MCP tools registered, equal to `tests/test_server.py::_EXPECTED` and
+  `docs/tools.md`; 3 MCP resources (2 static + the `inventory/{host}`
+  template); 1 prompt (`operating_guide`, ADR 0008).
+- `ruff check`, `ruff format --check`, `mypy --strict` clean (19 source
+  files).
+- `pytest` — **342 passed, 13 deselected** (the `fuzz` marker is nightly-only
+  by design); `pytest -m fuzz` — **13** property invariants pass.
+- `coverage` — **93%** with subprocess collection (floor 90%);
+  `patterns.py` / `redaction.py` / `policy.py` / `metrics.py` 100%,
+  `config.py` 99%, `seccomp.py` 97%, `server.py` / `sshpool.py` 95%,
+  `audit.py` 94%.
+- Step 3 upstream surface resolves on **`mcp==1.27.2`** / `asyncssh`
+  **2.23.1**: `FastMCP.__init__` kwargs, `Context` ids, the nine OAuth
+  provider methods, `AuthorizationParams` / `OAuthToken` fields, and the
+  `asyncssh.connect` option kwargs all resolve unchanged; `pydantic`
+  `model_validator` resolves on the pinned `pydantic>=2.11`.
+- Step 4 behavior: a real `shell_exec` call writes an audit record carrying
+  the intact schema (`ts, tool, tier, denied, args, output_sha256,
+  output_len, exit_code`) with the command output referenced by SHA-256 +
+  length only — no raw output-body field on the record. Tier classification
+  and the redaction sample set are exercised green by the suite.
+
+| ID    | Severity | Subject | Resolution |
+|-------|----------|---------|------------|
+| DOC-1 | info (docs) | `docs/runbook.md` §8.18 described the ADR next-free-number marker as "currently **0008**", but `docs/adr/README.md` (the authoritative marker) has read **0009** since ADR 0008 landed (2026-06-08); the runbook's maintenance note for the README was one number behind. | Corrected the §8.18 parenthetical to **0009** to match `docs/adr/README.md`, and appended this pass to the ADR 0005 index subject. Frozen ADR bodies and prior dated outcomes were left intact — the "next free ... 0006" line in this ADR's own Consequences is the 2026-05-24 record, not a live marker. |
+
+No security findings. No capability regressions. The trust boundary
+(ADR 0002) and tier semantics (ADR 0003) are unchanged; this pass corrected
+documentation drift and did not touch executor, policy, redaction, or audit
+behavior.
+
 ## Consequences
 
 - The runbook §2 audit pass is now grounded in a concrete, repeatable
@@ -224,7 +262,7 @@ behavior.
 - Each `mcp` SDK bump triggers a fresh §2 pass (the step-3 symbol set is
   the diff target). The latest validated pin is the one named in the most
   recent dated outcome paragraph above (currently `mcp==1.27.2`, validated
-  2026-06-12), not a hardcoded version here — so this bullet does not drift
+  2026-06-21), not a hardcoded version here — so this bullet does not drift
   as the pin moves.
 - Each subsequent ADR landing should record its own validation outcome
   using the same format — terse findings table, severity, resolution —
