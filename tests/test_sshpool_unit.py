@@ -275,3 +275,24 @@ async def test_close_all_during_connect_discards_conn(
         "owner must close the just-completed connection when the in-flight "
         "future was cancelled by close_all"
     )
+
+
+def test_parse_forward_spec_valid_and_malformed() -> None:
+    # QUAL-2: valid specs parse; malformed ones raise a *controlled* ValueError
+    # that does not leak raw Python parse internals through the tool wrapper.
+    assert SshPool._parse_forward_spec("L:8080:web:80") == ("L", 8080, "web", 80)
+    assert SshPool._parse_forward_spec("r:9000:db:5432") == ("R", 9000, "db", 5432)
+    assert SshPool._parse_forward_spec("D:1080") == ("D", 1080, "", 0)
+    for bad, frag in [
+        ("L:notanint:web:80", "invalid L forward spec"),
+        ("L:8080:web", "invalid L forward spec"),
+        ("R:8080:web:nope", "invalid R forward spec"),
+        ("D:notanint", "invalid D forward spec"),
+        ("X:1:2:3", "must start with L:, R: or D:"),
+    ]:
+        with pytest.raises(ValueError) as ei:
+            SshPool._parse_forward_spec(bad)
+        msg = str(ei.value)
+        assert frag in msg, bad
+        assert "invalid literal for int" not in msg
+        assert "unpack" not in msg
