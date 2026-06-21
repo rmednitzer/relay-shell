@@ -893,11 +893,11 @@ currently empty.)
   SEC-4 (Anthropic/HuggingFace redaction) in a follow-up; SEC-6 (refresh-token
   lock), SEC-7 (RFC 8707 `resource` forwarding), CI-1 (`release.yml`
   `persist-credentials`), CI-2 (`sbom.yml` interpolation + permissions) in the
-  P2/P3 follow-up. Still open: **SEC-5 (P3)** optional `/metrics` auth gate and
-  **SEC-8 (P3)** token-dir fail-closed chmod — both deferred after review (low
-  residual: `/metrics` is default-`127.0.0.1` + Caddy-firewalled and the gate is
-  an auth-surface design call; token files are already `0o600`); rationale in
-  `BACKLOG.md`.
+  P2/P3 follow-up. **SEC-5** (`/metrics` auth) was accepted as-designed (operator decision
+  2026-06-21: keep the default-`127.0.0.1` + Caddy-firewalled design rather than
+  gating in-app, preserving the standard unauthenticated Prometheus-scrape
+  model). Still open: **SEC-8 (P3)** token-dir fail-closed chmod — deferred after
+  review (the secret files are already `0o600`); rationale in `BACKLOG.md`.
 
 ---
 
