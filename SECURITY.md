@@ -50,13 +50,18 @@ that a persuaded model still cannot exceed the operator-defined envelope:
 - **Secret redaction.** Audited arguments are scrubbed for bearer tokens,
   API keys, private-key blocks, `Authorization` headers, long-name CLI
   flags (both `--password` and single-dash `-token=` forms),
-  URL-embedded credentials, and a set of structurally-anchored provider
-  token shapes (Google `AIza`/`ya29.`, Stripe `sk_`/`rk_`, GitLab
+  URL-embedded credentials, cloud-provider assignment forms (AWS
+  `*_SECRET_ACCESS_KEY=`, Azure connection-string `AccountKey=`/
+  `SharedAccessKey=` and SAS `sig=`), and a set of structurally-anchored
+  provider token shapes (Google `AIza`/`ya29.`, Stripe `sk_`/`rk_`, GitLab
   `glpat-`, npm `npm_`, PyPI `pypi-`, GitHub `gh*_`, OpenAI `sk-`, Anthropic
-  `sk-ant-`, HuggingFace `hf_`, AWS `AKIA`, Slack `xox*`, and JWTs) that are
+  `sk-ant-`, HuggingFace `hf_`, AWS `AKIA`, Slack `xox*` tokens and
+  incoming-webhook URLs, and JWTs) that are
   collapsed even when they arrive bare in a JSON body or log line. Anchors track the canonical
   secret-scanning rulesets; each is keyed on prefix + length, never on
-  the value's character class. The compact short-form
+  the value's character class. Audited arguments that arrive as raw `bytes`
+  are decoded and scrubbed too, and redaction is applied to dict **keys** as
+  well as values. The compact short-form
   `-p<value>` is intentionally redacted only for MySQL-family commands
   (`mysql`, `mariadb-dump`, `mycli`, ...) because `-p` is overloaded
   elsewhere (`ssh -p22`, `nmap -p1-1000`); operators putting passwords

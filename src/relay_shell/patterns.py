@@ -85,7 +85,17 @@ __all__ = [
 #     - The PEM block matcher's `.*?` is now length-bounded to stop O(n²)
 #       backtracking on many unterminated BEGIN markers (ReDoS on the audit
 #       path, RED-2).
-PATTERNS_VERSION = "6"
+# v7: redaction coverage additions (2026-06-21 adversarial follow-up, RED-3).
+#     New structure-preserving prefixes: AWS `*_SECRET_ACCESS_KEY=` (the
+#     keyword is mid-name, so the generic `secret=` rule never fired —
+#     anchored on the full `secret_access_key` phrase for FP control); Azure
+#     connection-string `AccountKey=` / `SharedAccessKey=`; and Azure SAS
+#     `?…&sig=<urlencoded>`. New whole-match: Slack incoming-webhook URLs
+#     (`https://hooks.slack.com/services/T…/B…/…`; distinct from the `xox*`
+#     token rule). GCP service-account creds need no new rule — their only
+#     secret is the `private_key` PEM block, already collapsed by the PEM rule
+#     above (it matches a JSON-embedded block with escaped `\n` too).
+PATTERNS_VERSION = "7"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -132,6 +142,32 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(
             r"(?i)(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*)\S+"
         ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # AWS secret access key assignment (RED-3). The `secret` keyword sits
+    # mid-name in `AWS_SECRET_ACCESS_KEY=`, so the generic `secret=` rule above
+    # never fires (`secret` is followed by `_ACCESS_KEY`, not `=`). Anchor on
+    # the full `secret[_-]?access[_-]?key` phrase — distinctive enough that
+    # `SECRET_ACCESS_KEY_PATH=/x` (the `_PATH` breaks the `key[:=]` adjacency)
+    # and similar are not over-scrubbed.
+    (
+        re.compile(r"(?i)(?P<prefix>(?:aws[_-]?)?secret[_-]?access[_-]?key\s*[:=]\s*)\S+"),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # Azure connection-string keys (RED-3): `AccountKey=<base64>` (Storage) and
+    # `SharedAccessKey=<base64>` (Service Bus / Event Hubs). The value runs to
+    # the `;` segment separator (or whitespace/quote), so the rest of the
+    # connection string is preserved for the audit reader.
+    (
+        re.compile(r"(?i)(?P<prefix>(?:account|sharedaccess)key\s*=\s*)[^;\s\"']+"),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # Azure SAS token signature (RED-3): the `sig=` query parameter carries the
+    # HMAC signature that authorizes the URL. Anchored on a leading `?`/`&` so
+    # `design=`/`sign=` substrings cannot match, and on a 20+ char url-encoded
+    # base64 body so a tiny unrelated `sig=` is left alone.
+    (
+        re.compile(r"(?i)(?P<prefix>[?&]sig=)[A-Za-z0-9%/+]{20,}"),
         r"\g<prefix>[REDACTED]",
     ),
     # CLI-style flags: ``--password value``, ``--token=value``,
@@ -208,6 +244,10 @@ REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     # Slack token family (bot/user/app/refresh/legacy).
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
+    # Slack incoming-webhook URL (RED-3): the full URL is the credential —
+    # anyone holding it can post to the channel. Distinct from the `xox*`
+    # token rule above. Collapses the whole URL.
+    re.compile(r"https://hooks\.slack\.com/services/T[A-Za-z0-9_]+/B[A-Za-z0-9_]+/[A-Za-z0-9_]+"),
     # Google API key (AIza + 35) and OAuth 2.0 access token (ya29.<...>).
     # Both run unbounded from the length floor so the whole token collapses
     # rather than leaving a tail. The ya29 body admits `.`: these access

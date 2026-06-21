@@ -313,6 +313,32 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- Redaction coverage + robustness follow-ups to the 2026-06-21 adversarial pass
+  (`BACKLOG.md`; `PATTERNS_VERSION` 6→7; additive — audit-record shape
+  unchanged):
+  - **RED-3**: new secret shapes the prior set missed. Structure-preserving
+    prefixes for AWS `*_SECRET_ACCESS_KEY=` (the `secret` keyword is mid-name so
+    the generic `secret=` rule never fired — anchored on the full
+    `secret_access_key` phrase for false-positive control), Azure
+    connection-string `AccountKey=` / `SharedAccessKey=`, and Azure SAS
+    `?…&sig=` (anchored on a `?`/`&` boundary + 20-char floor so `design=` /
+    short `sig=` are left alone); plus a whole-match for Slack incoming-webhook
+    URLs (`https://hooks.slack.com/services/…`, distinct from the `xox*` token
+    rule). GCP service-account creds needed no new rule — their only secret is
+    the `private_key` PEM block, already collapsed by the PEM rule (it matches a
+    JSON-embedded block with escaped `\n` too).
+  - **RED-4**: a `bytes` audit argument used to fall through `_scrub`
+    unredacted; it is now decoded (utf-8, `errors="replace"`, never raises) and
+    scrubbed like a string, so a future caller cannot smuggle a secret past
+    redaction as raw bytes.
+  - **RED-5**: `_scrub` now redacts dict **keys** as well as values — a nested,
+    caller-supplied dict (e.g. a parsed JSON body) could carry a secret in a
+    key, not only a value.
+
+  `redaction.py` docstring and `SECURITY.md` updated to list the new shapes.
+  Paired over/under-scrub tests in `tests/test_redaction.py` (each new shape
+  has a negative that must NOT redact); the `redact` idempotency / no-leak fuzz
+  invariants still pass.
 - OAuth single-client lockdown can no longer be bypassed by re-registering the
   existing client (AUTH-2, adversarial pass). The lockdown guard previously
   refused only a *new* `client_id` (`cid not in clients`), so an attacker who

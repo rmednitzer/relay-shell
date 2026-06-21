@@ -10,8 +10,10 @@ PEM blocks, ``Authorization`` headers, ``Bearer``/``key=value`` pairs,
 long-name CLI flags - matching either a double dash (``--password=...``,
 ``--token VALUE``) or the single-dash long-name style some Go-flavored
 tools use (``-token=foo``, ``-password VALUE``), including quoted values
-and escape-aware backslash-space - URL-embedded credentials, and a handful
-of provider token shapes. Short-form single-letter flags like ``-p<value>``
+and escape-aware backslash-space - URL-embedded credentials, a few
+cloud-provider assignment forms (AWS ``*_SECRET_ACCESS_KEY=``, Azure
+connection-string ``AccountKey=``/``SharedAccessKey=`` and SAS ``sig=``),
+and a handful of provider token shapes. Short-form single-letter flags like ``-p<value>``
 are redacted **only** when a MySQL-family CLI (``mysql``, ``mariadb-*``,
 ``mycli``) appears in the same argument string: ``-p`` is overloaded
 across SSH (``-p22``), nmap (``-p1-1000``), and other tools, so the
@@ -26,10 +28,10 @@ a log line, not just behind a known prefix. These track the canonical
 secret-scanning rulesets (gitleaks / GitHub secret scanning): GitHub PAT
 and ``gh[pousr]_`` tokens, OpenAI ``sk-`` (including the
 ``sk-proj-``/``sk-svcacct-``/``sk-admin-`` prefixes), AWS access key ids,
-Slack ``xox*`` tokens, Google API keys (``AIza``) and OAuth tokens
-(``ya29.``), Stripe ``sk_``/``rk_`` keys, GitLab ``glpat-`` tokens, npm
-``npm_`` tokens, PyPI ``pypi-`` upload tokens, Anthropic ``sk-ant-`` keys,
-HuggingFace ``hf_`` tokens, and JWTs. The anchor is the
+Slack ``xox*`` tokens and incoming-webhook URLs, Google API keys (``AIza``)
+and OAuth tokens (``ya29.``), Stripe ``sk_``/``rk_`` keys, GitLab ``glpat-``
+tokens, npm ``npm_`` tokens, PyPI ``pypi-`` upload tokens, Anthropic
+``sk-ant-`` keys, HuggingFace ``hf_`` tokens, and JWTs. The anchor is the
 prefix and a length floor, never the value's character class, so the rule
 survives a provider rotating its alphabet.
 
@@ -61,14 +63,30 @@ def redact(text: str) -> str:
     return out
 
 
+def _scrub_str(text: str, max_len: int) -> str:
+    red = redact(text)
+    if len(red) > max_len:
+        red = red[:max_len] + f"...(+{len(red) - max_len})"
+    return red
+
+
 def _scrub(value: Any, max_len: int) -> Any:
+    if isinstance(value, bytes):
+        # RED-4: a bytes argument would otherwise fall through unredacted via
+        # the `return value` below. No current wrapper passes bytes in audit
+        # args, but decode defensively (lossy, never raises) so a future caller
+        # cannot smuggle a secret past redaction as raw bytes.
+        value = value.decode("utf-8", errors="replace")
     if isinstance(value, str):
-        red = redact(value)
-        if len(red) > max_len:
-            red = red[:max_len] + f"...(+{len(red) - max_len})"
-        return red
+        return _scrub_str(value, max_len)
     if isinstance(value, dict):
-        return {k: _scrub(v, max_len) for k, v in value.items()}
+        # RED-5: scrub keys too, not only values — a nested, caller-supplied
+        # dict (e.g. a parsed JSON body passed as an argument) could carry a
+        # secret in a key, not just a value.
+        return {
+            (_scrub_str(k, max_len) if isinstance(k, str) else k): _scrub(v, max_len)
+            for k, v in value.items()
+        }
     if isinstance(value, (list, tuple)):
         return [_scrub(v, max_len) for v in value]
     return value

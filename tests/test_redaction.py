@@ -161,3 +161,89 @@ def test_redact_args_scrubs_nested_provider_tokens() -> None:
     out = redact_args({"env": {"keys": [_GLPAT]}})
     assert _GLPAT not in out["env"]["keys"][0]
     assert "[REDACTED]" in out["env"]["keys"][0]
+
+
+# --- RED-3: additional cloud/provider secret shapes -------------------------
+
+# Assemble synthetic fixtures from parts so no contiguous real-looking secret
+# literal appears in source (GitHub push protection is separate from the
+# gitleaks allowlist), while `redact` still sees the identical value.
+_AWS_SECRET = "wJalrXUtnFEMI" + "/K7MDENG/bPxRfiCYEX" + "AMPLEKEY"
+_AZURE_KEY = "Zm9vYmFy" + "YmF6cXV4MTIzNDU2" + "Nzg5MA=="
+_AZURE_SIG = "aBcDeFgHiJkLmNoP" + "qRsT%2FuVwXyZ" + "0123456789"
+_SLACK_HOOK = (
+    "https://hooks.slack.com/services/" + "T00000000/" + "B11111111/" + "abcdefghijkLMNOpqrstuvwx"
+)
+
+
+def test_red3_aws_secret_access_key_assignment() -> None:
+    # `secret` sits mid-name in AWS_SECRET_ACCESS_KEY=, which the generic
+    # `secret=` rule misses; the phrase-anchored rule catches it.
+    for line in (
+        f"AWS_SECRET_ACCESS_KEY={_AWS_SECRET}",
+        f"export aws_secret_access_key={_AWS_SECRET}",
+        f"secret_access_key = {_AWS_SECRET}",
+    ):
+        out = redact(line)
+        assert _AWS_SECRET not in out, line
+        assert "[REDACTED]" in out
+    # Negative: a *_PATH var (the `_PATH` breaks key[:=] adjacency) survives.
+    assert "[REDACTED]" not in redact("SECRET_ACCESS_KEY_PATH=/etc/aws/creds")
+
+
+def test_red3_azure_connection_string_keys() -> None:
+    conn = (
+        "DefaultEndpointsProtocol=https;AccountName=acct;"
+        f"AccountKey={_AZURE_KEY};EndpointSuffix=core.windows.net"
+    )
+    out = redact(conn)
+    assert _AZURE_KEY not in out
+    # Non-secret structure preserved for the audit reader.
+    assert "AccountName=acct" in out and "EndpointSuffix=core.windows.net" in out
+    # Service Bus / Event Hubs SharedAccessKey.
+    sb = f"Endpoint=sb://x;SharedAccessKeyName=root;SharedAccessKey={_AZURE_KEY}"
+    assert _AZURE_KEY not in redact(sb)
+    # Negative: AccountName is not a secret key.
+    assert "[REDACTED]" not in redact("AccountName=mystorageacct")
+
+
+def test_red3_azure_sas_signature() -> None:
+    url = f"https://x.blob.core.windows.net/c/b?sv=2021-08-06&se=2025-01-01&sig={_AZURE_SIG}"
+    out = redact(url)
+    assert _AZURE_SIG not in out
+    assert "sv=2021-08-06" in out and "se=2025-01-01" in out  # non-secret params survive
+    # Negatives: `design=`/`sign=` substrings (no ?/& sig= boundary), and a
+    # tiny sig= below the length floor, are left for audit fidelity.
+    assert "[REDACTED]" not in redact("https://x/?design=modern&page=2")
+    assert "[REDACTED]" not in redact("https://x/?sig=short")
+
+
+def test_red3_slack_webhook_url() -> None:
+    out = redact(f"curl -X POST {_SLACK_HOOK} -d @msg.json")
+    assert _SLACK_HOOK not in out
+    assert "[REDACTED]" in out
+    # Negative: a non-webhook hooks.slack.com path is not collapsed.
+    assert "[REDACTED]" not in redact("https://hooks.slack.com/help")
+
+
+# --- RED-4 / RED-5: scrub robustness ----------------------------------------
+
+
+def test_red4_bytes_args_are_decoded_and_redacted() -> None:
+    # A bytes argument used to fall through unredacted; it is now decoded
+    # (lossy) and scrubbed like a str.
+    out = redact_args({"payload": b"api_key=supersecretvalue123"})
+    assert "supersecretvalue123" not in out["payload"]
+    assert "[REDACTED]" in out["payload"]
+    # Invalid UTF-8 does not raise (errors="replace").
+    out2 = redact_args({"raw": b"\xff\xfetoken=leakme1234567890"})
+    assert "leakme1234567890" not in out2["raw"]
+
+
+def test_red5_dict_keys_are_scrubbed() -> None:
+    # A secret carried in a (nested) dict *key*, not just a value, is scrubbed.
+    out = redact_args({"body": {"token=abc123def456ghi": "x", "host": "ok"}})
+    keys = set(out["body"].keys())
+    assert "token=[REDACTED]" in keys
+    assert "host" in keys  # ordinary keys untouched
+    assert "abc123def456ghi" not in " ".join(keys)
