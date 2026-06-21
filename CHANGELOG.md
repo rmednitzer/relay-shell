@@ -313,6 +313,29 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- Config + audit hardening follow-ups (2026-06-21 backlog; no behavior change
+  for valid configs):
+  - **CFG-1**: every resource limit now carries an explicit `le=` upper cap —
+    `max_output` (16 MiB), `max_output_hard` (128 MiB), `default_timeout` /
+    `max_timeout` / `session_idle_timeout` (24 h), `session_buffer_bytes`
+    (16 MiB). An absurd env value (e.g. a 1 TB output cap) is now rejected at
+    load instead of producing a clamp that never bites — a self-inflicted
+    memory/DoS footgun. The caps are far above any real config.
+  - **OBS-1**: `AuditLogger` flags `degraded=True` (with a reason) when the
+    audit sink is not a regular file (`RELAY_SHELL_AUDIT_PATH=/dev/null`, a
+    device, a FIFO). Such a sink opens and accepts writes but stores nothing
+    durable; the `relay_shell_audit_degraded` gauge and `server_info.audit` now
+    surface "audit goes nowhere" instead of reporting a healthy trail. The sink
+    still points where the operator configured it.
+  - **FMT-2**: the CEF formatter's header fields now pass through a dedicated
+    `_cef_header_escape` (escapes `\` and the `|` separator, not `=`). The
+    fields are constants, so the output is byte-identical (pinned by
+    `test_audit_cef_format`); the escape is structural insurance against a
+    future dynamic header field splitting a record.
+
+  Tests: `test_limit_upper_bounds_reject_absurd_values` (`tests/test_config.py`),
+  `test_audit_degrades_on_non_regular_sink` +
+  `test_cef_header_escape_neutralizes_pipe_and_backslash` (`tests/test_audit.py`).
 - Redaction coverage + robustness follow-ups to the 2026-06-21 adversarial pass
   (`BACKLOG.md`; `PATTERNS_VERSION` 6→7; additive — audit-record shape
   unchanged):
