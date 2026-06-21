@@ -498,3 +498,48 @@ async def test_ssh_tools_record_known_hosts_in_audit(settings: Settings) -> None
     ssh_recs = [r for r in recs if r["tool"] == "ssh_exec"]
     assert ssh_recs[0]["args"]["known_hosts"] == "strict"
     assert ssh_recs[1]["args"]["known_hosts"] == "ignore"
+
+
+# --- SSRF-2: IP-encoding normalization in the transfer/forward deny probes ---
+
+
+def test_ssrf2_transfer_and_forward_probes_append_canonical_ip() -> None:
+    from relay_shell.server import (
+        _policy_text_ssh_download,
+        _policy_text_ssh_forward,
+        _policy_text_ssh_upload,
+    )
+
+    # Packed-decimal 127.0.0.1 destination -> canonical form appended.
+    assert "127.0.0.1" in _policy_text_ssh_upload("2130706433", "/tmp/x", "/srv/y")
+    assert "127.0.0.1" in _policy_text_ssh_download("0x7f000001", "/srv/y", "/tmp/x")
+    assert "127.0.0.1" in _policy_text_ssh_forward("L:8080:2130706433:80")
+    # Negatives: a hostname destination and a dhost-less D: forward are unchanged.
+    assert "[" not in _policy_text_ssh_upload("web01.example.com", "/a", "/b")
+    assert _policy_text_ssh_forward("D:1080") == "forward D:1080"
+    assert _policy_text_ssh_forward("garbage") == "forward garbage"
+
+
+async def test_ssrf2_upload_deny_not_dodged_by_ip_encoding(tmp_path: Path) -> None:
+    # An operator deny on the dotted-quad metadata IP must fire when the caller
+    # spells the ssh_upload destination as a packed decimal (SSRF-2).
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        policy_mode="open",
+        policy_deny=r"169\.254\.169\.254",
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+    )
+    mcp = build_server(settings)
+    content, _ = await mcp.call_tool(
+        "ssh_upload",
+        {"host": "2852039166", "local_path": "/tmp/x", "remote_path": "/srv/y"},
+    )
+    assert "DENIED" in _text(content)
+    recs = [
+        json.loads(ln)
+        for ln in Path(settings.audit_path).read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert [r for r in recs if r["tool"] == "ssh_upload"][-1]["denied"] is True

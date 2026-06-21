@@ -116,12 +116,11 @@ Closed in follow-up PRs (2026-06-21 adversarial backlog work):
 | DEP-2 | LOW | `/etc/relay-shell` created `0755` (world-listable) | **Closed** (deploy-hardening PR). Both installers now `install -d -m 0750 -o root -g relay-shell /etc/relay-shell` (edge installer falls back to `0750 root:root` on an edge-only host without the group). systemd reads the EnvironmentFiles as root, so dropping the world bit does not affect the service. |
 | EDGE-1 | info | Caddy `/authorize` + `/.well-known/*` reachable from any IP (before the CIDR rule) | **Closed** (deploy-hardening PR; documented as intended). Expanded the Caddyfile comment: the browser OAuth redirect + RFC 8414 discovery must be reachable pre-token, `/authorize` still needs a registered client + PKCE, and tool traffic + `/token` stay CIDR-gated. Documents how to move the three handles below `@blocked` for a machine-only (no-browser) deployment. |
 | EDGE-2 | info | No `Content-Security-Policy` on the `/authorize` HTML | **Closed** (deploy-hardening PR). Caddyfile header block now sets `Content-Security-Policy "default-src 'self'; frame-ancestors 'none'; base-uri 'none'"`. CSP only affects HTML rendering (inert for JSON tool/token responses); a comment notes how to relax it for a customized authorize page. Drift guard `test_caddyfile_sets_content_security_policy`. |
+| SSRF-2 | LOW | IP-encoding bypass also applied to the other host-bearing deny probes | **Closed** (SSRF-2 PR). Extracted a shared `_with_canonical_ips(text, *hosts)` helper (SSRF-1's keyscan path now delegates to it) and applied it to `_policy_text_ssh_upload`/`_ssh_download` (the `host` arg) and `_policy_text_ssh_forward` (the `L:/R:` dhost, via a lenient `_forward_dhost`). An IP-based `RELAY_SHELL_POLICY_DENY` now catches a decimal/hex/octal/IPv4-mapped destination on the transfer/forward tools too, not just `ssh_keyscan`. Tests in `tests/test_tool_wrappers.py`. |
 
 Open deferrals (severity order; smaller effort first):
 
-| ID | Item | Sev | Effort | Rationale / approach | Owner role |
-|---|---|---|---|---|---|
-| SSRF-2 | Extend SSRF-1's literal-IP normalization to the other host-bearing deny probes (`ssh_upload` / `ssh_download` host, `ssh_forward` dhost) | LOW | S | Same encoding-bypass class as SSRF-1, but these need an authenticated connection to a host the operator's keys reach (more constrained than `ssh_keyscan`'s pure outbound TCP). Apply `_augment_probe_with_ips` to those builders' host/dhost. `ssh_exec`/`ssh_spawn` gate on command only (no host in probe) — out of scope. | maintainer |
+_(none — all adversarial-pass deferrals closed.)_
 
 Verified BY-DESIGN / not a bug (challenged, held up — no action): audit
 hash-chain "forgery" (keyless by ADR 0007; off-host seam is the control;
