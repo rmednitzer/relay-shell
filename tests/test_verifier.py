@@ -234,3 +234,31 @@ def test_verify_pair_returns_missing_when_read_text_raises(
 
     assert finding.status is Status.MISSING, f"got {finding.status}: {finding.detail}"
     assert "could not read" in finding.detail, finding.detail
+
+
+# --- Deploy hardening drift guards (DEP-1/DEP-2/EDGE-2) ----------------------
+
+
+def test_caddyfile_sets_content_security_policy() -> None:
+    # EDGE-2: the edge Caddyfile ships a CSP for its only HTML surface
+    # (the /authorize consent page).
+    caddy = (TEMPLATES_DIR / "Caddyfile").read_text(encoding="utf-8")
+    assert "Content-Security-Policy" in caddy
+    assert "default-src 'self'" in caddy
+
+
+def test_installers_create_relay_shell_dir_not_world_listable() -> None:
+    # DEP-2: /etc/relay-shell is created 0750 (not a world-listable 0755) in
+    # both installers.
+    for name in ("install.sh", "install-edge.sh"):
+        sh = (TEMPLATES_DIR / name).read_text(encoding="utf-8")
+        assert "/etc/relay-shell" in sh
+        assert "install -d -m 0755 /etc/relay-shell" not in sh
+        assert "0750" in sh
+
+
+def test_edge_installer_supports_gpg_fingerprint_pin() -> None:
+    # DEP-1: the Caddy repo key fetch supports a fail-closed fingerprint pin.
+    sh = (TEMPLATES_DIR / "install-edge.sh").read_text(encoding="utf-8")
+    assert "RELAY_SHELL_EDGE_CADDY_GPG_FPR" in sh
+    assert "fingerprint mismatch" in sh

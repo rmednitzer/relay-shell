@@ -313,6 +313,32 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- Deploy / edge hardening follow-ups (2026-06-21 backlog):
+  - **DEP-1**: `install-edge.sh` no longer trusts the Caddy apt repo signing
+    key trust-on-first-use. It dearmors the fetched key to a temp file, logs
+    the fingerprint, and — if `RELAY_SHELL_EDGE_CADDY_GPG_FPR` is set — fails
+    closed unless it matches before apt trusts the key. No default fingerprint
+    is shipped (Caddy/cloudsmith publish no canonical one to verify against), so
+    the operator pins the value confirmed at caddyserver.com/docs/install;
+    unset keeps the prior behavior but warns. (`deployment.md` env-var table
+    updated.)
+  - **DEP-2**: both installers create `/etc/relay-shell` as `0750
+    root:relay-shell` instead of a world-listable `0755`; the edge installer
+    falls back to `0750 root:root` on an edge-only host. systemd reads the
+    EnvironmentFiles as root, so the service is unaffected.
+  - **EDGE-1**: documented (in the Caddyfile) why `/authorize` and
+    `/.well-known/*` are reachable before the CIDR `@blocked` rule — the browser
+    OAuth redirect + RFC 8414 discovery need it, `/authorize` still requires a
+    client + PKCE, and tool traffic / `/token` stay CIDR-gated — plus how to
+    CIDR-gate them for a machine-only deployment.
+  - **EDGE-2**: the edge Caddyfile now sets
+    `Content-Security-Policy "default-src 'self'; frame-ancestors 'none';
+    base-uri 'none'"` on its only HTML surface (the `/authorize` page); inert
+    for JSON tool/token responses.
+
+  Shell changes are shellcheck-clean; drift guards added in
+  `tests/test_verifier.py` (CSP present, `/etc/relay-shell` not `0755`, the
+  fingerprint-pin mechanism present).
 - Config + audit hardening follow-ups (2026-06-21 backlog; no behavior change
   for valid configs):
   - **CFG-1**: every resource limit now carries an explicit `le=` upper cap —

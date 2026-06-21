@@ -31,8 +31,16 @@
 }
 
 {$RELAY_SHELL_EDGE_DOMAIN} {
-	# OAuth browser/redirect + discovery must be reachable for the auth
-	# flow; they still require a registered client and PKCE.
+	# EDGE-1: /authorize and the /.well-known/* discovery endpoints are
+	# handled BEFORE the CIDR @blocked rule below, so they are reachable from
+	# any source IP. This is intentional: the OAuth authorization-code flow
+	# redirects a *browser* (the operator's, from anywhere) to /authorize, and
+	# RFC 8414 discovery must be fetchable by the client before it has a token.
+	# They are not unauthenticated access to tools: /authorize still requires a
+	# registered client + PKCE, and tool traffic and /token remain CIDR-gated.
+	# For a machine-only deployment with no browser leg (the client reaches
+	# /authorize from an allowlisted host), move these three `handle` blocks
+	# below the `@blocked` rule so the CIDR allowlist covers them too.
 	handle /authorize {
 		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
 			header_up Host {upstream_hostport}
@@ -65,6 +73,13 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "no-referrer"
+		# EDGE-2: lock down what the only HTML surface (the /authorize consent
+		# page) may load. `default-src 'self'` blocks third-party and inline
+		# resources; `frame-ancestors 'none'` is the CSP-level clickjacking
+		# guard alongside X-Frame-Options. CSP only affects HTML rendering, so
+		# this is inert for the JSON tool/token responses. If a customized
+		# authorize page needs inline styles/scripts, relax this here.
+		Content-Security-Policy "default-src 'self'; frame-ancestors 'none'; base-uri 'none'"
 		-Server
 	}
 
