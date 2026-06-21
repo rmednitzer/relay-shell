@@ -17,13 +17,18 @@ on:
         required: true
         type: string
 
+# Default the workflow token to read-only; the sbom job escalates to
+# contents: write only for the release-asset upload, per the GitHub Actions
+# hardening guide (least privilege). (CI-2)
 permissions:
-  contents: write   # required to upload release assets
+  contents: read
 
 jobs:
   sbom:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write   # final step uploads the SBOM assets to the release
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
@@ -36,11 +41,19 @@ jobs:
 
       - name: Resolve tag
         id: tag
+        # Pass event-controlled values through env vars instead of
+        # interpolating them into the shell, so a crafted tag/input cannot
+        # inject into the script (CI-2; GitHub Actions hardening guide).
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "name=$INPUT_TAG" >> "$GITHUB_OUTPUT"
           else
-            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "name=$REF_NAME" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install runtime + SBOM tool into a clean venv
@@ -57,10 +70,12 @@ jobs:
           pip install "cyclonedx-bom>=4,<6"
 
       - name: Generate CycloneDX SBOM
+        env:
+          TAG_NAME: ${{ steps.tag.outputs.name }}
         run: |
           . .sbom-venv/bin/activate
-          OUT_JSON="relay-shell-${{ steps.tag.outputs.name }}.cdx.json"
-          OUT_XML="relay-shell-${{ steps.tag.outputs.name }}.cdx.xml"
+          OUT_JSON="relay-shell-${TAG_NAME}.cdx.json"
+          OUT_XML="relay-shell-${TAG_NAME}.cdx.xml"
           # `--of JSON` / `--of XML` is the canonical flag in cyclonedx-py
           # >=4.x; `-o` is the output-file flag. CDX 1.5 is the default
           # spec version (1.6 exists; held at 1.5 for SIEM compatibility).
@@ -74,7 +89,7 @@ jobs:
             -o "$OUT_XML"
           # Sanity: the SBOM must contain the relay-shell component and
           # the version that triggered the workflow.
-          python - "$OUT_JSON" "${{ steps.tag.outputs.name }}" <<'PY'
+          python - "$OUT_JSON" "$TAG_NAME" <<'PY'
           import json, re, sys
           path, tag = sys.argv[1], sys.argv[2]
           data = json.load(open(path))
@@ -106,19 +121,22 @@ jobs:
       - name: Attach SBOM to release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.tag.outputs.name }}
+          REPO: ${{ github.repository }}
         run: |
-          TAG="${{ steps.tag.outputs.name }}"
+          set -euo pipefail
+          TAG="$TAG_NAME"
           # If the release does not exist yet (e.g. the tag was just
           # pushed and no release workflow has run), create one with
           # generated notes so the upload has a home.
-          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "$TAG" \
-              --repo "${{ github.repository }}" \
+              --repo "$REPO" \
               --title "$TAG" \
               --generate-notes
           fi
           gh release upload "$TAG" \
-            --repo "${{ github.repository }}" \
+            --repo "$REPO" \
             --clobber \
             "relay-shell-${TAG}.cdx.json" \
             "relay-shell-${TAG}.cdx.xml"
