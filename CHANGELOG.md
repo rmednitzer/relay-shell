@@ -6,98 +6,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Security
-
-- Redaction now covers Anthropic API keys (`sk-ant-…`) and HuggingFace user
-  access tokens (`hf_…`) — high-likelihood secrets in an AI-infrastructure
-  tool's command arguments that the prior pattern set missed (audit pass
-  finding SEC-4). Added as whole-match collapses in `patterns.py`
-  (`PATTERNS_VERSION` 4→5) with paired over/under-scrub tests in
-  `tests/test_patterns.py`; `redaction.py` docstring and `SECURITY.md` updated.
-  Additive — the audit-record shape is unchanged and the `redact` idempotency
-  fuzz still passes.
-- Full validation + security audit pass (2026-06-21) —
-  [ADR 0005](docs/adr/0005-codebase-validation.md) +
-  `audit/2026-06-21-engagement.md`. Scanner battery (pip-audit, trivy, bandit,
-  semgrep, actionlint, shellcheck, gitleaks) clean; steps 1-4 green; no pinned
-  dependency carries a known CVE at its pinned version. **SEC-3**: raised
-  `pyproject.toml` minimum-safe dependency floors — `asyncssh>=2.23.0`
-  (GHSA-g794-3fmp-753h), `starlette>=1.3.0` (BadHost), `PyJWT>=2.13.0` (HMAC
-  confusion), `cryptography>=48.0.1` (GHSA-537c-gmf6-5ccf) — so a cold
-  `pip install` resolver cannot select a transitive version with a known
-  advisory (the pinned/tested set was already safe; mirrors PR #97). **TOOL-4**:
-  CODEOWNERS now references `renovate.json5` (the repo uses Renovate, not
-  Dependabot). Remaining findings are P2/P3/info hardening + format-conformance,
-  with no P0/P1; deferred to `BACKLOG.md`.
-- Repository governance (GitHub-side, recorded here for the audit trail): the
-  `main-protection` ruleset on `main` now additionally enforces
-  `required_status_checks` — `check (py3.12)` / `check (py3.13)` /
-  `check (py3.14)` / `gitleaks (secret scan)`, bound to GitHub Actions,
-  strict=false — and `required_signatures`, alongside the existing
-  pull_request / non_fast_forward / deletion / required_linear_history rules.
-  Applied 2026-06-12 with explicit operator confirmation and verified
-  effective via the rules API; closes the F-G2 residual and the 2026-06-01
-  pack's deferred P2-3. pip-audit / dependency-review / CodeQL remain
-  advisory by operator choice.
-- The `dependency-review` CI job no longer persists the workflow token (audit
-  pass finding SEC-2). The checkout step (which carried
-  `persist-credentials: true`) was removed entirely: at the pinned action SHA
-  (v5.0.0) dependency-review-action is API-only for `pull_request` events —
-  base/head SHAs come from the event payload and the comparison runs through
-  the Dependency Graph API — so the job needs neither the repository contents
-  nor a credential helper. Verified against the action source at the pinned
-  SHA; the change validates itself on every PR's `dependency-review` check.
-- `ssh_keyscan` now feeds its caller-chosen target hosts to the policy layer,
-  so `RELAY_SHELL_POLICY_DENY` can refuse a scan target (audit pass finding
-  SEC-1). Previously the tool's policy probe text was empty, so the deny list
-  never saw the hosts — a gap on the SSRF-shaped surface most worth gating by
-  host, and inconsistent with `ssh_upload` / `ssh_download` / `ssh_forward`,
-  which already name their host. A denied call short-circuits before any
-  subprocess and is audited `denied=True`. Tradeoff: the same text feeds the
-  tier classifier, so a host whose name embeds a `\b`-bounded destructive word
-  (`reboot`, `sudo`, ...) over-classifies above Tier 1 and is refused in
-  `guarded` mode — a conservative false-deny (`open` is advisory, `readonly`
-  already refuses Tier 1, `RELAY_SHELL_POLICY_ALLOW` is the escape hatch),
-  matching the transfer tools. No change to `open` mode's admission of a
-  normally-named host. Tests in `tests/test_ssh_keyscan_tool.py`.
-
-### Changed
-
-- Validation pass (2026-06-21) recorded in
-  [ADR 0005](docs/adr/0005-codebase-validation.md): re-ran the steps 1-4
-  upstream-surface + behavior checks on the pinned `mcp==1.27.2` /
-  `asyncssh==2.23.1` — `ruff` / `ruff format` / `mypy --strict` clean,
-  `pytest` 342 passed (+13 fuzz), `coverage` 93% (floor 90%), 21 tools /
-  3 resources / 1 prompt, audit-record schema and output-hash-only invariant
-  intact. One documentation-drift finding (DOC-1): `docs/runbook.md` §8.18
-  named the ADR next-free-number marker as "0008" while `docs/adr/README.md`
-  has read "0009" since ADR 0008 landed; corrected §8.18 to match. Docs only.
-- Backlog reconciliation: the canonical backlog (`docs/runbook.md` §7) now
-  records the 2026-06-12 audit-pass closures where they belong — §7.2 gains
-  the QUAL-1/REL-1 notes, §7.5 gains SEC-1, TOOL-1+TOOL-3 (which also closes
-  the 2026-06-01 pack's deferred P1-2 gitleaks CI gate), SEC-2, and the
-  F-G2-verified status note; §8 gains a per-file entry (§8.21) for
-  `BACKLOG.md`. In `BACKLOG.md`, TOOL-2 (ruff pin skew) is closed as
-  accepted-as-designed with evidence that Renovate manages both pinned
-  locations (`renovate.json5` pre-commit manager + pip_requirements group;
-  PRs #83/#84/#85), leaving no open in-repo deferral. Docs only.
-- Tests: the four HTTP `/metrics` tests no longer use `starlette.testclient`
-  (audit pass finding REL-1). That client warned `StarletteDeprecationWarning:
-  ... install httpx2`; the tests now drive the in-process app through httpx's
-  own `ASGITransport` (the already-pinned httpx, no httpx2 needed), which
-  returns the identical response with no warning. The suite goes from one
-  warning to zero, and `pytest -W error::DeprecationWarning` passes on that
-  module. Test-only; no runtime or dependency change.
-- Documentation: reconciled the `mcp` pin drift (the SDK moved
-  1.27.1 → 1.27.2 in PR #66 but the living docs still named 1.27.1). The
-  README status line + compatibility matrix and `docs/architecture.md` now
-  read `mcp==1.27.2` (and `asyncssh` tested at 2.23.1); ADR 0001 gained a
-  pin-movement Consequences line and ADR 0005 a 2026-06-12 validation
-  outcome, closing the runbook §8.9 follow-through. Recorded as a full
-  audit / validation pass under `audit/` (inventory, baseline, findings
-  register, final report). No code, policy, redaction, or audit-record
-  behavior changed.
-
 ### Added
 
 - CI secret scanning via `.github/workflows/gitleaks.yml` (audit pass finding
@@ -247,6 +155,42 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Validation pass (2026-06-21) recorded in
+  [ADR 0005](docs/adr/0005-codebase-validation.md): re-ran the steps 1-4
+  upstream-surface + behavior checks on the pinned `mcp==1.27.2` /
+  `asyncssh==2.23.1` — `ruff` / `ruff format` / `mypy --strict` clean,
+  `pytest` 342 passed (+13 fuzz), `coverage` 93% (floor 90%), 21 tools /
+  3 resources / 1 prompt, audit-record schema and output-hash-only invariant
+  intact. One documentation-drift finding (DOC-1): `docs/runbook.md` §8.18
+  named the ADR next-free-number marker as "0008" while `docs/adr/README.md`
+  has read "0009" since ADR 0008 landed; corrected §8.18 to match. Docs only.
+- Backlog reconciliation: the canonical backlog (`docs/runbook.md` §7) now
+  records the 2026-06-12 audit-pass closures where they belong — §7.2 gains
+  the QUAL-1/REL-1 notes, §7.5 gains SEC-1, TOOL-1+TOOL-3 (which also closes
+  the 2026-06-01 pack's deferred P1-2 gitleaks CI gate), SEC-2, and the
+  F-G2-verified status note; §8 gains a per-file entry (§8.21) for
+  `BACKLOG.md`. In `BACKLOG.md`, TOOL-2 (ruff pin skew) is closed as
+  accepted-as-designed with evidence that Renovate manages both pinned
+  locations (`renovate.json5` pre-commit manager + pip_requirements group;
+  PRs #83/#84/#85), leaving no open in-repo deferral. Docs only.
+- Tests: the four HTTP `/metrics` tests no longer use `starlette.testclient`
+  (audit pass finding REL-1). That client warned `StarletteDeprecationWarning:
+  ... install httpx2`; the tests now drive the in-process app through httpx's
+  own `ASGITransport` (the already-pinned httpx, no httpx2 needed), which
+  returns the identical response with no warning. The suite goes from one
+  warning to zero, and `pytest -W error::DeprecationWarning` passes on that
+  module. Test-only; no runtime or dependency change.
+- Documentation: reconciled the `mcp` pin drift (the SDK moved
+  1.27.1 → 1.27.2 in PR #66 but the living docs still named 1.27.1). The
+  README status line + compatibility matrix and `docs/architecture.md` now
+  read `mcp==1.27.2` (and `asyncssh` tested at 2.23.1); ADR 0001 gained a
+  pin-movement Consequences line and ADR 0005 a 2026-06-12 validation
+  outcome, closing the runbook §8.9 follow-through. Recorded as a full
+  audit / validation pass under `audit/` (inventory, baseline, findings
+  register, final report). No code, policy, redaction, or audit-record
+  behavior changed.
+
+
 - `server.py` admission-probe consolidation (closes runbook §5.2 R-002 and
   R-003, no behavior change): every tool with a non-empty policy surface
   now builds its `policy_text` through exactly one module-level
@@ -358,6 +302,74 @@ All notable changes to this project are documented here. The format follows
   `tests/test_verifier.py`. (Phase-2 F-14, F-R1)
 
 ### Security
+
+- 2026-06-21 audit-pass P2/P3 follow-ups (`BACKLOG.md` 2026-06-21 section; no
+  P0/P1). OAuth: **SEC-6** `load_refresh_token` now holds the per-provider lock
+  so a concurrent revoke cannot surface a spurious `invalid_grant`; **SEC-7**
+  the RFC 8707 `resource` indicator is forwarded into the SDK `AuthorizationCode`
+  (was stored at authorize() then dropped). CI / supply chain: **CI-1**
+  `release.yml` drops an unused `persist-credentials: true`; **CI-2** `sbom.yml`
+  passes event/tag values through env vars instead of `${{ }}` shell
+  interpolation and defaults its token to `contents: read` with a job-level
+  `contents: write` escalation. Audit format & ergonomics: **FMT-1** the LEEF
+  formatter emits the mandatory LEEF 2.0 delimiter field; **QUAL-2**
+  `ssh_forward` raises a bounded error on a malformed spec instead of leaking a
+  raw `ValueError`; **DOC-4** consolidated the duplicate `[Unreleased]` category
+  blocks. SEC-5 (`/metrics` auth) and SEC-8 (token-dir fail-closed chmod) remain
+  open with rationale in `BACKLOG.md`.
+- Redaction now covers Anthropic API keys (`sk-ant-…`) and HuggingFace user
+  access tokens (`hf_…`) — high-likelihood secrets in an AI-infrastructure
+  tool's command arguments that the prior pattern set missed (audit pass
+  finding SEC-4). Added as whole-match collapses in `patterns.py`
+  (`PATTERNS_VERSION` 4→5) with paired over/under-scrub tests in
+  `tests/test_patterns.py`; `redaction.py` docstring and `SECURITY.md` updated.
+  Additive — the audit-record shape is unchanged and the `redact` idempotency
+  fuzz still passes.
+- Full validation + security audit pass (2026-06-21) —
+  [ADR 0005](docs/adr/0005-codebase-validation.md) +
+  `audit/2026-06-21-engagement.md`. Scanner battery (pip-audit, trivy, bandit,
+  semgrep, actionlint, shellcheck, gitleaks) clean; steps 1-4 green; no pinned
+  dependency carries a known CVE at its pinned version. **SEC-3**: raised
+  `pyproject.toml` minimum-safe dependency floors — `asyncssh>=2.23.0`
+  (GHSA-g794-3fmp-753h), `starlette>=1.3.0` (BadHost), `PyJWT>=2.13.0` (HMAC
+  confusion), `cryptography>=48.0.1` (GHSA-537c-gmf6-5ccf) — so a cold
+  `pip install` resolver cannot select a transitive version with a known
+  advisory (the pinned/tested set was already safe; mirrors PR #97). **TOOL-4**:
+  CODEOWNERS now references `renovate.json5` (the repo uses Renovate, not
+  Dependabot). Remaining findings are P2/P3/info hardening + format-conformance,
+  with no P0/P1; deferred to `BACKLOG.md`.
+- Repository governance (GitHub-side, recorded here for the audit trail): the
+  `main-protection` ruleset on `main` now additionally enforces
+  `required_status_checks` — `check (py3.12)` / `check (py3.13)` /
+  `check (py3.14)` / `gitleaks (secret scan)`, bound to GitHub Actions,
+  strict=false — and `required_signatures`, alongside the existing
+  pull_request / non_fast_forward / deletion / required_linear_history rules.
+  Applied 2026-06-12 with explicit operator confirmation and verified
+  effective via the rules API; closes the F-G2 residual and the 2026-06-01
+  pack's deferred P2-3. pip-audit / dependency-review / CodeQL remain
+  advisory by operator choice.
+- The `dependency-review` CI job no longer persists the workflow token (audit
+  pass finding SEC-2). The checkout step (which carried
+  `persist-credentials: true`) was removed entirely: at the pinned action SHA
+  (v5.0.0) dependency-review-action is API-only for `pull_request` events —
+  base/head SHAs come from the event payload and the comparison runs through
+  the Dependency Graph API — so the job needs neither the repository contents
+  nor a credential helper. Verified against the action source at the pinned
+  SHA; the change validates itself on every PR's `dependency-review` check.
+- `ssh_keyscan` now feeds its caller-chosen target hosts to the policy layer,
+  so `RELAY_SHELL_POLICY_DENY` can refuse a scan target (audit pass finding
+  SEC-1). Previously the tool's policy probe text was empty, so the deny list
+  never saw the hosts — a gap on the SSRF-shaped surface most worth gating by
+  host, and inconsistent with `ssh_upload` / `ssh_download` / `ssh_forward`,
+  which already name their host. A denied call short-circuits before any
+  subprocess and is audited `denied=True`. Tradeoff: the same text feeds the
+  tier classifier, so a host whose name embeds a `\b`-bounded destructive word
+  (`reboot`, `sudo`, ...) over-classifies above Tier 1 and is refused in
+  `guarded` mode — a conservative false-deny (`open` is advisory, `readonly`
+  already refuses Tier 1, `RELAY_SHELL_POLICY_ALLOW` is the escape hatch),
+  matching the transfer tools. No change to `open` mode's admission of a
+  normally-named host. Tests in `tests/test_ssh_keyscan_tool.py`.
+
 
 - Closed the audit log's in-record integrity gap. `chattr +a` and
   off-host shipping protect the file, but neither makes a *single altered

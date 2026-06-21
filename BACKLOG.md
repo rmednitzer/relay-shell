@@ -35,27 +35,27 @@ Findings from the 2026-06-21 full validation + security audit
 battery (pip-audit, trivy, bandit, semgrep, actionlint, shellcheck, gitleaks) was
 clean and no pinned dependency carries a known CVE; there were no P0/P1 findings.
 
-Closed in the engagement PR:
+Closed (engagement PR + 2026-06-21 follow-up PRs):
 
 | ID | Title | Resolution |
 |---|---|---|
 | SEC-3 | `pyproject.toml` dependency lower bounds below patched minimums | **Closed** (this PR). Floors raised: `asyncssh>=2.23.0` (GHSA-g794-3fmp-753h), `starlette>=1.3.0` (BadHost GHSA-86qp-5c8j-p5mr / GHSA-jp82-jpqv-5vv3), `PyJWT>=2.13.0` (HMAC confusion GHSA-xgmm-8j9v-c9wx), `cryptography>=48.0.1` (GHSA-537c-gmf6-5ccf). The pinned set was already safe; this codifies minimum-safe transitive versions, mirroring PR #97's `pydantic-settings` floor. Installed/tested set unchanged; gate green. |
 | TOOL-4 | CODEOWNERS required review on a non-existent `/.github/dependabot.yml` | **Closed** (this PR). The repo uses Renovate; reference corrected to `/renovate.json5`. |
 | SEC-4 | Add Anthropic `sk-ant-` + HuggingFace `hf_` redaction shapes | **Closed** (follow-up PR to the 2026-06-21 audit pass). Added whole-match patterns to `patterns.py` (`sk-ant-[A-Za-z0-9_-]{20,}`, `hf_[A-Za-z0-9]{34,}`), bumped `PATTERNS_VERSION` 4→5, added paired over/under-scrub tests in `tests/test_patterns.py`, and updated the `redaction.py` docstring + `SECURITY.md`. Gate green incl. the `redact` idempotency fuzz. |
+| CI-1 | `release.yml` verify job persisted the workflow token unnecessarily | **Closed** (P2/P3 follow-up PR). `persist-credentials: true` → `false`; no git-auth step runs after checkout (the tag signature is verified via the REST API with an explicit `GH_TOKEN`). actionlint clean. |
+| CI-2 | `sbom.yml` shell interpolation + workflow-wide `contents: write` | **Closed** (P2/P3 follow-up PR). Event/tag values now pass through env vars instead of `${{ }}` in `run:`; the workflow token defaults to `contents: read` with a job-level `contents: write` escalation. actionlint clean. |
+| SEC-6 | `oauth.load_refresh_token` read without the per-provider lock | **Closed** (P2/P3 follow-up PR). Wrapped the read in `async with self._lock` like every other store access; verified no lock-holding path calls it (no nested-acquire deadlock). |
+| SEC-7 | OAuth RFC 8707 `resource` not forwarded to the SDK `AuthorizationCode` | **Closed** (P2/P3 follow-up PR). `_build_auth_code` now forwards `resource` (the field exists in mcp 1.27.2); `.get` keeps back-compat. Test `test_authorization_code_forwards_resource`. |
+| FMT-1 | LEEF formatter omitted the mandatory LEEF 2.0 delimiter field | **Closed** (P2/P3 follow-up PR). `_format_leef` now emits `…\|audit\|x09\|<ext>`; `tests/test_audit.py` updated. |
+| QUAL-2 | `ssh_forward` spec parse leaked a raw `ValueError` | **Closed** (P2/P3 follow-up PR). Extracted `SshPool._parse_forward_spec` (validated before connecting) raising a bounded message; paired unit test. |
+| DOC-4 | `CHANGELOG.md` `[Unreleased]` duplicate `### Security` / `### Changed` blocks | **Closed** (P2/P3 follow-up PR). Consolidated to one block per category (Added/Changed/Fixed/Security) via a content-preserving regroup; Keep a Changelog 1.1.0. |
 
 Open deferrals (severity order; smaller effort first):
 
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
-| DOC-4 | `CHANGELOG.md` `[Unreleased]` has duplicate `### Security` / `### Changed` blocks | P2 | S | Violates Keep a Changelog 1.1.0 + runbook §8.3. Consolidate to one block per category. | maintainer |
-| FMT-1 | LEEF formatter advertises `LEEF:2.0` but omits the mandatory delimiter header field | P3 | S | `audit.py` `_format_leef`: add the 6th `|` delimiter field or label `LEEF:1.0`; update `tests/test_audit.py`. IBM LEEF spec [V]. | maintainer |
-| CI-1 | `release.yml` `verify` job sets `persist-credentials: true` unnecessarily | P3 | XS | Authenticates via `GH_TOKEN` and never pushes; drop it (SEC-2 posture). | maintainer |
-| CI-2 | `sbom.yml` interpolates `inputs.tag` / `github.ref_name` into `run:`; `contents: write` not job-scoped | P3 | S | Env-var indirection + job-level permissions (GitHub Actions hardening guide [V]). | maintainer |
-| SEC-5 | `/metrics` endpoint bypasses OAuth | P3 | S | Low residual (default `http_host=127.0.0.1` + documented Caddy edge). Optional token gate or separate bind. | maintainer/operator |
-| SEC-6 | `oauth.load_refresh_token` reads without the per-provider lock | P3 | S | Concurrent `revoke` → spurious `invalid_grant` (minor DoS; rotation invariant still holds at the locked exchange). Hold the lock; verify no nested-call deadlock first. | maintainer |
-| SEC-7 | OAuth `resource` (RFC 8707) not forwarded to the SDK `AuthorizationCode` | P3 | S | Verify the SDK signature accepts it before threading through. | maintainer |
-| SEC-8 | OAuth token-dir `chmod(0o700)` is best-effort | P3 | XS | Fail-closed when `auth_enabled` (systemd `UMask=0077` mitigates today). | maintainer |
-| QUAL-2 | `ssh_forward` spec parse leaks a raw `ValueError` message | P3 | XS | Wrap as a structured `RelayError` (no-raw-traceback hygiene). | maintainer |
+| SEC-5 | `/metrics` endpoint bypasses OAuth | P3 | S | **Deferred after review (2026-06-21 follow-up).** Architecturally significant: gating it changes a documented design decision (the `custom_route` OAuth bypass) and the standard *unauthenticated* Prometheus-scrape model. Residual is low — `http_host` defaults to `127.0.0.1` and the Caddy edge firewalls it in the supported deployment. Recommended if pursued: an opt-in `auth_metrics` flag (default off) gating the route on a valid bearer token, or a separate metrics bind. Operator design call. | maintainer/operator |
+| SEC-8 | OAuth token-dir `chmod(0o700)` is best-effort | P3 | XS | **Deferred after review (2026-06-21 follow-up).** The secret *files* are already created `0o600` via `os.open` regardless of the directory mode (asserted by `test_state_dir_and_files_are_private`), so the residual is directory-listing visibility only; a fail-closed dir chmod would break a legitimate operator-pre-created parent owned by another uid, and systemd `UMask=0077` already covers the supported deployment. | maintainer |
 | FMT-2 | CEF header field values not passed through `_cef_escape` | info | XS | No runtime defect (header fields are pipe/backslash-free constants); defensive only. | maintainer |
 | CI-3 | `sbom.yml` artifacts not SLSA-attested | info | S | Add `attest-build-provenance` (release.yml precedent). | maintainer |
 | DOC-5 | `CHANGELOG.md` lacks Keep-a-Changelog version-compare links | info | XS | Deferred until a second release is tagged ("omit rather than fake"). | maintainer |
