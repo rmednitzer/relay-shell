@@ -68,7 +68,10 @@ that a persuaded model still cannot exceed the operator-defined envelope:
   raises into the transport.
 - **Optional OAuth 2.1 edge** (HTTP transport, `[http]` extra): dynamic
   client registration with single-client lockdown, PKCE, file-backed
-  access/refresh tokens with rotation and lazy expiry.
+  access/refresh tokens with rotation and lazy expiry. **Opt-in, disabled by
+  default** (`RELAY_SHELL_AUTH_ENABLED=false`); enable it for any HTTP exposure
+  beyond a trusted loopback + edge. See [`docs/auth.md`](docs/auth.md) for the
+  authentication lifecycle.
 
 ### Deployment requirements (operator's responsibility)
 

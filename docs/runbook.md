@@ -1202,6 +1202,23 @@ plan lands in the same PR.)
   `BACKLOG.md` — when an item is recorded in both (e.g. SEC-1), the two
   entries must name the same closing PR.
 
+### 8.22 `docs/auth.md`
+
+- Keep: the opt-in-by-default statement (the master switch
+  `RELAY_SHELL_AUTH_ENABLED` defaults `false`, HTTP transport only), the
+  end-to-end lifecycle (register → PKCE authorize → token issue → refresh
+  rotation → lazy expiry → restart persistence → re-auth ceiling →
+  revocation), the single-client-lockdown section, and the defaults table.
+- Add: a row to the defaults table and a lifecycle note whenever an
+  `auth_*` setting or a token-handling behavior changes.
+- Cross-checks: the TTL defaults and env-var names must match
+  `config.py`'s `auth_*` fields and `deployment.md` §5; the lifecycle
+  steps must match `auth/oauth.py` (`register_client`, `authorize`,
+  `_issue`, `load_access_token`, `exchange_refresh_token`, `revoke_token`).
+  If an `auth_*` default or the rotation/expiry behavior changes, update
+  `docs/auth.md`, `deployment.md` §5, `SECURITY.md`, and the README OAuth
+  bullet together.
+
 ---
 
 ## 9. Appendix - useful one-liners

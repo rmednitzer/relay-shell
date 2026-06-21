@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `docs/auth.md` — an authentication-lifecycle guide for the OAuth 2.1 layer:
+  how a client registers (DCR), authorizes with PKCE, obtains tokens, and
+  **stays authenticated via refresh-token rotation** (1 h access / rolling
+  30 d refresh), plus lazy expiry, restart persistence, the re-auth ceiling,
+  revocation, and single-client lockdown. States prominently that auth is
+  **opt-in and off by default** (`RELAY_SHELL_AUTH_ENABLED=false`, HTTP
+  transport only) — a fresh install never stands up an (un)authenticated
+  listener implicitly. Cross-linked from the README OAuth bullet,
+  `SECURITY.md`, and `deployment.md` §5; inventory entry added at runbook
+  §8.22. Docs only.
 - CI secret scanning via `.github/workflows/gitleaks.yml` (audit pass finding
   TOOL-3). Runs on push to `main`, PRs, and a daily schedule. Self-contained
   and supply-chain careful: a pinned gitleaks (8.30.1) is installed by
