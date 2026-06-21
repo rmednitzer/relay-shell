@@ -8,6 +8,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- Full validation + security audit pass (2026-06-21) —
+  [ADR 0005](docs/adr/0005-codebase-validation.md) +
+  `audit/2026-06-21-engagement.md`. Scanner battery (pip-audit, trivy, bandit,
+  semgrep, actionlint, shellcheck, gitleaks) clean; steps 1-4 green; no pinned
+  dependency carries a known CVE at its pinned version. **SEC-3**: raised
+  `pyproject.toml` minimum-safe dependency floors — `asyncssh>=2.23.0`
+  (GHSA-g794-3fmp-753h), `starlette>=1.3.0` (BadHost), `PyJWT>=2.13.0` (HMAC
+  confusion), `cryptography>=48.0.1` (GHSA-537c-gmf6-5ccf) — so a cold
+  `pip install` resolver cannot select a transitive version with a known
+  advisory (the pinned/tested set was already safe; mirrors PR #97). **TOOL-4**:
+  CODEOWNERS now references `renovate.json5` (the repo uses Renovate, not
+  Dependabot). Remaining findings are P2/P3/info hardening + format-conformance,
+  with no P0/P1; deferred to `BACKLOG.md`.
 - Repository governance (GitHub-side, recorded here for the audit trail): the
   `main-protection` ruleset on `main` now additionally enforces
   `required_status_checks` — `check (py3.12)` / `check (py3.13)` /

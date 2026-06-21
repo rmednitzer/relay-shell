@@ -775,6 +775,12 @@ the four HTTP `/metrics` tests migrated off the deprecated
 `starlette.testclient` onto httpx's own `ASGITransport`, taking the
 default suite from one warning to zero with no dependency change.)
 
+The 2026-06-21 full audit pass adds **QUAL-2 (P3)** `ssh_forward` error-string
+hygiene (wrap a spec `ValueError` as a structured `RelayError`) and **FMT-1
+(P3)** / **FMT-2 (info)** LEEF/CEF formatter conformance in `audit.py`; full
+detail in [`BACKLOG.md`](../BACKLOG.md) (2026-06-21 section) and
+[`audit/2026-06-21-engagement.md`](audit/2026-06-21-engagement.md).
+
 ### 7.3 Operations + observability
 
 (Items in this category are tracked here as they land; the queue is
@@ -879,6 +885,17 @@ currently empty.)
   Vertex-held `gh` credential with explicit T3 confirmation; verified
   effective after the change via
   `GET /repos/rmednitzer/relay-shell/rules/branches/main`.
+- **2026-06-21 full audit pass (open hardening items)** — incremental, no
+  posture change. Full register in [`BACKLOG.md`](../BACKLOG.md) (2026-06-21
+  section) and [`audit/2026-06-21-engagement.md`](audit/2026-06-21-engagement.md).
+  **SEC-4 (P2)** add Anthropic `sk-ant-` / HuggingFace `hf_` redaction shapes
+  (recommended next); **SEC-5 (P3)** optional `/metrics` auth gate (low residual:
+  default `http_host=127.0.0.1` + documented Caddy edge); **SEC-6 (P3)** hold the
+  provider lock in `oauth.load_refresh_token`; **SEC-7 (P3)** forward the RFC 8707
+  `resource` to the SDK `AuthorizationCode`; **SEC-8 (P3)** fail-closed token-dir
+  `chmod`; **CI-1 (P3)** drop `release.yml` `persist-credentials`; **CI-2 (P3)**
+  `sbom.yml` env-indirection + job-scoped permissions. SEC-3 (dependency floors)
+  and TOOL-4 (CODEOWNERS → Renovate) closed in the pass PR.
 
 ---
 
