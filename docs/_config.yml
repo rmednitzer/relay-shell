@@ -17,4 +17,7 @@ title: relay-shell
 description: >-
   A governed Model Context Protocol relay for complete shell and SSH operation:
   central audit, tiered authority, secret redaction, and resource bounds.
-theme: jekyll-theme-cayman
+# Dark theme. jekyll-theme-midnight is a GitHub-Pages-supported theme, so it
+# works with the legacy /docs build (no remote_theme needed); jekyll-theme-hacker
+# is the other supported dark option (black + green monospace, terminal style).
+theme: jekyll-theme-midnight

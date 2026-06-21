@@ -1,5 +1,5 @@
 ---
-title: Home
+title: Documentation
 ---
 
 # relay-shell documentation
