@@ -1,6 +1,7 @@
 {
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
   extends: [
+    "github>rmednitzer/renovate-config",
     'config:best-practices',
     ':semanticCommits',
     ':timezone(Europe/Vienna)',
