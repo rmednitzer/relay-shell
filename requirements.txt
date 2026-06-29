@@ -4,18 +4,18 @@
 # test suite + mypy + ruff are green at this combination (ADR 0005,
 # 2026-05-24 validation pass). For library-style installs, use
 # pyproject.toml — the lower bounds there are the contract.
-mcp==1.27.2
+mcp==1.28.1
 pydantic==2.13.4
 pydantic-settings==2.14.2
-asyncssh==2.23.1
+asyncssh==2.24.0
 uvicorn==0.49.0
 starlette==1.3.1
-anyio==4.13.0
+anyio==4.14.1
 httpx==0.28.1
 PyJWT==2.13.0
 cryptography==48.0.1
 # dev / CI
-pytest==9.1.0
+pytest==9.1.1
 pytest-asyncio==1.4.0
-ruff==0.15.17
+ruff==0.15.20
 mypy==2.1.0
