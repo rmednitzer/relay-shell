@@ -54,6 +54,27 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **RED-8: redaction scan-window could leak the tail of a long quoted secret.**
+  The P1 scan-window optimization (`_scrub_str` redacts only the first
+  `max_len + 16 KiB` of an argument, since the record keeps only `max_len`) rested
+  on every redaction pattern being truncation-safe. The CLI-flag rule's
+  quoted-value branches (`--password="..."` / `'...'`) were **not**: they required
+  a closing quote and were length-unbounded, so a quoted secret longer than the
+  scan window lost its closing quote to truncation — the quoted branch could not
+  match and the greedy bare fallback stopped at the first internal space, leaking
+  the value's post-space tail into the (length-bounded) audit record. Full-string
+  redaction always caught it, so this was a regression introduced by P1, not a
+  pre-existing pattern gap. Confirmed by PoC (a ~20 KiB `--password="a … "` value
+  leaked its middle; the scrubbed record showed `--password=[REDACTED] …tail…`).
+  Fixed by adding unterminated-quote fallback branches to the CLI-flag value
+  (consume to end-of-line when the closing quote is absent), so a truncated or
+  malformed quoted value still collapses whole; well-formed quoted values are
+  byte-identical (the terminated branch is tried first). `PATTERNS_VERSION` 8→9.
+  The `_scrub_str` margin rationale is corrected to state the truncation-safety
+  invariant each pattern family relies on. Paired regression tests
+  (`test_red8_*`) plus a linearity check confirm no ReDoS. The Authorization
+  header rule was verified unaffected (its `$`-anchored branch already tolerates
+  truncation). No behavior change for realistic arguments; audit posture only.
 - **Idle reaper vs. in-use connection/session (concurrency).** The two
   opportunistic idle sweeps could tear down a resource that was actively in use
   but had simply not been *touched* recently, because "recently used" was

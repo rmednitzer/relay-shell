@@ -25,10 +25,16 @@ Closed (engagement PR):
 |----|-----|-------|------------|
 | RED-6 | HIGH | JSON-quoted-key secret leak in redaction | Quote-tolerant separator + linear char-class value run on the generic + AWS `secret_access_key` rules (`PATTERNS_VERSION` 8). Paired JSON-shape over/under-scrub tests. |
 | RED-6a | HIGH | ReDoS introduced by the first RED-6 draft (lookahead O(n²)) | Replaced with a linear char-class matcher; 1 MB scan 165 s → 196 ms. Linearity regression test. |
-| P1 | MED | Redaction scanned the full untruncated arg on the event loop | `_scrub_str` bounds the scan to `max_len + 16 KiB` (lossless — the tail is truncated out anyway); 1–4 MB arg now constant ~12 ms. Bounded-scan test. |
+| P1 | MED | Redaction scanned the full untruncated arg on the event loop | `_scrub_str` bounds the scan to `max_len + 16 KiB`; 1–4 MB arg now constant ~12 ms. Bounded-scan test. Lossless for every truncation-safe pattern — see RED-8 for the one quoted-value edge the original "lossless" claim missed. |
 | POL-2 | MED | `TIER3_PATTERN` missed non-obfuscated `rm` long options | Bounded (`{0,16}`) long-option `rm` alternative; positive/negative + ReDoS-ceiling tests. |
 | SSH-4 | MED | Deny-list blind to host for `ssh_exec`/`ssh_spawn`/`ssh_fanout`/`ssh_check` | Fold the destination host (canonical-IP widened) into their deny probes; wiring test. |
 | BRK-3 | MED | Broker binding omitted SSH identity (`user`/`port`/`key_path`) | Added to `ssh_exec`/`ssh_spawn` audit_args → op-key binding + audit visibility; ADR 0009 follow-up; binding test. |
+
+Closed (post-engagement follow-up review):
+
+| ID | Sev | Title | Resolution |
+|----|-----|-------|------------|
+| RED-8 | MED | P1 scan-window leaked the tail of a quoted secret past the window | The CLI-flag rule's quoted-value branches required a closing quote and were length-unbounded, so a `--password="…"` value longer than `max_len + 16 KiB` lost its close quote to truncation → the quoted branch failed, the greedy bare fallback stopped at the first internal space, and the post-space tail leaked into the audit record (full-string redaction still caught it, so a P1 regression). Added unterminated-quote fallback branches consuming to end-of-line (`PATTERNS_VERSION` 9); well-formed values byte-identical. Authorization rule verified unaffected (its `$` branch already tolerates truncation). PoC + `test_red8_*` regressions + linearity check. |
 
 Open deferrals (low-priority perf; measure before acting — none on a hot path):
 

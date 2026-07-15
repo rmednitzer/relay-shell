@@ -66,14 +66,23 @@ def redact(text: str) -> str:
 
 # P1 (2026-07-15 perf pass): `_scrub_str` keeps only the first `max_len` chars
 # of the redacted result, so a secret that survives truncation must *start*
-# within the first `max_len` chars — and therefore ends within `max_len` plus
-# the longest redactable span. The longest such span is a PEM block, whose body
-# `patterns.py` length-bounds to 8 KB (RED-2); this margin sits comfortably
-# above it. Scanning only that window — instead of running the ~two-dozen-regex
-# table over a multi-MB `command`/`stdin`/`env_json` argument synchronously on
-# `Relay.run`'s hot path — removes the dominant per-call CPU cost with **no**
-# change to what gets redacted: the dropped tail is truncated out of the audit
-# record regardless, so it can never leak a secret this would otherwise catch.
+# within the first `max_len` chars. Scanning only `max_len + margin` — instead
+# of running the ~two-dozen-regex table over a multi-MB `command`/`stdin`/
+# `env_json` argument synchronously on `Relay.run`'s hot path — removes the
+# dominant per-call CPU cost. Correctness rests on the redaction patterns being
+# *truncation-safe*: a secret that begins in the kept prefix must still be
+# collapsed when the scan window severs its far end. Two shapes exist:
+#   1. Greedy-run patterns (Bearer, `key=value`, provider tokens) match whatever
+#      is visible, so a truncated secret still collapses on its head.
+#   2. Delimiter-terminated patterns must be bounded or have an end fallback:
+#      the PEM block bounds its body to 8 KB (RED-2, < margin); the quoted
+#      CLI-flag value and the Authorization header value each fall back to an
+#      end-of-line branch (RED-8 / the `$` alternative) so a truncated quoted
+#      value still collapses instead of leaking its post-space tail.
+# The dropped tail is truncated out of the audit record regardless, so bounding
+# the scan cannot leak a secret the full-string scan would have caught. The
+# margin sits comfortably above the 8 KB PEM bound (the one span whose match
+# length the truncation-safety of a delimiter pattern still depends on).
 _REDACT_SCAN_MARGIN = 16384
 
 

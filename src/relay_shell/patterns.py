@@ -104,7 +104,18 @@ __all__ = [
 #     RED-7: TIER3_PATTERN gained a long-option `rm` alternative
 #     (`rm --recursive|--force|--no-preserve-root`); the short-flag-only
 #     alternatives under-classified `rm --force` below Tier 3.
-PATTERNS_VERSION = "8"
+# v9: 2026-07-15 redaction review. RED-8: the CLI-flag rule's quoted-value
+#     branches (`--password="..."` / `'...'`) required a closing quote and were
+#     length-unbounded, so a quoted secret longer than the redaction scan window
+#     (`_scrub_str`'s `max_len + 16 KiB`) lost its closing quote to truncation:
+#     the quoted branch could not match and the greedy bare fallback stopped at
+#     the first internal space, leaking the value's tail into the length-bounded
+#     audit record (a P1 scan-window regression; full-string redaction still
+#     caught it). Added unterminated-quote fallback branches that consume to
+#     end-of-line, so a truncated/malformed quoted value still collapses whole.
+#     Well-formed quoted values are byte-identical (the terminated branch is
+#     tried first).
+PATTERNS_VERSION = "9"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -220,6 +231,19 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             (?:
                 "(?:[^"\\]|\\.)*"        # double-quoted, escape-aware
               | '(?:[^'\\]|\\.)*'        # single-quoted, escape-aware
+              | "[^\r\n]*                # RED-8: unterminated double-quote — the
+                                        # closing quote is missing (a malformed arg)
+                                        # or truncated out of the redaction scan
+                                        # window (_scrub_str). Consume to end-of-line
+                                        # so a long quoted secret whose close quote
+                                        # falls past the window is still collapsed
+                                        # instead of leaking its post-space tail.
+                                        # Tried only after the terminated branch
+                                        # above fails, so well-formed values are
+                                        # byte-identical; audit-fidelity-loss (not a
+                                        # leak) in the genuinely-unterminated case,
+                                        # matching the Authorization rule's tradeoff.
+              | '[^\r\n]*                # unterminated single-quote (as above)
               | (?:-(?!-)|(?!--))(?:\\.|\S)+
                                         # bare value, treating \\<char> as one unit;
                                         # allow single-dash-prefixed secrets (-abc)

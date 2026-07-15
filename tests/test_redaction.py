@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from relay_shell.redaction import redact, redact_args
+from relay_shell.redaction import _scrub_str, redact, redact_args
 
 
 def test_redact_bearer_and_kv() -> None:
@@ -117,6 +117,40 @@ def test_redact_cli_flag_handles_quoted_value() -> None:
     out3 = redact(r'--password "esc\"aped value" --next')
     assert "aped value" not in out3
     assert "--next" in out3
+
+
+def test_red8_quoted_secret_past_scan_window_does_not_leak_tail() -> None:
+    # RED-8: a quoted CLI-flag secret longer than the redaction scan window
+    # (`_scrub_str` scans only `max_len + 16 KiB`) loses its closing quote to
+    # truncation. Before the unterminated-quote fallback branches, the quoted
+    # regex branch could not match the truncated value and the greedy bare
+    # fallback stopped at the first internal space, leaking the value's tail
+    # into the length-bounded audit record. Full-string redaction always caught
+    # it, so this was a P1 scan-window regression, not a pattern gap.
+    marker = "LEAKMARKER"
+    # ~20 KiB quoted value, internal spaces, closing quote well past the window.
+    value = "a " + (("z" * 40 + " " + marker + " ") * 400)
+    arg = f'--password="{value}"'
+    assert len(arg) > 500 + 16384  # closing quote is outside the scan window
+
+    scrubbed = _scrub_str(arg, 500)
+    assert marker not in scrubbed, "quoted secret tail leaked past the scan window"
+    assert scrubbed.startswith("--password=[REDACTED]")
+
+    # And full-string redaction (whole value in view) collapses it as before.
+    assert marker not in redact(arg)
+
+
+def test_red8_unterminated_quote_is_redacted_but_wellformed_unchanged() -> None:
+    # The unterminated-quote fallback fires only when the terminated branch
+    # fails, so well-formed quoted values are byte-identical, and a genuinely
+    # unterminated quote is still collapsed (audit-fidelity tradeoff, not a leak).
+    # Well-formed: trailing content after the closing quote is preserved.
+    assert redact('--password="top secret" --host=h') == "--password=[REDACTED] --host=h"
+    # Unterminated single-line quote: the whole visible value collapses.
+    out = redact('--token="abc def ghi')  # no closing quote
+    assert "abc" not in out and "def" not in out and "ghi" not in out
+    assert out.startswith("--token=[REDACTED]")
 
 
 def test_redact_cli_flag_handles_backslash_escaped_space() -> None:
