@@ -57,13 +57,18 @@ uniformly.
   broker.
 
 - **Bound to the exact operation, not a per-tool parameter.** A token is bound
-  to `sha256(tool \0 policy_text)` — the tool name plus every executor-visible
-  byte the policy layer already saw (command + stdin + env + script body, via
-  the existing `_policy_text_*` builders). This means the gate is correct for
-  every current *and future* Tier-3-capable tool with **no per-wrapper token
-  threading** and no risk of a new tool silently escaping the gate. It lives in
-  exactly one place, mirroring how the deny list and classifier already gate
-  centrally.
+  to `sha256(tool \0 op_key)`, where `op_key` is built in `Relay.run` from the
+  command/content probe (`policy_text`) **and** a canonical serialization of the
+  full audited argument set (`audit_args`). `policy_text` fixes *what* runs
+  (command + stdin + env + script body, via the `_policy_text_*` builders);
+  `audit_args` fixes the operation's *target* — the `host` (SSH tools), `hosts`
+  (`ssh_fanout`), `cwd` (shell tools), `session_id` (`session_send`),
+  `local`/`remote` (transfer tools) — which `policy_text` deliberately omits.
+  Binding to both means a token armed for one target cannot be consumed against
+  another (no confused-deputy replay), and the gate is correct for every current
+  *and future* Tier-3-capable tool with **no per-wrapper token threading** and
+  no risk of a new tool silently escaping the gate. It lives in exactly one
+  place, mirroring how the deny list and classifier already gate centrally.
 
 - **The flow (three audited steps on the normal stream).**
   1. **plan** — a Tier-3 call with no armed confirmation returns
@@ -177,6 +182,25 @@ Implemented and validated in the same PR that lands this ADR (evidence in
   arming then re-issuing the exact call executes it (`confirm_execute`, the
   target is removed), a mismatched/expired/bad token re-challenges, a non-Tier-3
   call is unaffected, and the raw token never appears in the audit log.
+
+### PR-review hardening
+
+A security review of the diff (bundled `/security-review`) caught one HIGH:
+the initial draft bound the token to `sha256(tool \0 policy_text)` only. Because
+`policy_text` is the *command-content* probe and deliberately omits the target
+(`host`, `cwd`, `session_id`, `hosts`), a token armed for one target could be
+consumed against another — confirm `cwd=/tmp` then execute `cwd=/`, or confirm
+one host then fan `ssh_fanout` out to the whole inventory — defeating the gate's
+own "bound to the exact operation" promise. The fix widened the binding to
+`op_key = policy_text \0 canonical(audit_args)` (`_confirm_op_key` in
+`server.py`), since `audit_args` carries the target for every tool; the central
+gate keeps the no-per-wrapper-param property. A regression test
+(`test_on_token_bound_to_target_not_just_command`) pins that a token armed for
+one `cwd` neither authorizes nor mutates a different `cwd`. Connection-only
+modifiers that are not in the audit record (`user`/`port`/`key_path` for the SSH
+tools) are not part of the binding: they change *how* the relay connects, not
+*what* audited operation runs against *which* target, so a change to them alone
+(same host + same command) is out of scope for the confirmation identity.
 
 No change to policy admission, tier semantics, the no-sandbox posture, or any
 existing tool's response shape. This pass added a compensating control layered

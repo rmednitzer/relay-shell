@@ -97,6 +97,29 @@ def _find_sudo_binary() -> str:
     return ""
 
 
+def _confirm_op_key(policy_text: str, audit_args: dict[str, Any]) -> str:
+    """Full operation identity for the Tier-3 confirmation broker (ADR 0009).
+
+    A confirmation token must authorize the *exact* call, so the key binds both
+    the command/content the executor runs (``policy_text``) **and** a canonical
+    serialization of every audited argument. ``audit_args`` carries the
+    operation's *target* - the ``host`` for the SSH tools, ``hosts`` for
+    ``ssh_fanout``, ``cwd`` for the shell tools, ``session_id`` for
+    ``session_send``, ``local``/``remote`` for the transfer tools - which
+    ``policy_text`` deliberately omits (it is the command-content probe the deny
+    list and tier classifier see). Binding to both closes the confused-deputy
+    gap where a token armed for one target could be consumed against another
+    (e.g. confirm ``cwd=/tmp`` then execute ``cwd=/``, or confirm one host then
+    fan out to the whole inventory). The raw (un-redacted) args are used so
+    redaction never collapses two distinct operations to the same key; the key
+    is only hashed for the token binding, never logged.
+    """
+    canonical = json.dumps(
+        audit_args, sort_keys=True, separators=(",", ":"), default=str, ensure_ascii=False
+    )
+    return f"{policy_text}\x00{canonical}"
+
+
 def _ctx_ids(ctx: Context | None) -> tuple[str, str]:
     if ctx is None:
         return "", ""
@@ -386,10 +409,11 @@ class Relay:
         # deny list and mode policy have already run above.
         confirm_action = ""
         if self.broker is not None and decision.tier == Tier.IRREVERSIBLE:
-            if self.broker.consume(tool, policy_text):
+            op_key = _confirm_op_key(policy_text, audit_args)
+            if self.broker.consume(tool, op_key):
                 confirm_action = "confirm_execute"
             else:
-                challenge = self.broker.plan(tool, policy_text)
+                challenge = self.broker.plan(tool, op_key)
                 body = (
                     f"[CONFIRM REQUIRED tier {int(decision.tier)} "
                     f"({decision.tier.name}): this irreversible operation needs a second "

@@ -16,12 +16,16 @@ The flow, when enabled (every step lands on the normal audit stream):
 3. **execute** - re-issuing the *exact* same call finds the armed token,
    burns it (single-use), and proceeds to ``work()``.
 
-The binding is the operation's hash - the tool name plus every
-executor-visible byte the policy layer already saw - not a per-tool
-parameter. So the gate is correct for every current and future
-Tier-3-capable tool without threading a token through each wrapper, and it
-lives in exactly one place (the central runner), mirroring how the deny list
-and tier classifier already gate uniformly.
+The binding is the operation's hash - the tool name plus a caller-supplied
+``op_key`` that identifies the *exact* call - not a per-tool parameter. The
+runner builds that key from the command/content (the policy text) **and** the
+full audited argument set, so it captures the operation's target (host, cwd,
+session id, host list) as well as its command. A token armed for one target
+therefore cannot be consumed against another (no confused-deputy replay). The
+gate lives in exactly one place (the central runner), mirroring how the deny
+list and tier classifier already gate uniformly, so it is correct for every
+current and future Tier-3-capable tool without threading a token through each
+wrapper.
 
 This is a *safeguard on top of* the tier/mode policy, never a replacement:
 the deny list and mode checks still run first, and the retried call is
@@ -50,14 +54,16 @@ __all__ = ["Challenge", "ConfirmationBroker"]
 _MAX_PENDING = 256
 
 
-def _op_hash(tool: str, policy_text: str) -> str:
+def _op_hash(tool: str, op_key: str) -> str:
     """Stable identity of an operation.
 
-    The tool name plus every executor-visible byte the policy layer saw,
-    NUL-joined so ``(tool, text)`` cannot collide with ``(tool + text, "")``.
-    Two calls confirm the *same* operation iff this value matches.
+    The tool name plus the caller-supplied ``op_key`` (the runner builds this
+    from the command/content plus the full audited argument set, so it fixes
+    the operation's target as well as its command), NUL-joined so
+    ``(tool, key)`` cannot collide with ``(tool + key, "")``. Two calls confirm
+    the *same* operation iff this value matches.
     """
-    return sha256_hex(f"{tool}\x00{policy_text}")
+    return sha256_hex(f"{tool}\x00{op_key}")
 
 
 @dataclass(frozen=True)
@@ -116,8 +122,8 @@ class ConfirmationBroker:
             ]:
                 del self._by_token[tok]
 
-    def plan(self, tool: str, policy_text: str) -> Challenge:
-        """Mint a fresh single-use token for ``(tool, policy_text)``.
+    def plan(self, tool: str, op_key: str) -> Challenge:
+        """Mint a fresh single-use token for ``(tool, op_key)``.
 
         Each call issues a new token; a prior un-armed token for the same
         operation is left to expire on its own (the sweep reclaims it). The
@@ -129,7 +135,7 @@ class ConfirmationBroker:
         with self._lock:
             self._sweep(now)
             self._by_token[token] = _Entry(
-                op_hash=_op_hash(tool, policy_text),
+                op_hash=_op_hash(tool, op_key),
                 tool=tool,
                 expires_at=now + self._ttl,
             )
@@ -154,8 +160,8 @@ class ConfirmationBroker:
             entry.armed = True
             return True
 
-    def consume(self, tool: str, policy_text: str) -> bool:
-        """Burn an armed token matching ``(tool, policy_text)``.
+    def consume(self, tool: str, op_key: str) -> bool:
+        """Burn an armed token matching ``(tool, op_key)``.
 
         Returns ``True`` iff an unexpired *armed* token for this exact
         operation existed; single-use, so the token is removed on success. A
@@ -163,7 +169,7 @@ class ConfirmationBroker:
         through to :meth:`plan` and re-challenges).
         """
         now = self._clock()
-        target = _op_hash(tool, policy_text)
+        target = _op_hash(tool, op_key)
         with self._lock:
             self._sweep(now)
             match = next(

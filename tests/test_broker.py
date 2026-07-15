@@ -238,6 +238,37 @@ async def test_raw_token_never_written_to_audit(tmp_path: Path) -> None:
     assert token not in raw_audit, "raw confirmation token must not reach the audit log"
 
 
+async def test_on_token_bound_to_target_not_just_command(tmp_path: Path) -> None:
+    # Regression (security review, 2026-07-15): the token must bind the full
+    # audited argument set, not just the command text. `cwd` lives in audit_args
+    # but NOT in policy_text, so a token armed for one cwd must NOT authorize the
+    # same command against a different cwd (confused-deputy replay).
+    cfg = _on_settings(tmp_path)
+    mcp = build_server(cfg)
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    (dir_a / "keep.txt").write_text("a")
+    (dir_b / "keep.txt").write_text("b")
+    cmd = "rm -rf ./keep.txt"
+
+    # plan + arm for cwd=dir_a
+    r1 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_a)}))[0])
+    token = re.search(r'token="([A-Za-z0-9_-]+)"', r1).group(1)
+    await mcp.call_tool("operation_confirm", {"token": token})
+
+    # Attempt to execute the SAME command against cwd=dir_b: must re-challenge,
+    # and dir_b must be untouched (the armed token does not match this target).
+    r2 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_b)}))[0])
+    assert "CONFIRM REQUIRED" in r2
+    assert (dir_b / "keep.txt").exists(), "token for cwd=a must not authorize cwd=b"
+    # The original target still executes (token still armed for cwd=a).
+    r3 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_a)}))[0])
+    assert "CONFIRM REQUIRED" not in r3
+    assert not (dir_a / "keep.txt").exists()
+
+
 def test_operation_confirm_is_tier0() -> None:
     # Control-plane step: classified read-only so it is available in every mode.
     assert classify("operation_confirm") == Tier.READ_ONLY

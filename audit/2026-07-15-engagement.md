@@ -102,9 +102,12 @@ invariants and found to hold:
   the ADR 0007 hash chain are unchanged. Verified: a default-off Tier-3 record
   has no `action` key. [V]
 - **Single-use + TTL + exact-operation binding** — tokens are bound to
-  `sha256(tool \0 policy_text)` (every executor-visible byte), single-use
-  (burned on consume), and TTL-bounded; a mismatched/expired/bad token
-  re-challenges. Verified by `tests/test_broker.py`. [V]
+  `sha256(tool \0 policy_text \0 canonical(audit_args))`, i.e. the command
+  content **and** the audited argument set (so the target — `host`/`cwd`/
+  `session_id`/`hosts` — is part of the identity), single-use (burned on
+  consume), and TTL-bounded; a mismatched/expired/bad token re-challenges.
+  Verified by `tests/test_broker.py`. The `policy_text`-only draft was corrected
+  after the `/security-review` HIGH below. [V]
 - **Raw token never logged** — `operation_confirm` audits only a token
   fingerprint; the raw token appears nowhere in the audit file. Verified. [V]
 - **Label cardinality bounded** — the new `confirm_required` metric outcome is a
@@ -121,9 +124,11 @@ stands and the scanner battery + full suite re-confirm no regression. [V]
 |---|---|---|---|
 | **DOC-1** | low (doc) | Living docs named the superseded pin (`mcp==1.27.2`, `asyncssh` "tested at 2.23.1", floor `>=2.18`) after Renovate moved the pins to `mcp==1.28.1` / `asyncssh==2.24.0` (floor `>=2.23.0`). | **Fixed this PR.** Reconciled the README status line + compatibility matrix and the `docs/architecture.md` diagram; "last validated" date → 2026-07-15. Frozen ADRs / prior engagement records left intact per convention. |
 | **ENV-1** | info | `.env.example` should gain `RELAY_SHELL_CONFIRM_TIER3` / `RELAY_SHELL_CONFIRM_TTL` to mirror `Settings` and `docs/deployment.md` §8a (runbook §3.1 checklist). | **Deferred (env constraint).** The audit environment blocks all access to `.env*` paths, so the file could not be edited in this session. The settings carry safe defaults, so nothing breaks; tracked as a one-line follow-up in `BACKLOG.md`. |
+| **SR-1** | high (self-caught) | The broker's *own* new code (this pass): the first draft bound the confirmation token to `sha256(tool \0 policy_text)` only. Since `policy_text` omits the target (`host`/`cwd`/`session_id`/`hosts`), a token armed for one target could be consumed against another (confused-deputy: confirm `cwd=/tmp`, execute `cwd=/`; confirm one host, fan out to the whole inventory). | **Fixed this PR** (before merge), surfaced by the bundled `/security-review` on the diff. Widened the binding to `policy_text \0 canonical(audit_args)` (`_confirm_op_key`); regression test `test_on_token_bound_to_target_not_just_command`. Recorded in ADR 0009 §"PR-review hardening". |
 
-No P0/P1, no critical/high/medium security finding; the scanner battery and
-steps 1–4 are clean.
+No P0/P1 and no **pre-existing** critical/high/medium security finding; the
+scanner battery and steps 1–4 are clean. SR-1 was a defect in this PR's own new
+code, caught and fixed in-flight by the review pass.
 
 ## 6. Comparative analysis — lessons from the control/data planes
 
