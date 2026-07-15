@@ -1,6 +1,6 @@
 # ADR 0011: Windows targets via OpenSSH + PowerShell 7
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-15
 
 ## Context
@@ -166,3 +166,29 @@ audit log ( `-Password`/`-Token`/`-ApiKey` are already caught by the single-dash
   shipped-default guardrail that feeds `guarded`/`readonly`/the broker. Windows
   destructive operations belong in the same shipped classifier as their POSIX
   peers, not offloaded to every operator's deny regex. Rejected.
+
+## Validation outcome (2026-07-15)
+
+Increments **A** (classification) and **B** (docs) implemented in the PR that
+moves this ADR to Accepted:
+
+- `patterns.py` — `TIER3_PATTERN` / `TIER2_PATTERN` / `PRIV_ESC_PATTERN` gained
+  the Windows/pwsh alternatives above as pure additions; `PATTERNS_VERSION`
+  9 → 10. The bounded-gap rules (`Remove-Item … -Recurse`, `del … /s`,
+  `format … <drive>`) use the RED-7 `{0,N}?` ReDoS ceiling.
+- Tests (`tests/test_patterns.py`): paired positive / negative cases for the
+  Tier-3, Tier-2, and priv-esc additions (the negatives pin no over-classification
+  of `Format-Table`, `Get-ChildItem -Recurse`, a single-file `Remove-Item`, prose
+  `format`, and read-only `Get-*` counterparts), plus a ReDoS-ceiling test on a
+  large verb-repeating argument. POSIX classification verified byte-identical (the
+  existing `test_policy.py` / `test_patterns.py` POSIX cases pass unchanged).
+- Docs (`docs/deployment.md` §8b): what already works, the newly-classified
+  operations, the heuristic caveat (pwsh abbreviation / aliases / pipeline
+  forms), the UTF-8 / native-`.exe` encoding edge, and the ConPTY / `session_kill`
+  signal note.
+
+Increment **C** (`-Credential` / `-AsPlainText` redaction) remains a small
+follow-up (runbook §7.1, WIN-1); increments **D** (encoding) and **E** (PTY)
+stay documented caveats, not features, per the decision above. No change to the
+tool contract, transport surface, audit-record shape, or the ADR 0002/0003 trust
+boundary.

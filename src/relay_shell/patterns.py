@@ -115,7 +115,18 @@ __all__ = [
 #     end-of-line, so a truncated/malformed quoted value still collapses whole.
 #     Well-formed quoted values are byte-identical (the terminated branch is
 #     tried first).
-PATTERNS_VERSION = "9"
+# v10: 2026-07-15 Windows/PowerShell-7 support (ADR 0011, WIN-1). TIER3_PATTERN /
+#      TIER2_PATTERN / PRIV_ESC_PATTERN gained Windows + pwsh alternatives so
+#      destructive PowerShell cmdlets and cmd.exe verbs on a Windows OpenSSH
+#      target classify at the right tier instead of falling through to Tier 1
+#      (which escaped `guarded`/`readonly` mode and the ADR 0009 broker). Pure
+#      additions — POSIX matching is byte-identical; the bounded-gap rules
+#      (`Remove-Item … -Recurse`, `del … /s`, `format … C:`) mirror the RED-7
+#      `{0,N}?` ReDoS ceiling. Classification stays heuristic: PowerShell
+#      parameter abbreviation / aliases / pipeline-delete forms can still evade
+#      it (documented in ADR 0011), so the deny list + modes remain the hard
+#      controls.
+PATTERNS_VERSION = "10"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -373,7 +384,25 @@ TIER3_PATTERN = re.compile(
     r"git\s+push\s+.*--force|git\s+reset\s+--hard|"
     r"userdel|deluser|gpasswd|passwd\s+|"
     r"iptables\s+-F|nft\s+flush|ip\s+link\s+.*down|"
-    r":\s*\(\s*\)\s*\{|/dev/sd[a-z]\b"
+    r":\s*\(\s*\)\s*\{|/dev/sd[a-z]\b|"
+    # --- Windows / PowerShell 7 (ADR 0011, WIN-1) ---
+    # Destructive pwsh cmdlets are distinctive CapCase-hyphenated tokens (low
+    # false-positive risk). `Remove-Item` is Tier 3 only WITH a -Recurse/-Force
+    # flag, mirroring POSIX `rm` needing `-[rf]` (a bare single-file delete is
+    # not Tier 3). The intervening-token count is bounded ({0,16}?) like the
+    # `rm` long-option rule, so classify stays linear on `Remove-Item
+    # Remove-Item …`. (`rm -Recurse` is already caught by the POSIX `rm\s+-[rf]`
+    # rule via case-insensitivity.)
+    r"remove-item\b(?:\s+\S+){0,16}?\s+-(?:recurse|force)\b|"
+    r"clear-disk|format-volume|initialize-disk|"
+    r"stop-computer|restart-computer|"
+    r"remove-service|remove-localuser|remove-localgroup|clear-eventlog|"
+    # cmd.exe delete/format verbs still reachable from pwsh; require the
+    # recursive/quiet slash-flag (or a drive letter for format) so a bare
+    # `del file.txt` / `Format-Table` does not over-classify.
+    r"(?:del|erase|rd|rmdir)\b(?:\s+\S+){0,8}?\s+/[sq]\b|"
+    r"format(?:\s+/\S+){0,4}\s+[a-z]:|diskpart|vssadmin\s+delete\s+shadows|"
+    r"bcdedit|cipher\s+/w|(?:reg|sc)(?:\.exe)?\s+delete|wevtutil\s+cl"
     r")"
 )
 
@@ -388,9 +417,26 @@ TIER2_PATTERN = re.compile(
     r"crontab|ln\s+-s|mv\s+/|cp\s+-[a-z]*\s+/|sed\s+-i|tee\s+/etc/|"
     r"git\s+(push|commit|merge|rebase)|"
     r"ufw\s+(allow|deny|enable|disable)|"
-    r"ssh-copy-id|>\s*/etc/|>>\s*/etc/"
+    r"ssh-copy-id|>\s*/etc/|>>\s*/etc/|"
+    # --- Windows / PowerShell 7 (ADR 0011, WIN-1) ---
+    # Service control (pwsh cmdlets + sc/net verbs), package install, firewall
+    # changes, registry writes, user/task creation, and execution-policy
+    # changes — the Windows analogues of systemctl / apt / ufw / crontab above.
+    # `sc delete` / `reg delete` are Tier 3 (checked first), so only the
+    # non-destructive verbs land here.
+    r"stop-service|start-service|restart-service|set-service|"
+    r"(?:sc|net)(?:\.exe)?\s+(?:stop|start)\b|"
+    r"install-module|install-package|uninstall-module|uninstall-package|"
+    r"choco\s+(?:install|uninstall)|winget\s+(?:install|uninstall)|"
+    r"(?:remove|disable|set|new)-netfirewallrule|netsh\s+advfirewall|"
+    r"(?:reg|sc)(?:\.exe)?\s+(?:add|config)|new-localuser|"
+    r"register-scheduledtask|unregister-scheduledtask|schtasks\s+/create|"
+    r"set-executionpolicy"
     r")"
 )
 
 # Privilege escalation wrappers should not be treated as low-risk commands.
-PRIV_ESC_PATTERN = re.compile(r"(?ix)\b(sudo|doas|pkexec)\b")
+# `runas` covers both `runas /user:Administrator …` and PowerShell's
+# `Start-Process … -Verb RunAs` (the `RunAs` verb token matches `\brunas\b`
+# case-insensitively) — the Windows analogue of sudo/doas/pkexec (ADR 0011).
+PRIV_ESC_PATTERN = re.compile(r"(?ix)\b(sudo|doas|pkexec|runas)\b")

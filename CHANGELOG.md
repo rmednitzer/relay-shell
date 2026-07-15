@@ -73,6 +73,26 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Windows/PowerShell-7 tier classification** ([ADR 0011](docs/adr/0011-windows-openssh-powershell.md),
+  WIN-1, now Accepted). `TIER3_PATTERN` / `TIER2_PATTERN` / `PRIV_ESC_PATTERN`
+  gained Windows + `pwsh` alternatives so destructive operations on a Windows
+  OpenSSH target classify at the right tier instead of falling through to Tier 1
+  (which escaped `guarded`/`readonly` mode and the ADR 0009 confirmation broker).
+  Tier 3: `Remove-Item -Recurse`/`-Force`, `Clear-Disk`, `Format-Volume`,
+  `Stop-`/`Restart-Computer`, `Remove-Service`/`-LocalUser`/`-LocalGroup`,
+  `Clear-EventLog`, and native `del /s`, `rd /s`, `format <drive>`, `diskpart`,
+  `vssadmin delete shadows`, `bcdedit`, `cipher /w`, `reg delete`, `sc delete`,
+  `wevtutil cl`. Tier 2: `Stop-`/`Set-Service`, `sc`/`net stop`,
+  `Install-Module`/`-Package`, `choco`/`winget install`, firewall
+  (`*-NetFirewallRule`, `netsh advfirewall`), `reg add`, `New-LocalUser`,
+  `Register-ScheduledTask`, `Set-ExecutionPolicy`. Priv-esc: `runas` /
+  `Start-Process -Verb RunAs`. Pure additions — **POSIX classification is
+  byte-identical**; the bounded-gap rules mirror the RED-7 `{0,N}?` ReDoS ceiling
+  (regression test included). `PATTERNS_VERSION` 9→10. Classification stays
+  heuristic (pwsh abbreviation/aliases/pipeline forms can still evade — the deny
+  list and modes remain the hard controls); `docs/deployment.md` §8b documents
+  what works, the caveats, and the UTF-8/native-`.exe` and ConPTY notes. Paired
+  positive/negative pattern tests in `tests/test_patterns.py`.
 - The audit record gains one optional `action` field, written only under the
   confirmation broker (`confirm_plan` / `confirm_execute`); like
   `request_id`/`client_id` it is absent otherwise, so the default configuration's

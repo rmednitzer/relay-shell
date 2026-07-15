@@ -792,19 +792,19 @@ commitment.
   survives the issuing turn — since a model can already sequence verify/rollback
   itself in the attended case. Move ADR 0010 to Accepted with the implementing PR
   when a trigger is real.
-- **WIN-1 (P2)** — first-class support for **Windows targets over OpenSSH with
+- **WIN-1** — first-class support for **Windows targets over OpenSSH with
   PowerShell 7**, per [ADR 0011](adr/0011-windows-openssh-powershell.md)
-  (**Proposed**). Execution + SFTP already work (asyncssh passes the raw command
-  to the remote's own shell); the real gap is that the tier classifier is
+  (**Accepted**). Execution + SFTP already work (asyncssh passes the raw command
+  to the remote's own shell); the gap was that the tier classifier was
   POSIX-only, so pwsh destructive cmdlets (`Remove-Item -Recurse -Force`,
-  `Clear-Disk`, `Stop-Computer`, `Remove-Service`, …) under-classify as Tier 1
-  and escape `guarded`/`readonly` mode and the ADR 0009 broker. Increment **A**
-  (pwsh-aware Tier-2/3 + priv-esc patterns — same anchoring/ReDoS discipline,
-  POSIX byte-identical, `PATTERNS_VERSION` bump, paired FP tests) + **B** (docs)
-  ship first as one PR; **C** (`-Credential`/`-AsPlainText` redaction) is a small
-  follow-up; encoding/PTY are documented caveats (pwsh is UTF-8 by default, so no
-  encoding feature is needed). No command/path translation layer, no new
-  transport/tool. Classification stays heuristic (ADR 0003).
+  `Clear-Disk`, `Stop-Computer`, `Remove-Service`, …) under-classified as Tier 1
+  and escaped `guarded`/`readonly` mode and the ADR 0009 broker. Increments
+  **A** (pwsh-aware Tier-2/3 + priv-esc patterns — same anchoring/ReDoS
+  discipline, POSIX byte-identical, `PATTERNS_VERSION` 9→10, paired FP tests) +
+  **B** (docs §8b) **landed**. Remaining follow-up (P3): **C** —
+  `-Credential`/`-AsPlainText` redaction coverage. Encoding/PTY (D/E) stay
+  documented caveats (pwsh is UTF-8 by default). No command/path translation
+  layer, no new transport/tool. Classification stays heuristic (ADR 0003).
 
 ### 7.2 Quality + automation
 

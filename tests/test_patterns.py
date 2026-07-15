@@ -489,6 +489,139 @@ def test_tier_anchor_catches_nonword_start_alternatives() -> None:
     assert classify("shell_exec", "ls -la") == Tier.REVERSIBLE
 
 
+def test_windows_pwsh_tier3_positive_and_negative() -> None:
+    # WIN-1 / ADR 0011: destructive PowerShell-7 cmdlets and cmd.exe verbs on a
+    # Windows OpenSSH target must classify Tier 3, not fall through to Tier 1
+    # (which would escape guarded/readonly mode and the ADR 0009 broker).
+    def c(s: str) -> str:
+        return policy.classify("ssh_exec", s).name
+
+    for s in (
+        # pwsh cmdlets (Remove-Item is Tier 3 only WITH -Recurse/-Force).
+        r"Remove-Item -Recurse -Force C:\data",
+        r"Remove-Item C:\logs -Recurse",
+        r"Remove-Item -Path C:\x -Force",
+        "Clear-Disk -Number 1",
+        "Format-Volume -DriveLetter D",
+        "Initialize-Disk 2",
+        "Stop-Computer",
+        "Restart-Computer -Force",
+        "Remove-Service -Name Foo",
+        "Remove-LocalUser bob",
+        "Remove-LocalGroup admins",
+        "Clear-EventLog -LogName System",
+        # cmd.exe verbs reachable from pwsh (need the recursive/quiet flag).
+        r"del /s /q C:\temp",
+        r"del C:\temp /q",
+        r"rd /s C:\x",
+        r"rmdir /s /q C:\x",
+        "format C:",
+        "format /q /fs:ntfs D:",
+        "diskpart",
+        "vssadmin delete shadows /all",
+        "bcdedit /set {default} recoveryenabled No",
+        "cipher /w:C:",
+        r"reg delete HKLM\Software\Foo /f",
+        "reg.exe delete HKCU\\Foo",
+        "sc delete Spooler",
+        "wevtutil cl System",
+    ):
+        assert c(s) == "IRREVERSIBLE", s
+
+    # Negatives: benign look-alikes must NOT over-classify to Tier 3.
+    for s in (
+        "Format-Table -AutoSize",  # formatting cmdlet, not disk format
+        "Format-List Name",
+        "Get-ChildItem -Recurse",  # a read, even with -Recurse
+        r"Remove-Item single.txt",  # single-file delete, no -Recurse/-Force (parity with `rm file`)
+        "format the report for A:",  # prose, not `format <drive>`
+        "echo the Model del entry",  # `del` as a substring / no /s|/q
+        r"del C:\onefile.txt",  # single delete, no /s or /q flag
+        "Get-Service Spooler",  # read
+        "Get-Item C:\\x",
+    ):
+        assert c(s) != "IRREVERSIBLE", s
+
+
+def test_windows_pwsh_tier2_positive_and_negative() -> None:
+    # WIN-1: stateful Windows operations (service control, package install,
+    # firewall/registry changes, user/task creation, execution policy) classify
+    # Tier 2 — the Windows analogues of systemctl / apt / ufw / crontab.
+    def c(s: str) -> str:
+        return policy.classify("ssh_exec", s).name
+
+    for s in (
+        "Stop-Service Spooler",
+        "Start-Service W32Time",
+        "Restart-Service Spooler",
+        "Set-Service Foo -StartupType Disabled",
+        "sc stop Spooler",
+        "sc.exe start Spooler",
+        "net stop Spooler",
+        "net start W32Time",
+        "Install-Module Pester",
+        "Install-Package Foo",
+        "Uninstall-Module Foo",
+        "choco install git",
+        "winget install Vim.Vim",
+        "Remove-NetFirewallRule -Name X",
+        "Disable-NetFirewallRule -Name X",
+        "New-NetFirewallRule -DisplayName X -Action Allow",
+        "netsh advfirewall set allprofiles state off",
+        r"reg add HKLM\Software\Foo /v Bar /d 1",
+        "sc config Spooler start= disabled",
+        "New-LocalUser bob",
+        "Register-ScheduledTask -TaskName X",
+        "schtasks /create /tn X /tr foo.exe /sc daily",
+        "Set-ExecutionPolicy Bypass -Scope Process",
+    ):
+        assert c(s) == "STATEFUL", s
+
+    # Negatives: read-only counterparts must stay low.
+    for s in (
+        "Get-Service Spooler",
+        "Get-NetFirewallRule",
+        "Get-LocalUser",
+        "Get-ScheduledTask",
+        "Get-ExecutionPolicy",
+        "winget list",
+        "choco list --local-only",
+    ):
+        assert c(s) == "REVERSIBLE", s
+
+
+def test_windows_runas_priv_esc() -> None:
+    # WIN-1: `runas` is the Windows sudo/doas/pkexec analogue, and it also
+    # covers PowerShell's `Start-Process -Verb RunAs` (the RunAs verb token
+    # matches \brunas\b case-insensitively). Privilege escalation bumps to
+    # Tier 2 via PRIV_ESC_PATTERN.
+    def c(s: str) -> str:
+        return policy.classify("ssh_exec", s).name
+
+    assert c("runas /user:Administrator cmd.exe") == "STATEFUL"
+    assert c("Start-Process pwsh -Verb RunAs") == "STATEFUL"
+    # Negative: a word merely containing "runas" must not trip \brunas\b.
+    assert c("echo runasteroid") == "REVERSIBLE"
+
+
+def test_windows_classification_is_redos_bounded() -> None:
+    # WIN-1 regression: the bounded-gap Windows rules (`Remove-Item …
+    # -Recurse`, `del … /s`, `format … <drive>`) use the same `{0,N}?` ceiling
+    # as the RED-7 `rm` long-option rule, so classify stays linear on a large
+    # argument that repeats the verb with no destructive flag to find.
+    import time
+
+    for payload in (
+        "Remove-Item " * 100000,  # ~1.2 MB, never a -Recurse/-Force
+        "del " * 200000,  # ~0.8 MB, never a /s or /q
+        "format " * 200000,  # never a drive letter
+    ):
+        t0 = time.perf_counter()
+        policy.classify("ssh_exec", payload)
+        elapsed = time.perf_counter() - t0
+        assert elapsed < 3.0, f"classify() took {elapsed:.1f}s — possible ReDoS regression"
+
+
 def test_redaction_compound_keyword_assignments() -> None:
     # RED-1 (adversarial audit): a secret keyword that is the suffix of a
     # compound name (DB_PASSWORD=, APP_SECRET=, API_TOKEN=) is preceded by `_`,
