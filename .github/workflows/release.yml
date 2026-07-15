@@ -3,8 +3,9 @@ name: release
 # Build + publish on a signed `v*` tag using PyPI trusted publishing
 # (OIDC, no long-lived token). The flow has three gated jobs:
 #
-#   1. verify     - the tag is annotated, GPG/SSH-signed and verified by
-#                   GitHub, and matches the version declared in pyproject.toml
+#   1. verify     - the tag is annotated, SSH-signed against the trusted key
+#                   in deploy/release-signing.pub, and matches the version
+#                   declared in pyproject.toml
 #   2. build      - dev install, full test suite on the package floor
 #                   (Python 3.12; per-PR CI already exercises 3.13/3.14),
 #                   then `python -m build` to produce wheel + sdist
@@ -71,7 +72,7 @@ jobs:
           ref: ${{ steps.tag.outputs.tag }}
           fetch-depth: 0
           # No step after checkout uses git auth (the tag signature is
-          # verified via the REST API with an explicit GH_TOKEN, and the
+          # verified locally against deploy/release-signing.pub, and the
           # version check reads the working tree), so do not persist the
           # token in .git/config (CI-2 finding; matches the SEC-2 posture).
           persist-credentials: false
@@ -90,38 +91,35 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "OK: tag $TAG matches pyproject version $version"
 
-      - name: Verify tag signature via GitHub API
+      - name: Verify tag signature locally
         id: verify_tag
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
-          ref=$(curl -fsS -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/$REPO/git/ref/tags/$TAG")
-          obj_type=$(printf '%s' "$ref" | jq -r '.object.type')
+          # Ensure the tag object is annotated (not lightweight)
+          obj_type=$(git cat-file -t "refs/tags/$TAG")
           if [ "$obj_type" != "tag" ]; then
             echo "ERROR: $TAG is a lightweight tag; release tags MUST be annotated and signed" >&2
             exit 1
           fi
-          obj_sha=$(printf '%s' "$ref" | jq -r '.object.sha')
-          tag_obj=$(curl -fsS -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/$REPO/git/tags/$obj_sha")
-          ver=$(printf '%s' "$tag_obj" | jq -r '.verification')
-          verified=$(printf '%s' "$ver" | jq -r '.verified')
-          reason=$(printf '%s' "$ver" | jq -r '.reason')
-          if [ "$verified" != "true" ]; then
-            echo "ERROR: $TAG signature not verified by GitHub (reason: $reason)" >&2
+          # Configure the trusted release-signing key for SSH signature verification.
+          # deploy/release-signing.pub holds the authorized signer(s) in OpenSSH
+          # allowed_signers format (principal SP keytype SP base64-key).
+          git config gpg.ssh.allowedSignersFile "$(pwd)/deploy/release-signing.pub"
+          # Verify the tag signature against the trusted key set
+          if ! git tag -v "$TAG"; then
+            echo "ERROR: $TAG signature verification failed" >&2
             exit 1
           fi
-          release_commit=$(printf '%s' "$tag_obj" | jq -r '.object.sha')
-          if [ -z "$release_commit" ] || [ "$release_commit" = "null" ]; then
+          # Extract the peeled commit SHA
+          release_commit=$(git rev-list -n1 "${TAG}^{}")
+          if [ -z "$release_commit" ]; then
             echo "ERROR: could not resolve peeled commit for $TAG" >&2
             exit 1
           fi
           echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
-          echo "OK: $TAG is a signed annotated tag, verified ($reason); release commit $release_commit"
+          echo "OK: $TAG is a signed annotated tag (verified locally); release commit $release_commit"
 
   build:
     name: Build wheel + sdist
