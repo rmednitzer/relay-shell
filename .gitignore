@@ -14,6 +14,9 @@ venv/
 .coverage.*
 htmlcov/
 
+# MkDocs build output
+site/
+
 # Runtime state / secrets (NEVER commit)
 *.env
 .env
