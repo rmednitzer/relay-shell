@@ -31,6 +31,20 @@ All notable changes to this project are documented here. The format follows
 - `operation_confirm` MCP tool (Tier 0) — arms a confirmation token for the
   broker above. Documented in `docs/tools.md`, the README capability tables, and
   `_INSTRUCTIONS`.
+- **[ADR 0010](docs/adr/0010-rollback-verify-broker.md) (Proposed)** — design of
+  record for the rollback/verify pairing (BRK-2) deferred from ADR 0009. Converts
+  the vague "needs an ADR" backlog item into a concrete decision: **defer**,
+  with the seven invariants any implementation must hold (chiefly: rollback and
+  verify are themselves fully deny-list/tier-gated commands, never a policy-bypass
+  channel; bound into the confirmation identity so a token can't execute with a
+  swapped rollback; three distinct audit records; a bounded, non-recursive loop)
+  and the concrete triggers — an autonomous/unattended deployment, or an operator
+  ask for operation-bound remediation that survives the issuing turn — that would
+  move it to Accepted. Rationale: a model in the attended case can already
+  sequence verify/rollback as ordinary policy-checked, audited calls, so the
+  marginal value is low until a trigger is real. Docs only; no code, no new tool,
+  no audit-shape change. Indexed in `docs/adr/README.md`, `mkdocs.yml`, and
+  runbook §7.1/§8.18.
 - Regression coverage + operator guidance for **interactive-input classification**.
   `session_send`'s written bytes flow through the same tier scan as a one-shot
   command (via `_policy_text_session_send`), so a destructive keystroke payload
