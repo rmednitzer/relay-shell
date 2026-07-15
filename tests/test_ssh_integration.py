@@ -566,6 +566,65 @@ async def test_connection_cache_idle_timeout_zero_disables_eviction(
         await pool.close_all()
 
 
+async def test_live_pty_session_connection_survives_idle_sweep(
+    ssh_port: int, tmp_path: Path
+) -> None:
+    """A live ``ssh_spawn`` session pins its connection against the idle reaper.
+
+    End-to-end regression through the real asyncssh stack for the
+    idle-reaper-vs-in-use bug: a spawned session drives its channel directly
+    and never re-``connect()``s, so its cache entry ages past the idle window
+    while the session is very much alive. Before the pin-count fix the next
+    sweep evicted and closed the connection out from under the running
+    session. With the fix the pinned entry survives the sweep, and only
+    becomes evictable once the session's transport is closed.
+    """
+    settings = Settings(
+        audit_path=str(tmp_path / "a.jsonl"),
+        ssh_known_hosts="ignore",
+        ssh_connect_timeout=5,
+        ssh_keepalive=0,
+        ssh_idle_timeout=1,  # one-second window so the test runs fast
+        ssh_config=str(tmp_path / "none"),
+    )
+    inv = Inventory(settings.ssh_config, "").load()
+    pool = SshPool(settings=settings, inventory=inv)
+    reg = SessionRegistry(8, 60, 65536)
+    try:
+        tr = await pool.open_process(
+            "127.0.0.1", command="", cols=80, rows=24, connect_kwargs=_ck(ssh_port)
+        )
+        sess = await reg.add(kind="ssh", title="t", transport=tr, cols=80, rows=24)
+        assert len(pool._conns) == 1
+        key = next(iter(pool._conns))
+        assert pool._conns[key].pins == 1, "the live session must pin its connection"
+
+        # Age the entry well past the idle window and sweep. The pin holds.
+        pool._conns[key].last_used -= 1000
+        await pool._sweep_conns()
+        assert key in pool._conns, "pinned session connection must survive the sweep"
+        assert not pool._conns[key].conn.is_closed(), "connection must stay open"
+
+        # The session is still usable across the sweep: input still echoes.
+        await reg.send(sess.id, b"hello\n")
+        echoed = ""
+        for _ in range(10):
+            echoed += await reg.recv(sess.id, timeout=0.5, max_bytes=4096)
+            if "echo:hello" in echoed:
+                break
+        assert "echo:hello" in echoed, "session must remain live after the idle sweep"
+
+        # Closing the session releases the pin; the now-idle entry is reaped.
+        await reg.close(sess.id)
+        assert pool._conns[key].pins == 0, "closing the session must release the pin"
+        pool._conns[key].last_used -= 1000
+        await pool._sweep_conns()
+        assert key not in pool._conns, "connection is evictable once the session closes"
+    finally:
+        await reg.shutdown()
+        await pool.close_all()
+
+
 async def test_connection_cache_sweep_treats_is_closed_exception_as_closed(
     ssh_port: int, tmp_path: Path
 ) -> None:

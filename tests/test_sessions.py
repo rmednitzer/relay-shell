@@ -125,6 +125,43 @@ async def test_session_recv_ended_message_shape_without_exit() -> None:
         await reg.shutdown()
 
 
+async def test_active_recv_waiter_not_reaped_by_idle_sweep() -> None:
+    """A session with a live ``recv()`` waiter is in use and must survive the sweep.
+
+    Regression for the idle-reaper-vs-in-use bug: ``recv`` refreshed
+    ``last_used`` only at entry, so a long poll (``timeout`` > the registry
+    idle timeout) let the session age past idle *while a client was blocked
+    waiting on it*. A concurrent ``_sweep`` (fired by ``list``) then tore the
+    session down out from under the waiter — the client is killed precisely
+    because it is waiting. With the waiter guard the sweep skips any session
+    with ``_waiters > 0``.
+    """
+    # idle_timeout=1s; the recv below polls for 3s — longer than idle.
+    reg = SessionRegistry(max_sessions=8, idle_timeout=1, buffer_cap=65536)
+    try:
+        sid = await _spawn(reg, ["/bin/cat"])  # stays alive, produces no output
+        recv_task = asyncio.create_task(reg.recv(sid, timeout=3.0, max_bytes=4096))
+        # Let recv start long-polling and register itself as a waiter.
+        await asyncio.sleep(0.1)
+        assert reg._sessions[sid]._waiters == 1, "recv must mark the session in-use"
+
+        # Wait past the idle window, then trigger a sweep via list().
+        await asyncio.sleep(1.3)
+        listed = await reg.list()
+        assert any(s["id"] == sid for s in listed), (
+            "session with a live recv waiter must not be idle-reaped"
+        )
+        assert sid in reg._sessions
+
+        # The waiter runs to its own timeout and returns empty — NOT an
+        # 'ended' sentinel, which is what a mid-wait teardown would inject.
+        out = await recv_task
+        assert out == "", f"waiter should time out cleanly, got {out!r}"
+        assert reg._sessions[sid]._waiters == 0, "waiter count released on return"
+    finally:
+        await reg.shutdown()
+
+
 async def test_pty_spawn_failure_does_not_leak_master_fd() -> None:
     """A failed PTY spawn must release both pty ends, not just the slave.
 

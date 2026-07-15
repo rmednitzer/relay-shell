@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,10 @@ class ForwardHandle:
     listen_port: int
     target: str
     listener: Any
+    # The cached-connection entry this forward pins in use; released in
+    # close_forward so the idle reaper cannot evict a connection while a
+    # forward is still listening on it.
+    entry: _ConnEntry | None = None
 
 
 @dataclass
@@ -62,13 +67,30 @@ class _ConnEntry:
 
     conn: Any
     last_used: float = field(default_factory=time.monotonic)
+    # How many live holders (an ssh_spawn session, a port forward, an in-flight
+    # run/transfer) are currently using this connection. The idle reaper never
+    # evicts an entry with pins > 0 — the connection is in active use even if
+    # nothing has re-`connect()`ed to it recently (a long-lived holder connects
+    # once and drives channels directly, never refreshing the cache).
+    pins: int = 0
 
 
 class SshProcessTransport:
     """Adapts an asyncssh remote process to the session ``Transport``."""
 
-    def __init__(self, proc: Any) -> None:
+    def __init__(
+        self,
+        proc: Any,
+        *,
+        pool: SshPool | None = None,
+        entry: _ConnEntry | None = None,
+    ) -> None:
         self._p = proc
+        # The pool + cache entry backing this session's connection, pinned for
+        # the session's lifetime and released in ``aclose`` (both optional so a
+        # test can still build a bare transport around a fake process).
+        self._pool = pool
+        self._entry = entry
 
     async def write(self, data: bytes) -> None:
         with contextlib.suppress(Exception):
@@ -100,10 +122,17 @@ class SshProcessTransport:
             sink(data if isinstance(data, bytes) else str(data).encode("utf-8", "replace"))
 
     async def aclose(self) -> None:
-        with contextlib.suppress(Exception):
-            self._p.terminate()
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(self._p.wait_closed(), 5)
+        try:
+            with contextlib.suppress(Exception):
+                self._p.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self._p.wait_closed(), 5)
+        finally:
+            # Release the connection pin even if terminate/wait_closed raised,
+            # so a session that fails to close cleanly cannot pin its
+            # connection against the idle reaper forever.
+            if self._pool is not None:
+                await self._pool._unpin(self._entry)
 
 
 @dataclass
@@ -138,11 +167,52 @@ class SshPool:
                     closed = entry.conn.is_closed()
                 except Exception:  # noqa: BLE001 - defensive: treat as closed
                     closed = True
-                if closed or (timeout > 0 and now - entry.last_used > timeout):
+                # A pinned entry is in active use (a session / forward / in-flight
+                # transfer holds it); never idle-evict it. A *closed* connection
+                # is dead regardless of pins, so still purge it so a re-connect
+                # does not return a dead handle.
+                idle_evict = timeout > 0 and entry.pins == 0 and now - entry.last_used > timeout
+                if closed or idle_evict:
                     doomed.append(self._conns.pop(key).conn)
         for conn in doomed:
             with contextlib.suppress(Exception):
                 conn.close()
+
+    async def _pin(self, conn: Any) -> _ConnEntry | None:
+        """Pin the cached entry backing ``conn`` so the idle reaper cannot evict
+        it while a caller is still using it. Returns the entry (pass it to
+        :meth:`_unpin` on release) or ``None`` if ``conn`` is not the cached
+        connection — a detached connection the reaper cannot touch anyway.
+        """
+        async with self._lock:
+            for entry in self._conns.values():
+                if entry.conn is conn:
+                    entry.pins += 1
+                    entry.last_used = time.monotonic()
+                    return entry
+        return None
+
+    async def _unpin(self, entry: _ConnEntry | None) -> None:
+        """Release a pin taken by :meth:`_pin` (a no-op for ``None``)."""
+        if entry is None:
+            return
+        async with self._lock:
+            if entry.pins > 0:
+                entry.pins -= 1
+            entry.last_used = time.monotonic()
+
+    @contextlib.asynccontextmanager
+    async def _pinned(self, conn: Any) -> AsyncIterator[None]:
+        """Pin ``conn``'s cache entry for the duration of a scoped operation
+        (``run`` / SFTP transfer) so a concurrent idle sweep cannot close the
+        connection mid-use. Long-lived holders (sessions, forwards) pin
+        explicitly instead, releasing on their own close.
+        """
+        entry = await self._pin(conn)
+        try:
+            yield
+        finally:
+            await self._unpin(entry)
 
     def _known_hosts_arg(self, mode: str) -> object:
         if mode not in _KNOWN_HOSTS_MODES:
@@ -274,6 +344,10 @@ class SshPool:
         max_output_bytes: int | None = None,
     ) -> tuple[str, int | None]:
         conn = await self.connect(target, **connect_kwargs)
+        # No explicit pin here: `timeout` is required and the caller clamps it
+        # to <= max_timeout, which is below the default idle timeout, so a run
+        # cannot outlive the idle window and be evicted mid-flight. (Sessions,
+        # forwards, and timeout=0 SFTP transfers are unbounded, so those pin.)
         # Both code paths now use the same explicit-create_process +
         # terminate-on-timeout cleanup so a TimeoutError never leaves a
         # remote process parked on the SSH connection. The bounded path
@@ -365,7 +439,11 @@ class SshPool:
             term_size=(cols, rows),
             encoding=None,
         )
-        return SshProcessTransport(proc)
+        # An ssh_spawn session lives indefinitely and drives the channel
+        # directly (never re-connecting), so pin the connection for the
+        # session's lifetime; the transport releases it in aclose().
+        entry = await self._pin(conn)
+        return SshProcessTransport(proc, pool=self, entry=entry)
 
     async def sftp_put(
         self,
@@ -378,20 +456,27 @@ class SshPool:
         timeout: int = 0,
     ) -> str:
         conn = await self.connect(target, **connect_kwargs)
-        async with conn.start_sftp_client() as sftp:
-            transfer = sftp.put(local, remote, recurse=recurse, preserve=True)
-            # ``timeout`` is a per-call cap on the transfer itself (the
-            # connection-level keepalive is the only other bound). 0 disables
-            # it. On a hung transfer wait_for cancels the in-flight put; the
-            # sftp client is closed by the context manager on the way out.
-            if timeout > 0:
-                try:
-                    await asyncio.wait_for(transfer, timeout)
-                except TimeoutError:
-                    return f"[TIMEOUT after {timeout}s] partial upload {local} -> {target}:{remote}"
-            else:
-                await transfer
-        return f"uploaded {local} -> {target}:{remote}"
+        # Pin for the transfer's duration: with timeout=0 an SFTP transfer is
+        # bounded only by connection keepalive, so a long upload must not be
+        # idle-evicted out from under itself.
+        async with self._pinned(conn):
+            async with conn.start_sftp_client() as sftp:
+                transfer = sftp.put(local, remote, recurse=recurse, preserve=True)
+                # ``timeout`` is a per-call cap on the transfer itself (the
+                # connection-level keepalive is the only other bound). 0 disables
+                # it. On a hung transfer wait_for cancels the in-flight put; the
+                # sftp client is closed by the context manager on the way out.
+                if timeout > 0:
+                    try:
+                        await asyncio.wait_for(transfer, timeout)
+                    except TimeoutError:
+                        return (
+                            f"[TIMEOUT after {timeout}s] partial upload "
+                            f"{local} -> {target}:{remote}"
+                        )
+                else:
+                    await transfer
+            return f"uploaded {local} -> {target}:{remote}"
 
     async def sftp_get(
         self,
@@ -404,18 +489,20 @@ class SshPool:
         timeout: int = 0,
     ) -> str:
         conn = await self.connect(target, **connect_kwargs)
-        async with conn.start_sftp_client() as sftp:
-            transfer = sftp.get(remote, local, recurse=recurse, preserve=True)
-            if timeout > 0:
-                try:
-                    await asyncio.wait_for(transfer, timeout)
-                except TimeoutError:
-                    return (
-                        f"[TIMEOUT after {timeout}s] partial download {target}:{remote} -> {local}"
-                    )
-            else:
-                await transfer
-        return f"downloaded {target}:{remote} -> {local}"
+        async with self._pinned(conn):  # see sftp_put: unbounded when timeout=0
+            async with conn.start_sftp_client() as sftp:
+                transfer = sftp.get(remote, local, recurse=recurse, preserve=True)
+                if timeout > 0:
+                    try:
+                        await asyncio.wait_for(transfer, timeout)
+                    except TimeoutError:
+                        return (
+                            f"[TIMEOUT after {timeout}s] partial download "
+                            f"{target}:{remote} -> {local}"
+                        )
+                else:
+                    await transfer
+            return f"downloaded {target}:{remote} -> {local}"
 
     @staticmethod
     def _parse_forward_spec(spec: str) -> tuple[str, int, str, int]:
@@ -464,30 +551,41 @@ class SshPool:
                     f"forward limit reached ({cap}); close an existing forward first"
                 )
         conn = await self.connect(target, **connect_kwargs)
-        fid = gen_id("fwd")
-        if kind == "L":
-            listener = await conn.forward_local_port("", lport, dhost, dport)
-            handle = ForwardHandle(
-                fid, "local", spec, listener.get_port(), f"{dhost}:{dport}", listener
-            )
-        elif kind == "R":
-            listener = await conn.forward_remote_port("", lport, dhost, dport)
-            handle = ForwardHandle(
-                fid, "remote", spec, listener.get_port(), f"{dhost}:{dport}", listener
-            )
-        else:  # D (validated above)
-            listener = await conn.forward_socks("", lport)
-            handle = ForwardHandle(fid, "dynamic", spec, listener.get_port(), "socks", listener)
-        async with self._lock:
-            if len(self._forwards) >= cap:
-                with contextlib.suppress(Exception):
-                    listener.close()
-                    await listener.wait_closed()
-                raise ForwardError(
-                    f"forward limit reached ({cap}); close an existing forward first"
+        # A forward listens indefinitely on the connection, so pin it for the
+        # forward's lifetime (released in close_forward). Unpin on any failure
+        # before the handle is tracked, so a listener error or a lost cap race
+        # never leaks a pin that would keep the connection alive forever.
+        entry = await self._pin(conn)
+        try:
+            fid = gen_id("fwd")
+            if kind == "L":
+                listener = await conn.forward_local_port("", lport, dhost, dport)
+                handle = ForwardHandle(
+                    fid, "local", spec, listener.get_port(), f"{dhost}:{dport}", listener, entry
                 )
-            self._forwards[fid] = handle
-        return handle
+            elif kind == "R":
+                listener = await conn.forward_remote_port("", lport, dhost, dport)
+                handle = ForwardHandle(
+                    fid, "remote", spec, listener.get_port(), f"{dhost}:{dport}", listener, entry
+                )
+            else:  # D (validated above)
+                listener = await conn.forward_socks("", lport)
+                handle = ForwardHandle(
+                    fid, "dynamic", spec, listener.get_port(), "socks", listener, entry
+                )
+            async with self._lock:
+                if len(self._forwards) >= cap:
+                    with contextlib.suppress(Exception):
+                        listener.close()
+                        await listener.wait_closed()
+                    raise ForwardError(
+                        f"forward limit reached ({cap}); close an existing forward first"
+                    )
+                self._forwards[fid] = handle
+            return handle
+        except BaseException:
+            await self._unpin(entry)
+            raise
 
     def list_forwards(self) -> list[dict[str, object]]:
         return [
@@ -513,6 +611,8 @@ class SshPool:
         with contextlib.suppress(Exception):
             handle.listener.close()
             await handle.listener.wait_closed()
+        # Release the connection pin now that this forward no longer uses it.
+        await self._unpin(handle.entry)
         return f"closed forward {fid}"
 
     async def close_all(self) -> None:
