@@ -202,6 +202,19 @@ tools) are not part of the binding: they change *how* the relay connects, not
 *what* audited operation runs against *which* target, so a change to them alone
 (same host + same command) is out of scope for the confirmation identity.
 
+### 2026-07-15 follow-up: SSH identity folded into the binding (BRK-3)
+
+The adversarial pass (`audit/2026-07-15-adversarial-engagement.md`) reversed the
+"out of scope" call above. A concrete escalation makes it matter: confirm
+`ssh_exec(host, "DROP DATABASE prod", user=readonly)`, arm, then re-issue with
+`user=root` — same host+command, so the op-key matched and the token was
+consumed against the escalated credential, invisible in the `confirm_plan`
+record. The fix adds `user`/`port`/`key_path` to the `ssh_exec`/`ssh_spawn`
+audit_args, which (since the op-key hashes `audit_args`) folds them into the
+binding **and** surfaces the credential in the audit trail — a strictly better
+outcome than the original scoping. Pinned by
+`test_confirm_op_key_binds_ssh_identity`.
+
 No change to policy admission, tier semantics, the no-sandbox posture, or any
 existing tool's response shape. This pass added a compensating control layered
 on ADR 0003's classification; it did not move the trust boundary.

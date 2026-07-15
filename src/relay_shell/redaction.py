@@ -6,7 +6,8 @@ output *body* is never logged at all (only its hash); this module covers the
 *argument* surface, where a caller might pass a token or key inline.
 
 Scope is deliberately bounded. The patterns target well-defined syntaxes:
-PEM blocks, ``Authorization`` headers, ``Bearer``/``key=value`` pairs,
+PEM blocks, ``Authorization`` headers, ``Bearer``/``key=value`` pairs
+(including the JSON-quoted-key shape ``"password": "x"`` — RED-6),
 long-name CLI flags - matching either a double dash (``--password=...``,
 ``--token VALUE``) or the single-dash long-name style some Go-flavored
 tools use (``-token=foo``, ``-password VALUE``), including quoted values
@@ -63,10 +64,29 @@ def redact(text: str) -> str:
     return out
 
 
+# P1 (2026-07-15 perf pass): `_scrub_str` keeps only the first `max_len` chars
+# of the redacted result, so a secret that survives truncation must *start*
+# within the first `max_len` chars — and therefore ends within `max_len` plus
+# the longest redactable span. The longest such span is a PEM block, whose body
+# `patterns.py` length-bounds to 8 KB (RED-2); this margin sits comfortably
+# above it. Scanning only that window — instead of running the ~two-dozen-regex
+# table over a multi-MB `command`/`stdin`/`env_json` argument synchronously on
+# `Relay.run`'s hot path — removes the dominant per-call CPU cost with **no**
+# change to what gets redacted: the dropped tail is truncated out of the audit
+# record regardless, so it can never leak a secret this would otherwise catch.
+_REDACT_SCAN_MARGIN = 16384
+
+
 def _scrub_str(text: str, max_len: int) -> str:
-    red = redact(text)
-    if len(red) > max_len:
-        red = red[:max_len] + f"...(+{len(red) - max_len})"
+    scanned = text[: max_len + _REDACT_SCAN_MARGIN]
+    red = redact(scanned)
+    overflow = len(red) - max_len  # redacted chars beyond the cap (scanned part)
+    tail = len(text) - len(scanned)  # unscanned original chars (all dropped)
+    if overflow > 0 or tail > 0:
+        # For any input up to the scan window (every realistic argument) this is
+        # byte-identical to the pre-P1 output; beyond it the count also reflects
+        # the unscanned tail so the "+N" hint is never misleadingly small.
+        red = red[:max_len] + f"...(+{max(overflow, 0) + tail})"
     return red
 
 
