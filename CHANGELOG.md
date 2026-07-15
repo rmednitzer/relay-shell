@@ -6,8 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-15
+
 ### Added
 
+- **Documentation site** at <https://rmednitzer.github.io/relay-shell/>, built
+  from `docs/` with MkDocs Material (dark theme) and deployed by the `docs.yml`
+  workflow. The README, runbook, ADRs, tool reference, and deployment guide now
+  render as a browsable site alongside the in-repo Markdown.
+- **Deploy-host integrity + config-drift monitoring guidance** (`docs/deployment.md`
+  §3a) — etckeeper / AIDE / fail2ban / lynis pointers as a detection layer that
+  compensates for the intentionally-partial systemd confinement (ADR 0002).
 - `audit_tail` gained read-only triage filters — `tool` (exact name), `tier`
   (`0`..`3`), and `denied` (`true`/`false`) — so an operator MCP client can
   narrow the scanned window (e.g. only denied calls, or only `shell_exec`)
@@ -73,6 +82,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Pinned dependency bump:** `mcp` 1.27.2 → 1.28.1 and `asyncssh` 2.23.1 →
+  2.24.0 (`pyproject.toml` / `requirements.txt`). The living docs (README
+  status line + compatibility matrix, `docs/architecture.md`) were reconciled to
+  `mcp==1.28.1` / `asyncssh==2.24.0` in the same window (DOC-1); frozen ADR/older
+  CHANGELOG bodies are left as-authored by convention.
 - **Windows/PowerShell-7 tier classification** ([ADR 0011](docs/adr/0011-windows-openssh-powershell.md),
   WIN-1, now Accepted). `TIER3_PATTERN` / `TIER2_PATTERN` / `PRIV_ESC_PATTERN`
   gained Windows + `pwsh` alternatives so destructive operations on a Windows
@@ -1211,6 +1225,7 @@ All notable changes to this project are documented here. The format follows
   bundled logrotate config drops and restores the append-only attribute
   across rotation. See `docs/deployment.md` §6.
 
-[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/rmednitzer/relay-shell/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/rmednitzer/relay-shell/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/rmednitzer/relay-shell/releases/tag/v0.1.0

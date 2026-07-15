@@ -147,9 +147,14 @@ tiered policy) with host-level detection.
 
 ## 4. Network edge (HTTP transport)
 
-The HTTP transport binds `127.0.0.1` by design. Terminate TLS and restrict by
-source IP at a reverse proxy. `deploy/Caddyfile` is shipped parameterized
-through environment variables and provides:
+The HTTP transport binds `RELAY_SHELL_HTTP_HOST:RELAY_SHELL_HTTP_PORT`, which
+defaults to `127.0.0.1:8080` — loopback by design, so a reverse proxy (below)
+is the only thing that should face the network. You can retarget the bind (a
+different loopback port, a container's internal interface), but do **not** bind
+a non-loopback address without the edge protections here — the service stands up
+no TLS or source-IP filtering of its own. Terminate TLS and restrict by source
+IP at a reverse proxy. `deploy/Caddyfile` is shipped parameterized through
+environment variables and provides:
 
 - automatic TLS via ACME (Let's Encrypt by default, ZeroSSL fallback),
 - an `@blocked` matcher that 403s any source outside the allowlisted CIDRs,
@@ -461,6 +466,26 @@ Administering **Windows hosts over OpenSSH with PowerShell 7 (`pwsh`) as the
   SSH `signal` request may be unimplemented, so `session_kill` degrades to a
   best-effort channel close rather than a delivered signal.
 
+### 8c. Settings reference
+
+This document covers the deployment-shaping settings; the **complete, annotated
+list of every `RELAY_SHELL_*` knob** is [`.env.example`](https://github.com/rmednitzer/relay-shell/blob/main/.env.example)
+(one commented line per `Settings` field). A few operator-relevant ones not
+covered above:
+
+- **HTTP listener:** `RELAY_SHELL_HTTP_HOST` / `RELAY_SHELL_HTTP_PORT` (default
+  `127.0.0.1:8080`; see §4).
+- **Resource bounds:** `RELAY_SHELL_MAX_OUTPUT` / `_MAX_OUTPUT_HARD` (output
+  caps), `RELAY_SHELL_DEFAULT_TIMEOUT` / `_MAX_TIMEOUT` (per-call timeout +
+  clamp), `RELAY_SHELL_MAX_SESSIONS` / `_MAX_FORWARDS` (concurrency caps),
+  `RELAY_SHELL_SESSION_IDLE_TIMEOUT` / `_SESSION_BUFFER_BYTES` (PTY session
+  reaping + per-session buffer).
+- **SSH connect tuning:** `RELAY_SHELL_SSH_CONNECT_TIMEOUT` / `_SSH_KEEPALIVE`
+  (dial timeout + keepalive; `_SSH_IDLE_TIMEOUT` for the pool reaper is in §7).
+- **Audit sink:** `RELAY_SHELL_AUDIT_STDERR` (also mirror audit lines to stderr).
+
+Tuning guidance for the bounds lives in [`runbook.md`](runbook.md) §7.
+
 ## 9. Health
 
 `scripts/healthcheck.sh` checks the local HTTP port. For stdio, liveness is
@@ -486,9 +511,12 @@ for what happened; metrics are for dashboards only and reset on restart.
 | `relay_shell_active_forwards`                | gauge   | Live SSH port forwards.                                             |
 | `relay_shell_audit_degraded`                 | gauge   | 1 if the audit sink is degraded, 0 otherwise. Should always be 0.   |
 
-`outcome` is one of `ok` (work returned), `denied` (policy refused), or
-`error` (work raised). Combine `mode + tier + outcome` for the classic
-"denied tier-3 calls per minute" panel.
+`outcome` is one of `ok` (work returned), `denied` (policy refused),
+`error` (work raised), or `confirm_required` (a Tier-3 call returned a
+confirmation token instead of running — only emitted when the Tier-3
+confirmation broker is on, §8a). Combine `mode + tier + outcome` for the
+classic "denied tier-3 calls per minute" panel, or alert on a rising
+`confirm_required` rate to see irreversible operations being challenged.
 
 The stdio transport does not expose `/metrics`; the route is gated on
 `RELAY_SHELL_TRANSPORT=http`.
