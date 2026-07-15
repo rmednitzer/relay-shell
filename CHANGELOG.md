@@ -31,6 +31,20 @@ All notable changes to this project are documented here. The format follows
 - `operation_confirm` MCP tool (Tier 0) — arms a confirmation token for the
   broker above. Documented in `docs/tools.md`, the README capability tables, and
   `_INSTRUCTIONS`.
+- **[ADR 0011](docs/adr/0011-windows-openssh-powershell.md) (Proposed)** — adopts
+  **Windows targets over OpenSSH with PowerShell 7** as a first-class target
+  class. Records that execution + SFTP already work (asyncssh passes the raw
+  command to the remote's own shell — no POSIX wrapping), and that the real gap
+  is a **safety** one: the tier classifier (`patterns.py`) is POSIX-only, so pwsh
+  destructive cmdlets (`Remove-Item -Recurse -Force`, `Clear-Disk`,
+  `Stop-Computer`, `Remove-Service`, …) under-classify as Tier 1 and escape
+  `guarded`/`readonly` mode and the ADR 0009 confirmation broker. Decision: add
+  pwsh-aware Tier-2/3 + priv-esc patterns (same anchoring/ReDoS discipline, POSIX
+  byte-identical, `PATTERNS_VERSION` bump, paired false-positive tests) + docs as
+  the first PR; `-Credential`/`-AsPlainText` redaction as a small follow-up;
+  encoding/PTY reduced to documented caveats (pwsh is UTF-8 by default). No
+  command/path translation layer, no new transport/tool; classification stays
+  heuristic. Tracked as WIN-1 (runbook §7.1). Docs only; no code yet.
 - **[ADR 0010](docs/adr/0010-rollback-verify-broker.md) (Proposed)** — design of
   record for the rollback/verify pairing (BRK-2) deferred from ADR 0009. Converts
   the vague "needs an ADR" backlog item into a concrete decision: **defer**,
