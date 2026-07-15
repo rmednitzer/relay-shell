@@ -31,6 +31,17 @@ All notable changes to this project are documented here. The format follows
 - `operation_confirm` MCP tool (Tier 0) — arms a confirmation token for the
   broker above. Documented in `docs/tools.md`, the README capability tables, and
   `_INSTRUCTIONS`.
+- Regression coverage + operator guidance for **interactive-input classification**.
+  `session_send`'s written bytes flow through the same tier scan as a one-shot
+  command (via `_policy_text_session_send`), so a destructive keystroke payload
+  (`rm -rf /`) is Tier 3 and refused under `guarded` — the interactive path is
+  not a blind Tier-1 hole. This security-relevant invariant previously had no
+  direct test; `tests/test_policy.py` now pins it (payload classification +
+  guarded refusal). `docs/deployment.md` §8 documents the matching limitation:
+  classification is per-call, so a payload fragmented across several
+  `session_send` calls evades it like shell obfuscation evades the deny list —
+  deny the spawn tools, use `readonly`, or rely on OS controls to make the
+  `guarded` ceiling airtight against a live shell. Tests + docs only.
 
 ### Changed
 

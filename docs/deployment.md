@@ -371,6 +371,16 @@ accumulate idle handles.
   allowlist of sanctioned change patterns.
 - `readonly` - only Tier 0. Useful for an observation-only client.
 
+Interactive PTY sessions are classified per input: each `session_send` payload
+is run through the same tier scan as a one-shot command (so a destructive
+keystroke payload like `rm -rf /` is Tier 3 and refused under `guarded`, not
+waved through at the Tier-1 keystroke default). But classification is per-call,
+so a payload **fragmented across several `session_send` calls** evades it the
+same way shell obfuscation evades the deny list. If a `guarded` deployment must
+prevent Tier-2+ actions inside an interactive shell, deny the spawn tools
+(`^shell_spawn` / `^ssh_spawn`) outright, run `readonly`, or rely on OS/network
+controls — do not treat the `guarded` ceiling as airtight against a live shell.
+
 `RELAY_SHELL_POLICY_DENY` is a regex evaluated first in **every** mode, against
 the probe text `"<tool> <command>"` (the tool name is prepended, so anchor with
 `\b`/substrings rather than `^command`; you can also deny a whole tool, e.g.
