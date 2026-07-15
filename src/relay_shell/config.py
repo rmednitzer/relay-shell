@@ -54,6 +54,16 @@ class Settings(BaseSettings):
     policy_deny: str = ""
     policy_allow: str = ""
 
+    # Tier-3 confirmation broker (ADR 0009; opt-in, default off). When true, a
+    # Tier-3 (IRREVERSIBLE) operation that passes the deny list and mode check
+    # is not executed on first request: the runner returns a single-use,
+    # TTL-bounded token and the caller must arm it via the `operation_confirm`
+    # tool, then re-issue the exact same call. Default off keeps the record
+    # byte-identical and the behavior unchanged. `confirm_ttl` bounds how long
+    # a minted token stays valid before it must be re-planned.
+    confirm_tier3: bool = False
+    confirm_ttl: int = Field(default=120, ge=5, le=3600)
+
     # Audit
     audit_path: str = "/var/log/relay-shell/audit.jsonl"
     audit_stderr: bool = False

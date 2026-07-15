@@ -46,6 +46,13 @@ class Tier(IntEnum):
 # contract of `readonly` mode. classify() falls through to Tier 1
 # (REVERSIBLE) for ssh_keyscan, which keeps it permitted in `open` and
 # in `guarded` (Tier 1 < Tier 2) but rejected in `readonly`.
+#
+# operation_confirm is here too: it only arms an ephemeral, single-use
+# confirmation token in the in-memory broker (ADR 0009) and authorizes
+# nothing by itself - the retried Tier-3 call is still re-classified and
+# re-admitted from scratch. Classifying it Tier 0 keeps the control-plane
+# step available in every mode (including readonly, where a Tier-3 op is
+# refused regardless, so arming is a no-op).
 _READ_ONLY_TOOLS = frozenset(
     {
         "server_info",
@@ -55,6 +62,7 @@ _READ_ONLY_TOOLS = frozenset(
         "session_recv",
         "ssh_forward_list",
         "audit_tail",
+        "operation_confirm",
     }
 )
 

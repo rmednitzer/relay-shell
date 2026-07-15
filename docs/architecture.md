@@ -12,7 +12,7 @@ MCP client (Claude / Inspector / SDK)
         |
         |  stdio  |  streamable-HTTP (+ optional OAuth 2.1, behind a TLS/CIDR proxy)
         v
-   FastMCP (mcp==1.27.2)
+   FastMCP (mcp==1.28.1)
         v
    Relay.run()  ── policy.check ──> tier + admit/deny      (deny list first, always)
         |        ── redaction ───> audit args
@@ -37,6 +37,14 @@ Every tool body is identical in shape (`Relay.run`):
    first in every mode. `readonly` permits only Tier 0; `guarded` refuses
    Tier 2+ unless an allow pattern matches; `open` permits all but still
    classifies. A refusal is audited and returned as a `[DENIED ...]` string.
+2a. **Confirm (opt-in)** - only when `RELAY_SHELL_CONFIRM_TIER3=true` and the
+   admitted call is Tier 3 (IRREVERSIBLE). Without an armed confirmation the
+   runner returns a single-use, TTL-bounded token (audited `action=confirm_plan`,
+   no execution) and the caller must arm it via `operation_confirm` and re-issue
+   the exact same call; a confirmed re-issue proceeds and is tagged
+   `action=confirm_execute` ([ADR 0009](adr/0009-tier3-confirmation-broker.md)).
+   Layered *after* the deny/mode check — never a bypass; default off skips the
+   step entirely.
 3. **Execute** - the work coroutine runs. `RelayError` and any other exception
    are converted to a bounded `[ERROR: ...]` string; nothing propagates into
    the transport.
@@ -73,6 +81,7 @@ syscall and is default off, so the lifecycle above is otherwise unchanged.
 | `redaction` | Scrub secrets from audited arguments (consumes `patterns`). |
 | `audit` | Rotation-safe append-only JSONL; hash, never body. Optional tamper-evident per-record hash chain + `verify_chain` (ADR 0007). |
 | `policy` | Tier 0..3 classification (consumes `patterns`); `open`/`guarded`/`readonly` admission. |
+| `broker` | Opt-in Tier-3 confirmation broker: single-use, TTL-bounded tokens bound to `sha256(tool \0 policy_text)`, gating IRREVERSIBLE ops behind a plan → arm → execute handshake ([ADR 0009](adr/0009-tier3-confirmation-broker.md)). |
 | `metrics` | In-memory Prometheus counter + gauge registry rendered at `GET /metrics` (HTTP only). |
 | `seccomp` | Opt-in, audit-only seccomp-notify channel: a version-pinned BPF filter + per-spawn supervisor that appends `syscall_notify` lines for a spawned child's syscalls, never blocking. Covers one-shot executors and local PTY sessions (the transport adopts the monitor for the session's lifetime). `CAP_SYS_ADMIN`-gated, Linux/`x86_64` ([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)). |
 | `errors` | Error types and the uniform `[ERROR: ...]` formatter. |

@@ -6,6 +6,40 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in **Tier-3 confirmation broker** ([ADR 0009](docs/adr/0009-tier3-confirmation-broker.md);
+  `RELAY_SHELL_CONFIRM_TIER3`, default off). When enabled, a Tier-3
+  (IRREVERSIBLE) call that already passed the deny list and mode check does not
+  run on first request: `Relay.run` returns a single-use, TTL-bounded token
+  (`RELAY_SHELL_CONFIRM_TTL`, default 120s) bound to `sha256(tool \0 policy_text)`
+  and audited `action=confirm_plan` (no side effect); the caller arms it with the
+  new `operation_confirm` tool then re-issues the exact same call, which executes
+  and is audited `action=confirm_execute`. Adapts a plan → authorize → execute
+  broker pattern; layered *after* the deny/mode check (never a bypass); the
+  central gate covers every present/future Tier-3 tool with no per-wrapper
+  parameter. New `src/relay_shell/broker.py` (100% covered). Tool contract 21 → 22.
+- `operation_confirm` MCP tool (Tier 0) — arms a confirmation token for the
+  broker above. Documented in `docs/tools.md`, the README capability tables, and
+  `_INSTRUCTIONS`.
+
+### Changed
+
+- The audit record gains one optional `action` field, written only under the
+  confirmation broker (`confirm_plan` / `confirm_execute`); like
+  `request_id`/`client_id` it is absent otherwise, so the default configuration's
+  record is byte-identical. `server_info` gains a `confirm` block (`tier3`,
+  `ttl`, live `pending` count). The `tool_calls_total` metric gains a bounded
+  `confirm_required` outcome value.
+
+### Security
+
+- Adds deliberate, audited friction to irreversible operations without removing
+  capability (ADR 0002 posture unchanged): an irreversible command can no longer
+  run as an unbroken continuation of a single request when the broker is on,
+  raising the bar against single-turn persuasion and improving forensics. The
+  raw confirmation token is never written to the audit log (only a fingerprint).
+
 ## [0.2.0] - 2026-06-21
 
 ### Added

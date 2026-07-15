@@ -33,16 +33,17 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from . import __version__, seccomp
 from .audit import AuditLogger
+from .broker import ConfirmationBroker
 from .config import Settings, get_settings
 from .errors import RelayError, fmt_exc
 from .inventory import Inventory
 from .metrics import ACTIVE_FORWARDS, ACTIVE_SESSIONS, AUDIT_DEGRADED, Metrics
-from .policy import Policy
+from .policy import Policy, Tier
 from .redaction import redact_args
 from .sessions import LocalPtyTransport, Session, SessionRegistry, Transport
 from .shelltools import build_env, run_command, run_script, spawn_argv
 from .sshpool import SshPool
-from .util import clamp, truncate
+from .util import clamp, sha256_hex, truncate
 
 __all__ = ["Relay", "build_server"]
 
@@ -94,6 +95,29 @@ def _find_sudo_binary() -> str:
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
     return ""
+
+
+def _confirm_op_key(policy_text: str, audit_args: dict[str, Any]) -> str:
+    """Full operation identity for the Tier-3 confirmation broker (ADR 0009).
+
+    A confirmation token must authorize the *exact* call, so the key binds both
+    the command/content the executor runs (``policy_text``) **and** a canonical
+    serialization of every audited argument. ``audit_args`` carries the
+    operation's *target* - the ``host`` for the SSH tools, ``hosts`` for
+    ``ssh_fanout``, ``cwd`` for the shell tools, ``session_id`` for
+    ``session_send``, ``local``/``remote`` for the transfer tools - which
+    ``policy_text`` deliberately omits (it is the command-content probe the deny
+    list and tier classifier see). Binding to both closes the confused-deputy
+    gap where a token armed for one target could be consumed against another
+    (e.g. confirm ``cwd=/tmp`` then execute ``cwd=/``, or confirm one host then
+    fan out to the whole inventory). The raw (un-redacted) args are used so
+    redaction never collapses two distinct operations to the same key; the key
+    is only hashed for the token binding, never logged.
+    """
+    canonical = json.dumps(
+        audit_args, sort_keys=True, separators=(",", ":"), default=str, ensure_ascii=False
+    )
+    return f"{policy_text}\x00{canonical}"
 
 
 def _ctx_ids(ctx: Context | None) -> tuple[str, str]:
@@ -299,6 +323,10 @@ class Relay:
             chain=settings.audit_chain,
         )
         self.policy = Policy(settings.policy_mode, settings.policy_deny, settings.policy_allow)
+        # Tier-3 confirmation broker (ADR 0009). None unless opted in, so the
+        # default configuration never consults it and Relay.run stays
+        # byte-identical to the pre-broker path.
+        self.broker = ConfirmationBroker(settings.confirm_ttl) if settings.confirm_tier3 else None
         self.inventory = Inventory(settings.ssh_config, settings.inventory).load()
         self.sessions = SessionRegistry(
             settings.max_sessions,
@@ -369,6 +397,44 @@ class Relay:
             )
             return body
 
+        # Tier-3 confirmation gate (ADR 0009). Opt-in: when `self.broker` is
+        # None (the default) this whole block is skipped and the path below
+        # stays byte-identical. When enabled, an IRREVERSIBLE op that already
+        # passed the deny list and mode check is not executed on first
+        # request - the runner mints a single-use, TTL-bounded token (audited
+        # as `confirm_plan`, no work() side effect) and the caller must arm it
+        # via `operation_confirm` then re-issue the exact same call. A retried
+        # call whose armed token is found is executed and tagged
+        # `confirm_execute`. This is an added safeguard, never a bypass: the
+        # deny list and mode policy have already run above.
+        confirm_action = ""
+        if self.broker is not None and decision.tier == Tier.IRREVERSIBLE:
+            op_key = _confirm_op_key(policy_text, audit_args)
+            if self.broker.consume(tool, op_key):
+                confirm_action = "confirm_execute"
+            else:
+                challenge = self.broker.plan(tool, op_key)
+                body = (
+                    f"[CONFIRM REQUIRED tier {int(decision.tier)} "
+                    f"({decision.tier.name}): this irreversible operation needs a second "
+                    f'step. Call operation_confirm(token="{challenge.token}") then re-issue '
+                    f"this exact call within {challenge.ttl}s.]"
+                )
+                self.audit.record(
+                    tool=tool,
+                    args=red,
+                    output=body,
+                    exit_code=None,
+                    tier=int(decision.tier),
+                    request_id=request_id,
+                    client_id=client_id,
+                    action="confirm_plan",
+                )
+                self.metrics.inc_tool_call(
+                    tool=tool, tier=int(decision.tier), mode=mode, outcome="confirm_required"
+                )
+                return body
+
         errored = False
         # Activate the per-call seccomp-notify monitor (ADR 0006) for the
         # duration of work(). It is None unless the channel is enabled AND
@@ -401,6 +467,7 @@ class Relay:
             tier=int(decision.tier),
             request_id=request_id,
             client_id=client_id,
+            action=confirm_action,
         )
         outcome = "error" if errored else "ok"
         self.metrics.inc_tool_call(tool=tool, tier=int(decision.tier), mode=mode, outcome=outcome)
@@ -1356,6 +1423,11 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                     "format": app.audit.format,
                     "chain": app.audit.chain,
                 },
+                "confirm": {
+                    "tier3": cfg.confirm_tier3,
+                    "ttl": cfg.confirm_ttl,
+                    "pending": app.broker.pending() if app.broker is not None else 0,
+                },
                 "seccomp": {
                     "notify": cfg.seccomp_notify,
                     "supported": _seccomp_support.ok,
@@ -1380,6 +1452,42 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             audit_args={},
             policy_text="",
             max_output=4096,
+            work=_work,
+        )
+
+    @mcp.tool()
+    async def operation_confirm(token: str, ctx: Context | None = None) -> str:
+        """Arm a Tier-3 confirmation token, then re-issue the original call.
+
+        Second step of the opt-in confirmation flow (ADR 0009). When the
+        confirmation broker is enabled (``RELAY_SHELL_CONFIRM_TIER3``), an
+        irreversible (Tier 3) call first returns a token instead of running;
+        pass that token here to arm it, then re-issue the *exact* same call to
+        execute it. Tokens are single-use and expire after
+        ``RELAY_SHELL_CONFIRM_TTL`` seconds. When the broker is disabled this
+        reports that and changes nothing.
+        """
+
+        async def _work() -> tuple[str, int | None]:
+            if app.broker is None:
+                return (
+                    "[confirmation broker disabled (RELAY_SHELL_CONFIRM_TIER3 is off)]",
+                    None,
+                )
+            if app.broker.arm(token):
+                return ("[armed: re-issue the exact Tier-3 call now to execute it]", None)
+            return ("[invalid or expired confirmation token]", None)
+
+        # Audit the arm attempt, but never log the raw capability token: a
+        # non-replayable fingerprint is enough to correlate with the plan
+        # record without putting a live token in the audit trail.
+        fingerprint = sha256_hex(token)[:12] if token else ""
+        return await app.run(
+            tool="operation_confirm",
+            ctx=ctx,
+            audit_args={"token_sha256": fingerprint},
+            policy_text="",
+            max_output=1024,
             work=_work,
         )
 
@@ -1615,7 +1723,10 @@ Diagnostics: server_info reports limits and policy mode; audit_tail returns
 the last N audit records.
 
 Every call is tier-classified, bounded (timeout + output caps), and appended
-to an append-only audit log (output is hashed, never stored).
+to an append-only audit log (output is hashed, never stored). When the
+optional Tier-3 confirmation broker is enabled, an irreversible command
+returns a token first; arm it with operation_confirm and re-issue the same
+call to execute it.
 """
 
 
@@ -1680,6 +1791,15 @@ Diagnostics
 -----------
 - server_info  version, effective limits, policy mode, audit path and state.
 - audit_tail   the last N audit records (read-only).
+
+Confirming an irreversible operation (opt-in)
+---------------------------------------------
+When the deployment enables the Tier-3 confirmation broker
+(RELAY_SHELL_CONFIRM_TIER3), an irreversible command (e.g. rm -rf, mkfs)
+does not run on first request: it returns [CONFIRM REQUIRED tier 3 ... token="..."].
+Call operation_confirm(token="...") to arm it, then re-issue the exact same
+call to execute it. Tokens are single-use and expire. When the broker is off
+(the default) this never triggers.
 
 What a result can look like
 ---------------------------
