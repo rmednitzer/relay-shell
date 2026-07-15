@@ -470,3 +470,82 @@ async def test_load_access_token_rejects_refresh_prefixed_bearer(tmp_path: Path)
     assert await p.load_access_token(issued.access_token) is not None
     assert await p.load_access_token(_REFRESH_PREFIX + issued.refresh_token) is None
     assert await p.load_access_token(issued.refresh_token) is None
+
+
+async def test_exchange_authorization_code_refuses_expired_code(tmp_path: Path) -> None:
+    # AUTH-3: the exchange path must enforce expiry atomically, not lean on
+    # load_authorization_code having run first. A code valid when loaded can
+    # lapse in the load->exchange window (or a caller could reach exchange
+    # without load); an expired code must never mint a token. Mirrors the
+    # existing client-ownership re-check in exchange_authorization_code.
+    import time
+
+    from mcp.server.auth.provider import AuthorizationCode, TokenError
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path)
+    client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
+    past = time.time() - 10  # already expired
+    p._codes.save(
+        {
+            "expired-code": {
+                "code": "expired-code",
+                "client_id": "client-a",
+                "scopes": ["mcp:tools"],
+                "expires_at": past,
+                "code_challenge": "",
+                "redirect_uri": "https://x/cb",
+                "redirect_uri_provided_explicitly": True,
+                "resource": None,
+            }
+        }
+    )
+    code = AuthorizationCode(
+        code="expired-code",
+        scopes=["mcp:tools"],
+        expires_at=past,
+        client_id="client-a",
+        code_challenge="",
+        redirect_uri="https://x/cb",  # type: ignore[arg-type]
+        redirect_uri_provided_explicitly=True,
+    )
+    with pytest.raises(TokenError):
+        await p.exchange_authorization_code(client, code)
+    # The stale record is also cleaned out of the store.
+    assert "expired-code" not in p._codes.load()
+
+
+async def test_exchange_refresh_token_refuses_expired_token(tmp_path: Path) -> None:
+    # AUTH-3: symmetric to the auth-code case — an expired refresh token must
+    # not mint a fresh access/refresh pair at exchange, even if exchange is
+    # reached without load_refresh_token or the token lapsed in the
+    # load->exchange window.
+    import time
+
+    from mcp.server.auth.provider import RefreshToken, TokenError
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    from relay_shell.auth.oauth import _REFRESH_PREFIX
+
+    p = _provider(tmp_path)
+    client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
+    past = time.time() - 10
+    p._tokens.save(
+        {
+            _REFRESH_PREFIX + "expired-refresh": {
+                "token": "expired-refresh",
+                "client_id": "client-a",
+                "scopes": ["mcp:tools"],
+                "expires_at": past,
+            }
+        }
+    )
+    rt = RefreshToken(
+        token="expired-refresh",
+        client_id="client-a",
+        scopes=["mcp:tools"],
+        expires_at=int(past),
+    )
+    with pytest.raises(TokenError):
+        await p.exchange_refresh_token(client, rt, ["mcp:tools"])
+    assert _REFRESH_PREFIX + "expired-refresh" not in p._tokens.load()
