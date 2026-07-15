@@ -782,9 +782,16 @@ commitment.
   covered), `tests/test_broker.py`; tool contract 21 → 22.
 - **BRK-2 (P3)** — rollback/verify pairing for the confirmation broker
   (`rollback_command` / `verify_command` / `auto_rollback`), the part of the
-  sibling brokers deferred from ADR 0009. Larger surface (it *executes* more
-  commands on the audited path, each with its own policy/audit implications);
-  design as a v2 built on the ADR 0009 gate. Needs its own ADR.
+  sibling brokers deferred from ADR 0009. Now has its own ADR:
+  [ADR 0010](adr/0010-rollback-verify-broker.md) (**Proposed**) specifies the
+  design and the seven invariants a build must satisfy (chiefly: rollback/verify
+  are themselves fully deny-list/tier-gated, never a policy bypass; bound into
+  the confirmation identity; three distinct audit records; bounded, non-recursive
+  loop) and **decides to defer** until a concrete trigger — an autonomous /
+  unattended deployment, or an operator ask for operation-bound remediation that
+  survives the issuing turn — since a model can already sequence verify/rollback
+  itself in the attended case. Move ADR 0010 to Accepted with the implementing PR
+  when a trigger is real.
 
 ### 7.2 Quality + automation
 
@@ -1186,7 +1193,7 @@ plan lands in the same PR.)
 
 - Keep: the status-vocabulary table, the indexed ADR list (number /
   title / status / date / one-line subject), the "when to write an
-  ADR" criteria, the next-free-number marker (currently **0009**),
+  ADR" criteria, the next-free-number marker (currently **0011**),
   and the cross-references to `docs/architecture.md` and
   `docs/runbook.md` §6.
 - Add: a row to the index table whenever a new ADR lands. Update the

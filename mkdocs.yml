@@ -102,3 +102,4 @@ nav:
       - 0007 · Tamper-evident audit hash chain: adr/0007-audit-hash-chain.md
       - 0008 · Operating-guidance prompt: adr/0008-operating-guidance-prompt.md
       - 0009 · Tier-3 confirmation broker: adr/0009-tier3-confirmation-broker.md
+      - 0010 · Rollback / verify broker (proposed): adr/0010-rollback-verify-broker.md
