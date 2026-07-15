@@ -105,6 +105,46 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now relay-shell
 ```
 
+### 3a. Host integrity + config-drift monitoring (recommended)
+
+The systemd confinement above is deliberately partial (ADR 0002): the executor
+is unsandboxed by design, so the deploy host cannot *prevent* the service
+account from touching the filesystem, and in privileged posture (root/sudo) it
+can touch `/etc`, the unit files, even the relay binary. When prevention is
+intentionally absent, **detection** is the compensating control — the same
+posture the audit chain (§6a) takes for the log. These are host-admin tools,
+not part of the relay, but on a host running a full-capability shell/SSH server
+they earn their keep; configure them on the host, outside the service.
+
+- **`etckeeper`** — put `/etc` under version control (git + a package-manager
+  hook) so every config change is diffable and revertable. A privileged flow
+  through the relay that edits `/etc/sudoers.d`, a systemd unit, or `sshd_config`
+  then shows up as a committed diff instead of a silent mutation. Pair with a
+  periodic `etckeeper vcs log` review or an off-host push of the `/etc` repo.
+- **`AIDE`** (or Tripwire) — a file-integrity baseline over the things that
+  should *not* change between deploys: the relay binary / venv
+  (`/var/lib/relay-shell/venv`), the systemd unit + `hardening.conf` drop-in, the
+  `EnvironmentFile` under `/etc/relay-shell/`, and the OAuth state dir's
+  permissions. A timer-driven `aide --check` alerts on an unexpected change (a
+  swapped binary, a loosened unit, an altered drop-in). **Exclude the live audit
+  log** from the baseline — it grows by design; its integrity is the §6a hash
+  chain's job, not AIDE's. Re-baseline (`aide --update`) as part of the release
+  procedure so a legitimate upgrade is not a false positive.
+- **`fail2ban`** — watch `sshd` and the TLS edge (repeated Caddy 401/403 from
+  outside the CIDR allowlist, §4) and ban brute-force sources. The relay's own
+  SSH is *outbound*, but the host still runs `sshd` for admin and exposes the
+  HTTP edge; fail2ban bounds credential-guessing against both.
+- **`lynis`** — a periodic host hardening audit (run on a timer, track the score
+  across runs). It surfaces drift in the host's own posture — kernel params, PAM,
+  file perms — that sits underneath everything the relay depends on.
+
+None of these is installed by `deploy/`; they are pointers, because host
+hardening is the operator's domain and the right tool set varies by distro and
+fleet-management stack. The principle is the transferable part: an unsandboxed,
+possibly-privileged service raises the value of host-level integrity and
+config-drift monitoring, so pair the in-app controls (audit chain, redaction,
+tiered policy) with host-level detection.
+
 ## 4. Network edge (HTTP transport)
 
 The HTTP transport binds `127.0.0.1` by design. Terminate TLS and restrict by
