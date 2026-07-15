@@ -831,14 +831,16 @@ the mandatory LEEF 2.0 delimiter field) in the P2/P3 follow-up PR; **FMT-2
 
 ### 7.4 Docs and contribution
 
-- **DOC-6 (L3, P2)** — a `docs/deployment.md` hardening subsection documenting
-  deploy-host file-integrity + config-drift monitoring (etckeeper / AIDE /
-  fail2ban / lynis). Lesson from the 2026-07-15 comparison; in scope per the
-  CLAUDE.md GitHub checklist ("docs clearly explain secure deployment"). Docs
-  only, no code.
-- **ENV-1 (P3, XS)** — add `RELAY_SHELL_CONFIRM_TIER3` / `RELAY_SHELL_CONFIRM_TTL`
-  to `.env.example` (they exist in `Settings` + `docs/deployment.md` §8a). Was
-  blocked in the 2026-07-15 session by an environment guard on `.env*` paths.
+- **DOC-6 (L3, P2)** — **Closed**. `docs/deployment.md` §3a "Host integrity +
+  config-drift monitoring" documents deploy-host file-integrity + config-drift
+  monitoring (etckeeper / AIDE / fail2ban / lynis) as detection compensating for
+  the intentionally-partial systemd confinement (ADR 0002). Lesson from the
+  2026-07-15 Vertex/Axiom comparison; in scope per the CLAUDE.md GitHub checklist
+  ("docs clearly explain secure deployment"). Docs only.
+- **ENV-1 (P3, XS)** — **Closed** (PR #129). Added `RELAY_SHELL_CONFIRM_TIER3` /
+  `RELAY_SHELL_CONFIRM_TTL` to `.env.example` (mirroring `Settings` +
+  `docs/deployment.md` §8a); the 2026-07-15 session was blocked from editing
+  `.env*` paths, so it landed as a follow-up.
 
 ### 7.5 Security hardening (incremental, no posture change)
 
