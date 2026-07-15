@@ -103,3 +103,4 @@ nav:
       - 0008 · Operating-guidance prompt: adr/0008-operating-guidance-prompt.md
       - 0009 · Tier-3 confirmation broker: adr/0009-tier3-confirmation-broker.md
       - 0010 · Rollback / verify broker (proposed): adr/0010-rollback-verify-broker.md
+      - 0011 · Windows OpenSSH + PowerShell 7 (proposed): adr/0011-windows-openssh-powershell.md
