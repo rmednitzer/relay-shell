@@ -168,6 +168,31 @@ accepted-as-designed with Renovate evidence; see the Closed table above.)
 |---|---|---|---|---|---|
 | F-G2 | Branch protection on `main` — **fully resolved** (rules enumerated and hardened) | high (governance), now closed | S (done) | Prior packs (`audit/2026-06-01-engagement.md` §7.1) carried this as an open HIGH item ("`main` accepts direct pushes"). Resolved in two steps. 2026-06-12 (audit pass): the branches API reports `protected: true` [V]. 2026-06-12 (follow-up, via the Vertex-held `gh` credential): protection comes from ruleset `main-protection` (id 17307996; classic protection is unset), which enforced pull_request (0 approvals), non_fast_forward, deletion, and required_linear_history [V]. With operator confirmation (a T3 change per the operator's `github-vertex.md` contract), the ruleset gained `required_status_checks` — `check (py3.12)` / `check (py3.13)` / `check (py3.14)` / `gitleaks (secret scan)`, all bound to GitHub Actions, strict=false — and `required_signatures` (closing the prior pack's deferred **P2-3**). Verified effective post-change via `GET /repos/rmednitzer/relay-shell/rules/branches/main` [V]. pip-audit / dependency-review / CodeQL stay advisory by operator choice. | repo owner (executed with operator confirmation) |
 
+## 2026-07-15 full audit + Vertex/Axiom comparison pass
+
+Findings and lessons from the 2026-07-15 pass
+([`audit/2026-07-15-engagement.md`](audit/2026-07-15-engagement.md)). The
+scanner battery (pip-audit, trivy vuln+secret, bandit, semgrep, actionlint,
+shellcheck) was clean and no pinned dependency carries a known CVE; there were
+no P0/P1 findings. The pass compared `relay-shell` against two sibling MCP
+control planes and turned the highest-value lesson (L1) into shipped code.
+
+Closed (engagement PR):
+
+| ID | Title | Resolution |
+|---|---|---|
+| L1 (broker) | No per-call confirmation for irreversible ops | **Closed** (this PR). Implemented the opt-in Tier-3 confirmation broker: [ADR 0009](docs/adr/0009-tier3-confirmation-broker.md), `src/relay_shell/broker.py` (100% covered), `operation_confirm` tool (contract 21 → 22), `action=confirm_plan`/`confirm_execute` audit markers, `server_info.confirm` block. Default-off byte-identical; layered after the deny/mode check. |
+| DOC-1 | Living docs named the superseded pin (`mcp==1.27.2` / `asyncssh` 2.23.1) after Renovate moved it to `mcp==1.28.1` / `asyncssh==2.24.0` | **Closed** (this PR). Reconciled the README status line + compatibility matrix and the `docs/architecture.md` diagram; "last validated" → 2026-07-15. Frozen ADRs / prior engagement records left intact per convention. |
+
+Open deferrals (severity order; smaller effort first):
+
+| ID | Item | Sev | Effort | Rationale / approach | Owner role |
+|---|---|---|---|---|---|
+| ENV-1 | `.env.example` missing `RELAY_SHELL_CONFIRM_TIER3` / `RELAY_SHELL_CONFIRM_TTL` | info | XS | The audit environment blocks all `.env*` paths, so the file could not be edited this session. `Settings` carries safe defaults so nothing breaks; add the two commented vars mirroring `docs/deployment.md` §8a. | maintainer |
+| DOC-6 (L3) | No deploy-host HIDS / config-drift guidance | low (docs) | S | Lesson from the comparison: document file-integrity + config-drift monitoring (etckeeper / AIDE / fail2ban / lynis) for the deployment host as a `docs/deployment.md` hardening subsection. In scope per the CLAUDE.md GitHub checklist. Docs only, no code. | maintainer |
+| AUD-1 (L2) | No in-band audit verify / correlate tool | low | M | Lesson from the comparison: a read-only `audit_verify` (chain-verify + correlate-by-input-`sha256`) MCP tool mirroring `audit_tail`'s wiring (Tier 0, stable audit `tool` name). Needs an ADR weighing the ADR-0007 tradeoff (verification was deliberately kept *off* the tool surface); the CLI `--verify-audit` already covers the operator/forensic path. | maintainer |
+| OPS-2 (L4) | `pip-audit` has no KEV/EPSS exploit prioritization | info | S | Lesson from the comparison: layer Known-Exploited / EPSS signal on top of the existing `pip-audit` gate for prioritization. Advisory only — `pip-audit` already fails closed. Low value for the small pinned set; revisit if the dependency set grows. | maintainer |
+
 ## Notes on items NOT added here
 
 - No critical / high / medium **code** security findings were produced by

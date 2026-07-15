@@ -103,9 +103,12 @@ jq -c 'keys' "$AUDIT" | sort -u
 ```
 
 Every record must contain `ts, tool, tier, denied, args, output_sha256,
-output_len, exit_code` at minimum. `request_id` and `client_id` are
-context-dependent and may be absent. Absence of any of the required
-fields above is an audit regression.
+output_len, exit_code` at minimum. `request_id`, `client_id`, and `action`
+are context-dependent and may be absent (`action` is `confirm_plan` /
+`confirm_execute` only under the Tier-3 confirmation broker,
+`RELAY_SHELL_CONFIRM_TIER3`; ADR 0009). Absence of any of the *required*
+fields above is an audit regression; the default-off broker keeps the
+record byte-identical (no `action` field).
 
 Grep for the canonical "must never appear" markers:
 
@@ -767,6 +770,21 @@ commitment.
   unaffected. Wiring tests in `tests/test_sshpool_unit.py` assert the cap fires
   (put + get) and that `timeout=0` completes. Originally deferred from the
   2026-05-27 engagement (`audit/2026-05-27-engagement.md` §8.2 F-6).
+- **L1 confirmation broker (P1)** — **Closed** by
+  [ADR 0009](adr/0009-tier3-confirmation-broker.md) (2026-07-15 pass): an opt-in,
+  default-off two-step confirmation gate for Tier-3 (IRREVERSIBLE) operations
+  (`RELAY_SHELL_CONFIRM_TIER3`). `Relay.run` returns a single-use, TTL-bounded
+  token bound to `sha256(tool \0 policy_text)` (audited `confirm_plan`) and the
+  caller arms it via the new `operation_confirm` tool then re-issues the exact
+  call (audited `confirm_execute`). Adapted from the sibling MCP planes'
+  plan → authorize → execute broker; layered after the deny/mode check (never a
+  bypass); default-off byte-identical. `src/relay_shell/broker.py` (100%
+  covered), `tests/test_broker.py`; tool contract 21 → 22.
+- **BRK-2 (P3)** — rollback/verify pairing for the confirmation broker
+  (`rollback_command` / `verify_command` / `auto_rollback`), the part of the
+  sibling brokers deferred from ADR 0009. Larger surface (it *executes* more
+  commands on the audited path, each with its own policy/audit implications);
+  design as a v2 built on the ADR 0009 gate. Needs its own ADR.
 
 ### 7.2 Quality + automation
 
@@ -789,15 +807,30 @@ the mandatory LEEF 2.0 delimiter field) in the P2/P3 follow-up PR; **FMT-2
 
 ### 7.3 Operations + observability
 
-(Items in this category are tracked here as they land; the queue is
-currently empty. B-014 closed by PR #47 — `RELAY_SHELL_AUDIT_FORMAT`
-shipped with `jsonl`/`cef`/`leef` formatters in
-`src/relay_shell/audit.py`.)
+(B-014 closed by PR #47 — `RELAY_SHELL_AUDIT_FORMAT` shipped with
+`jsonl`/`cef`/`leef` formatters in `src/relay_shell/audit.py`.)
+
+- **AUD-1 (L2, P2)** — an in-band `audit_verify` MCP tool: chain-verify +
+  correlate-by-input-`sha256`, mirroring `audit_tail`'s read-only wiring
+  (Tier 0, stable audit `tool` name). Lesson from the 2026-07-15 Vertex/Axiom
+  comparison (the sibling planes expose verify/correlate as a live tool). Needs
+  an ADR weighing the ADR-0007 tradeoff — verification was deliberately kept
+  *off* the tool surface (`relay-shell --verify-audit` is the operator/forensic
+  path). See `BACKLOG.md` (2026-07-15 section).
+- **OPS-2 (L4, P3)** — layer KEV/EPSS exploit-prioritization signal on top of
+  the existing `pip-audit` gate (advisory only; `pip-audit` already fails
+  closed). Low value for the small pinned set; revisit if it grows.
 
 ### 7.4 Docs and contribution
 
-(Items in this category are tracked here as they land; the queue is
-currently empty.)
+- **DOC-6 (L3, P2)** — a `docs/deployment.md` hardening subsection documenting
+  deploy-host file-integrity + config-drift monitoring (etckeeper / AIDE /
+  fail2ban / lynis). Lesson from the 2026-07-15 comparison; in scope per the
+  CLAUDE.md GitHub checklist ("docs clearly explain secure deployment"). Docs
+  only, no code.
+- **ENV-1 (P3, XS)** — add `RELAY_SHELL_CONFIRM_TIER3` / `RELAY_SHELL_CONFIRM_TTL`
+  to `.env.example` (they exist in `Settings` + `docs/deployment.md` §8a). Was
+  blocked in the 2026-07-15 session by an environment guard on `.env*` paths.
 
 ### 7.5 Security hardening (incremental, no posture change)
 
