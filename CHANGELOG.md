@@ -43,6 +43,28 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Idle reaper vs. in-use connection/session (concurrency).** The two
+  opportunistic idle sweeps could tear down a resource that was actively in use
+  but had simply not been *touched* recently, because "recently used" was
+  tracked only at call entry:
+  - **SSH connection pool (`sshpool.py`).** A long-lived holder — an
+    `ssh_spawn` session, a port forward, or a `timeout=0` SFTP transfer —
+    connects once and then drives the channel directly, never re-`connect()`ing,
+    so its cache entry ages past `ssh_idle_timeout` while the holder is live.
+    `_sweep_conns` then evicted and closed the connection out from under it.
+    Connections now carry a `pins` count: `open_process`, `add_forward`, and the
+    SFTP transfers pin their connection for their lifetime (released in
+    `aclose` / `close_forward` / on the transfer's exit), and the sweep never
+    idle-evicts a pinned entry. A *closed* connection is still purged regardless
+    of pins, and `run` stays unpinned (its clamped timeout is below the idle
+    window, so it cannot outlive it). Pins are released in `finally`, so a
+    failed close cannot leak a pin and wedge an entry alive forever.
+  - **Session registry (`sessions.py`).** `recv` refreshed `last_used` only on
+    entry, so a long poll whose `timeout` exceeds the registry idle timeout let
+    the session age into "idle" *while a client was blocked waiting on it*; a
+    concurrent `_sweep` (fired by `list`) then reaped the session out from under
+    the waiter. `recv` now counts live waiters (`_waiters`, refreshed on exit)
+    and the sweep skips any session with `_waiters > 0`.
 - 2026-07-15 adversarial + performance pass
   ([`audit/2026-07-15-adversarial-engagement.md`](audit/2026-07-15-adversarial-engagement.md)):
   - **RED-6a / P1 (ReDoS + hot path):** redaction no longer runs the regex table

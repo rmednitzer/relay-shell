@@ -248,6 +248,13 @@ class Session:
     _event: asyncio.Event = field(default_factory=asyncio.Event)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _reader: asyncio.Task[None] | None = None
+    # Number of `recv()` calls currently long-polling this session. A session
+    # with a live waiter is *actively in use*, not idle, so the idle sweep must
+    # not reap it — otherwise a single `recv(timeout=T)` whose wait exceeds the
+    # registry idle timeout gets torn down mid-wait (the client is killed
+    # precisely because it is waiting). Mutated only on the event-loop thread
+    # with no `await` between the read and write, so it needs no lock.
+    _waiters: int = 0
 
 
 class SessionRegistry:
@@ -320,28 +327,38 @@ class SessionRegistry:
 
     async def recv(self, sid: str, timeout: float, max_bytes: int) -> str:
         sess = await self._get(sid)
+        # Mark the session in-use for the whole call: refreshing last_used only
+        # at entry is not enough when the wait below runs longer than the idle
+        # timeout, so `_sweep` also skips any session with a live waiter. Both
+        # writes happen with no intervening await, so a concurrent sweep sees a
+        # consistent (last_used=now, waiter present) state.
         sess.last_used = time.monotonic()
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + max(0.0, timeout)
-        while True:
-            async with sess._lock:
-                if sess.buffer:
-                    take = bytes(sess.buffer[:max_bytes])
-                    del sess.buffer[: len(take)]
-                    text = take.decode("utf-8", "replace")
-                    if not sess.buffer and not sess.closed:
-                        sess._event.clear()
-                    return text
-                if sess.closed:
-                    if sess.exit_code is not None:
-                        return f"\n[session {sid} ended, exit={sess.exit_code}]"
-                    return f"\n[session {sid} ended]"
-                sess._event.clear()
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                return ""
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(sess._event.wait(), remaining)
+        sess._waiters += 1
+        try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + max(0.0, timeout)
+            while True:
+                async with sess._lock:
+                    if sess.buffer:
+                        take = bytes(sess.buffer[:max_bytes])
+                        del sess.buffer[: len(take)]
+                        text = take.decode("utf-8", "replace")
+                        if not sess.buffer and not sess.closed:
+                            sess._event.clear()
+                        return text
+                    if sess.closed:
+                        if sess.exit_code is not None:
+                            return f"\n[session {sid} ended, exit={sess.exit_code}]"
+                        return f"\n[session {sid} ended]"
+                    sess._event.clear()
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    return ""
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(sess._event.wait(), remaining)
+        finally:
+            sess._waiters -= 1
+            sess.last_used = time.monotonic()
 
     async def resize(self, sid: str, cols: int, rows: int) -> None:
         sess = await self._get(sid)
@@ -401,6 +418,10 @@ class SessionRegistry:
         async with self._lock:
             for sid in list(self._sessions):
                 sess = self._sessions[sid]
+                # A session with a live `recv()` waiter is actively in use, not
+                # idle — never reap it out from under the waiting client.
+                if sess._waiters > 0:
+                    continue
                 idle = now - sess.last_used
                 if (sess.closed and not sess.buffer and idle > 5) or idle > self._idle:
                     doomed.append(self._sessions.pop(sid))

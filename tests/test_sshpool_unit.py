@@ -9,6 +9,7 @@ monkeypatching ``asyncssh.connect``.
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import asyncssh
@@ -296,6 +297,135 @@ def test_parse_forward_spec_valid_and_malformed() -> None:
         assert frag in msg, bad
         assert "invalid literal for int" not in msg
         assert "unpack" not in msg
+
+
+async def test_sweep_conns_respects_pins(tmp_path: Path) -> None:
+    """Idle reaper must not evict a pinned (in-use) connection.
+
+    Regression for the idle-reaper-vs-in-use bug: a session / forward /
+    in-flight transfer holds a connection that nothing has re-``connect()``ed
+    to recently, so its ``last_used`` ages past the idle timeout. Before the
+    fix the sweep evicted it and closed the socket out from under the live
+    holder. With pin-counting the sweep skips ``pins > 0`` and only reaps once
+    the last holder releases.
+    """
+    from relay_shell.sshpool import _ConnEntry
+
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+        ssh_idle_timeout=1,
+    )
+    inv = Inventory(str(tmp_path / "no_ssh_config"), "").load()
+    pool = SshPool(settings=settings, inventory=inv)
+
+    conn = _MockConn()
+    # last_used far in the past so the idle window has elapsed.
+    entry = _ConnEntry(conn=conn, last_used=time.monotonic() - 3600, pins=1)
+    pool._conns["u@h:22"] = entry
+
+    await pool._sweep_conns()
+    assert "u@h:22" in pool._conns, "pinned connection must survive the idle sweep"
+    assert not conn.is_closed(), "pinned connection must not be closed"
+
+    # Release the pin. _unpin refreshes last_used (release counts as recent
+    # activity), so re-age the entry before the next sweep to prove it is now
+    # evictable purely because it is no longer pinned.
+    await pool._unpin(entry)
+    entry.last_used = time.monotonic() - 3600
+    await pool._sweep_conns()
+    assert "u@h:22" not in pool._conns, "unpinned + idle connection must be evicted"
+    assert conn.is_closed(), "evicted connection must be closed"
+
+
+async def test_sweep_conns_evicts_closed_even_if_pinned(tmp_path: Path) -> None:
+    """A *closed* connection is dead regardless of pins and must be purged so a
+    re-connect does not return a dead handle — pinning only defends against
+    *idle* eviction, never against reaping an already-broken socket."""
+    from relay_shell.sshpool import _ConnEntry
+
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+        ssh_idle_timeout=1800,
+    )
+    inv = Inventory(str(tmp_path / "no_ssh_config"), "").load()
+    pool = SshPool(settings=settings, inventory=inv)
+
+    conn = _MockConn()
+    conn.close()  # mark closed/dead
+    entry = _ConnEntry(conn=conn, last_used=time.monotonic(), pins=2)
+    pool._conns["u@h:22"] = entry
+
+    await pool._sweep_conns()
+    assert "u@h:22" not in pool._conns, "closed connection must be purged even when pinned"
+
+
+class _FakeProc:
+    def __init__(self) -> None:
+        self.terminated = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    async def wait_closed(self) -> None:
+        return None
+
+
+class _ProcConn(_MockConn):
+    """Conn surface for open_process: exposes create_process."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.proc = _FakeProc()
+
+    async def create_process(self, *_a: object, **_k: object) -> _FakeProc:
+        return self.proc
+
+
+async def test_open_process_pins_and_transport_aclose_unpins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A spawned session pins its connection for its whole lifetime and the
+    transport releases the pin in ``aclose`` — so a mid-session idle sweep
+    cannot evict the connection, but a closed session no longer holds it.
+    """
+    conn = _ProcConn()
+
+    async def fake_connect(*_a: object, **_k: object) -> _ProcConn:
+        return conn
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+        ssh_idle_timeout=1,
+    )
+    inv = Inventory(str(tmp_path / "no_ssh_config"), "").load()
+    pool = SshPool(settings=settings, inventory=inv)
+
+    tr = await pool.open_process("h1.example", command="", cols=80, rows=24, connect_kwargs=_CK)
+    key = next(iter(pool._conns))
+    assert pool._conns[key].pins == 1, "open_process must pin the connection"
+
+    # Age the entry past the idle window; the pin must keep it alive.
+    pool._conns[key].last_used = time.monotonic() - 3600
+    await pool._sweep_conns()
+    assert key in pool._conns, "pinned session connection survives the idle sweep"
+
+    # Closing the session releases the pin; the now-idle connection is reaped.
+    await tr.aclose()
+    assert pool._conns[key].pins == 0, "aclose must release the pin"
+    pool._conns[key].last_used = time.monotonic() - 3600
+    await pool._sweep_conns()
+    assert key not in pool._conns, "connection is evictable once the session closes"
 
 
 async def test_add_forward_enforces_cap(tmp_path: Path) -> None:
