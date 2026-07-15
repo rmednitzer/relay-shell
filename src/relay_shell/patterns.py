@@ -95,7 +95,16 @@ __all__ = [
 #     token rule). GCP service-account creds need no new rule — their only
 #     secret is the `private_key` PEM block, already collapsed by the PEM rule
 #     above (it matches a JSON-embedded block with escaped `\n` too).
-PATTERNS_VERSION = "7"
+# v8: 2026-07-15 adversarial pass. RED-6: the generic keyword rule and the AWS
+#     `secret_access_key` rule gained a quote-tolerant separator (`["']?` each
+#     side) + a quoted-value terminator, so the JSON-quoted-key shape
+#     (`"password": "x"`, `"AWS_SECRET_ACCESS_KEY": "x"`) is redacted — it was
+#     leaking verbatim to the audit log (only the Authorization rule had been
+#     quote-tolerant). Unquoted cases stay byte-identical (the `\S+` fallback).
+#     RED-7: TIER3_PATTERN gained a long-option `rm` alternative
+#     (`rm --recursive|--force|--no-preserve-root`); the short-flag-only
+#     alternatives under-classified `rm --force` below Tier 3.
+PATTERNS_VERSION = "8"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -137,10 +146,28 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"(?i)\b(?P<prefix>bearer\s+)[A-Za-z0-9._\-]+"),
         r"\g<prefix>[REDACTED]",
     ),
-    # token=... / api[_-]?key=... / password: ...
+    # token=... / api[_-]?key=... / password: ...  (also the JSON-quoted-key
+    # shape `"password": "x"`). The separator tolerates an optional quote on
+    # either side (`["']?`), mirroring the Authorization rule, so a JSON key
+    # like `"password"` (a `"` sits between the keyword and the `:`) still
+    # anchors — RED-6. The value has two branches: a quoted value stops at its
+    # closing quote (so the trailing `",` / `"}` is preserved), otherwise the
+    # historical `\S+` (stop at whitespace) is used unchanged, so every
+    # pre-RED-6 unquoted case redacts byte-identically.
     (
         re.compile(
-            r"(?i)(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*)\S+"
+            r"(?i)(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd)"
+            r"[\"']?\s*[:=]\s*[\"']?)"
+            # Value = non-space, non-quote run. Stopping at a quote catches the
+            # JSON-quoted-key shape `"password": "x"` (the value ends at the
+            # closing quote, which is preserved) while keeping the historical
+            # single-token behaviour for the unquoted `password=x` / `token: x`
+            # forms (RED-6). A single greedy char-class `+` with nothing after it
+            # cannot backtrack, so this is strictly linear — unlike a
+            # `[^"'\r\n]+(?=["'])` lookahead form, which is O(n²) when the prefix
+            # recurs across a large quote-free argument (a ReDoS on the sync
+            # audit path).
+            r"[^\s\"'\r\n]+"
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -149,9 +176,18 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # never fires (`secret` is followed by `_ACCESS_KEY`, not `=`). Anchor on
     # the full `secret[_-]?access[_-]?key` phrase — distinctive enough that
     # `SECRET_ACCESS_KEY_PATH=/x` (the `_PATH` breaks the `key[:=]` adjacency)
-    # and similar are not over-scrubbed.
+    # and similar are not over-scrubbed. Quote-tolerant separator + quoted-value
+    # terminator like the generic rule above, so the JSON-quoted-key shape
+    # `"AWS_SECRET_ACCESS_KEY": "x"` is caught (RED-6); the AWS secret has no
+    # whole-match fallback, so this prefix rule is the only thing protecting it.
     (
-        re.compile(r"(?i)(?P<prefix>(?:aws[_-]?)?secret[_-]?access[_-]?key\s*[:=]\s*)\S+"),
+        re.compile(
+            r"(?i)(?P<prefix>(?:aws[_-]?)?secret[_-]?access[_-]?key"
+            r"[\"']?\s*[:=]\s*[\"']?)"
+            # Non-space, non-quote value run — quote-aware and linear, same as
+            # the generic rule above (RED-6).
+            r"[^\s\"'\r\n]+"
+        ),
         r"\g<prefix>[REDACTED]",
     ),
     # Azure connection-string keys (RED-3): `AccountKey=<base64>` (Storage) and
@@ -295,7 +331,18 @@ MYSQL_COMPACT_PASSWORD_PATTERN = re.compile(r"(?<![A-Za-z0-9-])(-p)[^\s=-]\S*")
 # Substrings that strongly imply an irreversible / high-blast action.
 TIER3_PATTERN = re.compile(
     r"(?ix)(?<![\w])("
-    r"rm\s+-[rf]|rm\s+-[a-z]*f|shred|mkfs|fdisk|sgdisk|wipefs|"
+    r"rm\s+-[rf]|rm\s+-[a-z]*f|"
+    # Long-option `rm` (RED-7): `rm --recursive`, `rm --force`,
+    # `rm --no-preserve-root`, and mixed forms (`rm -r --force`, `rm file
+    # --force`) — the short-flag alternatives above require a single dash
+    # immediately after `rm `, so a `--`-flag slipped past them and
+    # under-classified a genuinely destructive command below Tier 3. The
+    # intervening-token count is BOUNDED (`{0,16}?`, disjoint \S/\s): a real
+    # rm has few flags before the destructive one, and an unbounded `*?` would
+    # be O(n^2) on `rm rm rm …` (classify retries every `rm ` position) — a
+    # ReDoS on the synchronous admission path.
+    r"rm\s+(?:\S+\s+){0,16}?--(?:recursive|force|no-preserve-root)\b|"
+    r"shred|mkfs|fdisk|sgdisk|wipefs|"
     r"dd\s+[^|]*of=/dev/|>\s*/dev/[sh]d|"
     r"shutdown|reboot|halt|poweroff|init\s+0|init\s+6|"
     r"drop\s+database|drop\s+table|truncate\s+table|"

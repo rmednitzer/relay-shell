@@ -157,19 +157,45 @@ def _policy_text_shell_spawn(command: str, env_json: str) -> str:
     return "\n".join(part for part in (command, env_json) if part)
 
 
-def _policy_text_ssh_exec(command: str) -> str:
-    """The remote command line, verbatim."""
-    return command
+# The SSH command tools fold the *destination host* into the deny probe (F2),
+# closing the asymmetry with the transfer tools: `RELAY_SHELL_POLICY_DENY` is
+# the documented way to block an SSH tool from reaching a host (e.g. the cloud
+# metadata IP), and it must work for the tools that grant remote execution, not
+# only for upload/download/forward/keyscan. Widened with the host's canonical IP
+# forms (SSRF-1/2). Tradeoff (SEC-1, accepted): the tier classifier also sees
+# the host, so a host embedding a destructive word at a token start
+# over-classifies (bites only `guarded`; `RELAY_SHELL_POLICY_ALLOW` is the
+# escape hatch). The command stays first so its tier tokens classify as before.
+def _policy_text_ssh_exec(host: str, command: str) -> str:
+    """The remote command line plus the destination host, for the deny list."""
+    return _with_canonical_ips(f"{command}\n{host}", host)
 
 
-def _policy_text_ssh_spawn(command: str) -> str:
-    """The remote command (empty means a plain login shell)."""
-    return command
+def _policy_text_ssh_spawn(host: str, command: str) -> str:
+    """The remote command (empty = login shell) plus the destination host."""
+    return _with_canonical_ips(f"{command}\n{host}", host)
 
 
-def _policy_text_ssh_fanout(command: str) -> str:
-    """The fanned-out command — identical probe text to a single ssh_exec."""
-    return command
+def _policy_text_ssh_fanout(hosts: str, command: str) -> str:
+    """The fanned-out command plus every target host, for the deny list.
+
+    ``hosts`` is a comma/space-separated list; each token is canonical-IP
+    widened (SSRF-1) like ``ssh_keyscan`` so a fleet target cannot dodge an IP
+    deny by an alternate spelling.
+    """
+    tokens = [t for t in hosts.replace(",", " ").split() if t]
+    return _with_canonical_ips(f"{command}\n{hosts}", *tokens)
+
+
+def _policy_text_ssh_check(hosts: str) -> str:
+    """The probed host list, for the deny list (F2).
+
+    ``ssh_check`` is Tier 0, so folding the hosts in does not change tier
+    classification (it stays read-only) — it only lets `RELAY_SHELL_POLICY_DENY`
+    gate which hosts may be probed, matching the other SSH tools.
+    """
+    tokens = [t for t in hosts.replace(",", " ").split() if t]
+    return _with_canonical_ips(hosts, *tokens)
 
 
 def _policy_text_session_send(data: str) -> str:
@@ -763,10 +789,13 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                 "host": host,
                 "command": command,
                 "timeout": t,
+                "user": user,
+                "port": port,
+                "key_path": key_path,
                 "jump": jump,
                 "known_hosts": known_hosts or app.settings.ssh_known_hosts,
             },
-            policy_text=_policy_text_ssh_exec(command),
+            policy_text=_policy_text_ssh_exec(host, command),
             max_output=65536,
             work=lambda: app.ssh.run(host, command, timeout=t, connect_kwargs=ck),
         )
@@ -814,9 +843,12 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                 "host": host,
                 "command": command or "shell",
                 "size": f"{cols}x{rows}",
+                "user": user,
+                "port": port,
+                "key_path": key_path,
                 "known_hosts": known_hosts or app.settings.ssh_known_hosts,
             },
-            policy_text=_policy_text_ssh_spawn(command),
+            policy_text=_policy_text_ssh_spawn(host, command),
             max_output=4096,
             work=_work,
         )
@@ -1138,7 +1170,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             tool="ssh_check",
             ctx=ctx,
             audit_args={"hosts": hosts or "inventory"},
-            policy_text="",
+            policy_text=_policy_text_ssh_check(hosts),
             max_output=8192,
             work=_work,
         )
@@ -1161,8 +1193,9 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         ``ssh_fanout rm -rf /`` is still Tier 3 and still refused.
         """
         # Constructed once, outside _work, so app.run() sees it before
-        # admitting; the tier heuristics fire identically to ssh_exec.
-        policy_text = _policy_text_ssh_fanout(command)
+        # admitting; the tier heuristics fire identically to ssh_exec, and the
+        # target hosts reach the deny list (F2).
+        policy_text = _policy_text_ssh_fanout(hosts, command)
 
         async def _work() -> tuple[str, int | None]:
             names = (

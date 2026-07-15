@@ -269,6 +269,34 @@ async def test_on_token_bound_to_target_not_just_command(tmp_path: Path) -> None
     assert not (dir_a / "keep.txt").exists()
 
 
+def test_confirm_op_key_binds_ssh_identity() -> None:
+    # F3 regression (2026-07-15): the broker op-key must bind the SSH
+    # authenticating identity (user/port/key_path), which ssh_exec/ssh_spawn now
+    # carry in audit_args — otherwise a token confirmed as a low-priv user could
+    # be re-issued as root against the same host+command (confused deputy).
+    from relay_shell.server import _confirm_op_key, _policy_text_ssh_exec
+
+    pt = _policy_text_ssh_exec("db", "DROP DATABASE prod")
+
+    def args(user: str, port: int, key: str) -> dict:
+        return {
+            "host": "db",
+            "command": "DROP DATABASE prod",
+            "timeout": 60,
+            "user": user,
+            "port": port,
+            "key_path": key,
+            "jump": "",
+            "known_hosts": "strict",
+        }
+
+    base = _confirm_op_key(pt, args("readonly", 22, "/k/ro"))
+    assert _confirm_op_key(pt, args("readonly", 22, "/k/ro")) == base  # stable
+    assert _confirm_op_key(pt, args("root", 22, "/k/ro")) != base  # user swap
+    assert _confirm_op_key(pt, args("readonly", 2222, "/k/ro")) != base  # port swap
+    assert _confirm_op_key(pt, args("readonly", 22, "/k/root")) != base  # key swap
+
+
 def test_operation_confirm_is_tier0() -> None:
     # Control-plane step: classified read-only so it is available in every mode.
     assert classify("operation_confirm") == Tier.READ_ONLY

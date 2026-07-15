@@ -32,6 +32,21 @@ All notable changes to this project are documented here. The format follows
   `ttl`, live `pending` count). The `tool_calls_total` metric gains a bounded
   `confirm_required` outcome value.
 
+### Fixed
+
+- 2026-07-15 adversarial + performance pass
+  ([`audit/2026-07-15-adversarial-engagement.md`](audit/2026-07-15-adversarial-engagement.md)):
+  - **RED-6a / P1 (ReDoS + hot path):** redaction no longer runs the regex table
+    over the full untruncated argument — `_scrub_str` bounds the scan to
+    `max_len + 16 KiB` (the record only keeps `max_len` chars, so nothing that
+    could be redacted is dropped), taking a 1–4 MB argument from superlinear to
+    a constant ~12 ms. The RED-6 value matcher is a linear char-class run, not an
+    O(n²) lookahead. `TIER3_PATTERN`'s new `rm` long-option alternative is
+    bounded (`{0,16}`) so `classify` stays linear on `rm rm rm …`.
+  - **POL-2 (RED-7):** `TIER3_PATTERN` now catches non-obfuscated `rm` long
+    options (`rm --recursive --force`, `--no-preserve-root`) that were
+    under-classified below Tier 3 (permitted in `guarded`, skipped the broker).
+
 ### Security
 
 - Adds deliberate, audited friction to irreversible operations without removing
@@ -39,6 +54,21 @@ All notable changes to this project are documented here. The format follows
   run as an unbroken continuation of a single request when the broker is on,
   raising the bar against single-turn persuasion and improving forensics. The
   raw confirmation token is never written to the audit log (only a fingerprint).
+- 2026-07-15 adversarial pass — redaction/policy/broker hardening (all
+  compensating-control gaps, no posture change):
+  - **RED-6 (HIGH):** JSON-quoted-key secrets (`"password": "x"`,
+    `"AWS_SECRET_ACCESS_KEY": "x"`) were written **verbatim** to the audit log —
+    the keyword rules were not quote-tolerant like the `Authorization` rule.
+    Now redacted (`PATTERNS_VERSION` 7→8). `env_json` and JSON in
+    `command`/`stdin` were the leak vectors; the AWS secret had no fallback.
+  - **SSH-4:** `RELAY_SHELL_POLICY_DENY` now gates the destination host for
+    `ssh_exec`/`ssh_spawn`/`ssh_fanout`/`ssh_check` (canonical-IP widened), not
+    just the transfer/scan tools — the documented host-block no longer silently
+    fails for the tools that grant remote execution.
+  - **BRK-3:** the Tier-3 confirmation binding now includes the SSH identity
+    (`user`/`port`/`key_path`, added to the audit_args), closing a
+    confirm-as-readonly / execute-as-root confused-deputy and surfacing the
+    credential in the `confirm_plan` record (ADR 0009 follow-up).
 
 ## [0.2.0] - 2026-06-21
 

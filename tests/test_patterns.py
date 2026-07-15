@@ -222,6 +222,81 @@ def test_keyvalue_positive_and_negative() -> None:
     assert "secretariat" in redaction.redact("the secretariat opened at 9")
 
 
+def test_json_quoted_key_secrets_redacted() -> None:
+    # RED-6: the JSON object shape `"key": "value"` puts a quote between the
+    # keyword and the colon, which the pre-RED-6 rules could not anchor past,
+    # so the value leaked verbatim to the audit log. env_json / JSON in
+    # command|stdin is the common delivery shape.
+    r = redaction.redact
+    assert "hunter2" not in r('{"password": "hunter2"}')
+    assert "s3cret" not in r('{"secret":"s3cret"}')
+    assert "toktok" not in r('{"token": "toktok"}')
+    assert "keykey" not in r('{"api_key":"keykey"}')
+    # AWS secret access key has NO whole-match fallback — the prefix rule is the
+    # only thing protecting it — in the JSON-quoted-key shape.
+    aws = _synth("wJalr", "XUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+    assert aws not in r(f'{{"AWS_SECRET_ACCESS_KEY": "{aws}"}}')
+    # Compact multi-field: each secret redacted, non-secret fields preserved.
+    out = r('{"password":"p1secret","api_key":"k1secret","host":"db01"}')
+    assert "p1secret" not in out and "k1secret" not in out and '"host":"db01"' in out
+
+
+def test_json_quoted_key_negatives_no_overscrub() -> None:
+    # Unquoted forms keep the historical single-token behaviour byte-for-byte.
+    assert redaction.redact("token=abc next") == "token=[REDACTED] next"
+    # `_PATH` breaks the AWS `key[:=]` adjacency — not a secret, not scrubbed.
+    assert redaction.redact("SECRET_ACCESS_KEY_PATH=/x") == "SECRET_ACCESS_KEY_PATH=/x"
+    # ssh -p22 must remain untouched (the classic under-scrub guard).
+    assert redaction.redact("ssh -p22 user@host") == "ssh -p22 user@host"
+
+
+def test_redaction_is_linear_on_recurring_prefix() -> None:
+    # RED-6 regression: a quoted-value lookahead form (`[^"'\r\n]+(?=["'])`) is
+    # O(n^2) when the keyword prefix recurs across a large quote-free argument —
+    # a ReDoS on the synchronous audit path (this bit an early draft of the
+    # RED-6 fix). The shipped char-class form is linear; assert a generous
+    # ceiling (the lookahead form took tens of seconds on ~1 MB).
+    import time
+
+    payload = ("DB_PASSWORD=" + "x" * 50 + " ") * 20000  # ~1.2 MB, no quotes
+    t0 = time.perf_counter()
+    out = redaction.redact(payload)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 3.0, f"redact() took {elapsed:.1f}s — possible ReDoS regression"
+    assert "xxxxx" not in out  # values still redacted
+
+
+def test_tier3_long_option_rm_positive_and_negative() -> None:
+    # RED-7: `rm` long options were under-classified below Tier 3 by the
+    # short-flag-only alternatives, so they were permitted in `guarded` and
+    # skipped the confirmation broker.
+    def c(s: str) -> str:
+        return policy.classify("shell_exec", s).name
+
+    assert c("rm --recursive --force /data") == "IRREVERSIBLE"
+    assert c("rm --force -r /data") == "IRREVERSIBLE"
+    assert c("rm -r --force /data") == "IRREVERSIBLE"
+    assert c("rm --no-preserve-root -rf /") == "IRREVERSIBLE"
+    assert c("rm a b c --force /data") == "IRREVERSIBLE"
+    assert c("rm -rf /data") == "IRREVERSIBLE"  # short form unchanged
+    # Negatives: a non-destructive rm and unrelated --force commands.
+    assert c("rm file.txt") != "IRREVERSIBLE"
+    assert c("npm install --force") != "IRREVERSIBLE"  # not rm
+
+
+def test_tier3_long_option_is_bounded_no_redos() -> None:
+    # RED-7 regression: the long-option alternative bounds the intervening-token
+    # count (`{0,16}?`); an unbounded `*?` would be O(n^2) on `rm rm rm …`
+    # (classify retries every `rm ` position with no `--force` to find).
+    import time
+
+    payload = "rm " * 200000  # ~600 KB of `rm `, no destructive flag
+    t0 = time.perf_counter()
+    policy.classify("shell_exec", payload)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 3.0, f"classify() took {elapsed:.1f}s — possible ReDoS regression"
+
+
 def test_pem_block_positive_and_negative() -> None:
     blob = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----"
     out = redaction.redact(blob)

@@ -447,9 +447,14 @@ def test_policy_text_builders_include_every_executor_visible_part() -> None:
     assert srv._policy_text_shell_script("BODY", "ENV") == "BODY\nENV"
     assert srv._policy_text_shell_script("BODY", "") == "BODY"
     assert srv._policy_text_shell_spawn("CMD", "ENV") == "CMD\nENV"
-    assert srv._policy_text_ssh_exec("CMD") == "CMD"
-    assert srv._policy_text_ssh_spawn("") == ""  # plain login shell
-    assert srv._policy_text_ssh_fanout("CMD") == "CMD"
+    # F2: the SSH command tools fold the destination host into the probe so
+    # RELAY_SHELL_POLICY_DENY can gate the *target*, not just the command. The
+    # command stays first (unchanged tier tokens); the host follows on its own
+    # line. A plain hostname adds no canonical-IP suffix.
+    assert srv._policy_text_ssh_exec("host1", "CMD") == "CMD\nhost1"
+    assert srv._policy_text_ssh_spawn("host1", "") == "\nhost1"  # login shell
+    assert srv._policy_text_ssh_fanout("h1, h2", "CMD") == "CMD\nh1, h2"
+    assert srv._policy_text_ssh_check("h1 h2") == "h1 h2"
     assert srv._policy_text_session_send("DATA") == "DATA"
     up = srv._policy_text_ssh_upload("h", "/src", "/dst")
     assert up.startswith("upload ") and "/src" in up and "h:/dst" in up
@@ -543,3 +548,58 @@ async def test_ssrf2_upload_deny_not_dodged_by_ip_encoding(tmp_path: Path) -> No
         if ln.strip()
     ]
     assert [r for r in recs if r["tool"] == "ssh_upload"][-1]["denied"] is True
+
+
+async def test_f2_deny_gates_host_for_rce_tools(tmp_path: Path) -> None:
+    # F2 (2026-07-15): RELAY_SHELL_POLICY_DENY on a host must gate the tools
+    # that grant remote execution — not only the transfer/scan tools. A denied
+    # host is refused before any connection attempt, and the deny is not dodged
+    # by an alternate IP spelling (SSRF widening reaches the command tools too).
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        policy_mode="open",
+        policy_deny=r"169\.254\.169\.254",
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+    )
+    mcp = build_server(settings)
+    exec_out = _text(
+        (
+            await mcp.call_tool(
+                "ssh_exec",
+                {"host": "169.254.169.254", "command": "whoami", "timeout": 1},
+            )
+        )[0]
+    )
+    assert "DENIED" in exec_out
+    # decimal spelling of the metadata IP is still gated (SSRF widening)
+    fanout_out = _text(
+        (
+            await mcp.call_tool(
+                "ssh_fanout",
+                {"command": "whoami", "hosts": "2852039166", "timeout": 1},
+            )
+        )[0]
+    )
+    assert "DENIED" in fanout_out
+    check_out = _text(
+        (
+            await mcp.call_tool(
+                "ssh_check",
+                {"hosts": "169.254.169.254", "timeout": 1},
+            )
+        )[0]
+    )
+    assert "DENIED" in check_out
+    # a non-denied host is not blocked by the deny gate (it fails to connect
+    # instead, which is a different, non-DENIED result)
+    ok_out = _text(
+        (
+            await mcp.call_tool(
+                "ssh_exec",
+                {"host": "192.0.2.1", "command": "whoami", "timeout": 1},
+            )
+        )[0]
+    )
+    assert "DENIED" not in ok_out

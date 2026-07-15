@@ -36,6 +36,36 @@ def test_redact_args_nested() -> None:
     assert "REDACTED" in out["a"]["b"][0]
 
 
+def test_p1_scan_is_bounded_and_lossless() -> None:
+    # P1 (2026-07-15 perf pass): _scrub_str scans only max_len + a margin, then
+    # truncates to max_len — the dropped tail is never in the record, so bounding
+    # the scan cannot leak a secret it would otherwise catch. A ~2 MB argument
+    # must scrub in well under the old whole-string cost, a secret inside the
+    # kept window is still redacted, and a secret only in the far tail is simply
+    # truncated away (absent from the record).
+    import time
+
+    head = 'password="EARLYSECRET" ' + "a" * 400
+    tail = ' password="TAILSECRET_FARAWAY"'
+    payload = head + "b" * (2 * 1024 * 1024) + tail  # ~2 MB, secret at each end
+    t0 = time.perf_counter()
+    out = redact_args({"env_json": payload})["env_json"]
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 1.0, f"redact_args took {elapsed:.2f}s — scan not bounded?"
+    assert "EARLYSECRET" not in out  # in-window secret redacted
+    assert "TAILSECRET_FARAWAY" not in out  # far-tail secret truncated out
+    assert out.endswith(")")  # carries the "...(+N)" truncation marker
+
+
+def test_p1_preserves_output_for_normal_size_args() -> None:
+    # An argument that fits inside the scan window is byte-identical to the
+    # pre-P1 output (no behaviour change for realistic inputs).
+    args = {"command": "echo " + "x" * 2000, "token": "Bearer zzzzzzzzzzzz"}
+    out = redact_args(args, max_len=100)
+    assert len(out["command"]) <= 120 and out["command"].startswith("echo ")
+    assert "REDACTED" in out["token"]
+
+
 def test_redact_cli_flag_forms() -> None:
     assert "topsecret" not in redact("--password topsecret extra-arg")
     assert "topsecret" not in redact("--password=topsecret")
