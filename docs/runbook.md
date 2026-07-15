@@ -810,13 +810,13 @@ the mandatory LEEF 2.0 delimiter field) in the P2/P3 follow-up PR; **FMT-2
 (B-014 closed by PR #47 — `RELAY_SHELL_AUDIT_FORMAT` shipped with
 `jsonl`/`cef`/`leef` formatters in `src/relay_shell/audit.py`.)
 
-- **AUD-1 (L2, P2)** — an in-band `audit_verify` MCP tool: chain-verify +
-  correlate-by-input-`sha256`, mirroring `audit_tail`'s read-only wiring
-  (Tier 0, stable audit `tool` name). Lesson from the 2026-07-15 Vertex/Axiom
-  comparison (the sibling planes expose verify/correlate as a live tool). Needs
-  an ADR weighing the ADR-0007 tradeoff — verification was deliberately kept
-  *off* the tool surface (`relay-shell --verify-audit` is the operator/forensic
-  path). See `BACKLOG.md` (2026-07-15 section).
+- **AUD-1 (L2, P2)** — **Closed** as a split disposition (see `BACKLOG.md`).
+  Evaluated the "in-band audit verify/correlate" lesson against ADR 0007 and the
+  audit schema: **shipped** read-only triage filters on `audit_tail`
+  (`tool`/`tier`/`denied`) for the operator-diagnostic case; **declined**
+  in-band chain-verify (stays the CLI `--verify-audit`, ADR 0007 — the audited
+  model must not drive verification of its own trail); correlate-by-input-hash is
+  **N/A** (relay-shell hashes output, not input).
 - **OPS-2 (L4, P3)** — layer KEV/EPSS exploit-prioritization signal on top of
   the existing `pip-audit` gate (advisory only; `pip-audit` already fails
   closed). Low value for the small pinned set; revisit if it grows.

@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `audit_tail` gained read-only triage filters — `tool` (exact name), `tier`
+  (`0`..`3`), and `denied` (`true`/`false`) — so an operator MCP client can
+  narrow the scanned window (e.g. only denied calls, or only `shell_exec`)
+  without shelling into the host. Tier 0, tool contract unchanged; an unfiltered
+  call records the same `{"lines": N}` args as before. Actions the AUD-1
+  comparison lesson as a split disposition: chain-*verification* stays the CLI
+  `relay-shell --verify-audit` (ADR 0007 — the audited model must not drive
+  verification of its own trail), and correlate-by-input-hash does not apply
+  (relay-shell hashes the output, not the input).
 - Opt-in **Tier-3 confirmation broker** ([ADR 0009](docs/adr/0009-tier3-confirmation-broker.md);
   `RELAY_SHELL_CONFIRM_TIER3`, default off). When enabled, a Tier-3
   (IRREVERSIBLE) call that already passed the deny list and mode check does not
