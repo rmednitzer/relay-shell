@@ -246,6 +246,18 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                     error="invalid_grant",
                     error_description="authorization code does not belong to this client",
                 )
+            if int(record.get("expires_at", 0)) < _now():
+                # Same defense-in-depth posture as the client check: enforce
+                # expiry atomically at exchange, not only at ``load``. A code
+                # valid when loaded can lapse in the load->exchange window (or a
+                # caller could reach exchange without load), and expiry, like
+                # client ownership, must gate token issuance. The code was
+                # already popped above, so this also removes the stale record.
+                self._codes.save(codes)
+                raise TokenError(
+                    error="invalid_grant",
+                    error_description="authorization code already used or expired",
+                )
             self._codes.save(codes)
             scopes = list(authorization_code.scopes or _SCOPES)
             # _issue is sync and does its own load/save on tokens.json; the
@@ -355,6 +367,18 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                 raise TokenError(
                     error="invalid_grant",
                     error_description="refresh token does not belong to this client",
+                )
+            if int(record.get("expires_at", 0)) < _now():
+                # Enforce expiry at exchange too, mirroring the client check and
+                # ``load_refresh_token``'s expiry gate — an expired refresh token
+                # must not mint a fresh access/refresh pair even if exchange is
+                # reached without load or the token lapsed in the load->exchange
+                # window. The token was already popped above, so this also
+                # removes the stale record.
+                self._tokens.save(tokens)
+                raise TokenError(
+                    error="invalid_grant",
+                    error_description="refresh token already used or expired",
                 )
             self._tokens.save(tokens)
             effective = list(scopes or refresh_token.scopes or _SCOPES)

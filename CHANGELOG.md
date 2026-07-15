@@ -54,6 +54,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **AUTH-3: OAuth exchange paths now enforce token expiry atomically.**
+  `exchange_authorization_code` and `exchange_refresh_token` re-validated the
+  record's `client_id` as explicit defense-in-depth but did **not** re-check
+  `expires_at`, leaning entirely on `load_authorization_code` /
+  `load_refresh_token` having popped expired records first. That left a narrow
+  gap: a code/token valid when loaded could lapse in the load→exchange window
+  (or a future/alternate caller could reach exchange without load) and still
+  mint a fresh token — confirmed by PoC (an expired code and an expired refresh
+  token both minted access tokens at exchange). Both exchange paths now re-check
+  expiry after the `client_id` check and raise `invalid_grant`, mirroring the
+  existing ownership re-check and their `load_*` gates; the stale record is also
+  removed. Defense-in-depth for the auth trust boundary — not exploitable in the
+  normal SDK flow (which always loads first), but expiry, like client ownership,
+  must gate token issuance atomically. Paired regression tests
+  (`test_exchange_*_refuses_expired_*`).
 - **RED-8: redaction scan-window could leak the tail of a long quoted secret.**
   The P1 scan-window optimization (`_scrub_str` redacts only the first
   `max_len + 16 KiB` of an argument, since the record keeps only `max_len`) rested
