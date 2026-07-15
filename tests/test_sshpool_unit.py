@@ -228,6 +228,109 @@ async def test_sftp_put_no_cap_completes(tmp_path: Path, monkeypatch: pytest.Mon
     assert msg.startswith("uploaded")
 
 
+class _GatedStream:
+    """A remote stream that blocks on ``read`` until released, then EOFs.
+
+    Models a long-running command: ``run`` parks in ``_drain`` awaiting the
+    first chunk, giving a concurrent idle sweep a window to (wrongly) evict
+    the connection the run is still using.
+    """
+
+    def __init__(self, gate: asyncio.Event) -> None:
+        self._gate = gate
+        self._done = False
+
+    async def read(self, _n: int) -> bytes:
+        if self._done:
+            return b""
+        await self._gate.wait()
+        self._done = True
+        return b""
+
+
+class _GatedProc:
+    def __init__(self, gate: asyncio.Event) -> None:
+        self.stdout = _GatedStream(gate)
+        self.stderr = _GatedStream(gate)
+        self.exit_status = 0
+
+    async def wait_closed(self) -> None:
+        return None
+
+    def terminate(self) -> None:  # pragma: no cover - not hit on the happy path
+        pass
+
+
+class _GatedConn(_MockConn):
+    def __init__(self, gate: asyncio.Event) -> None:
+        super().__init__()
+        self._gate = gate
+
+    async def create_process(self, *_a: object, **_k: object) -> _GatedProc:
+        return _GatedProc(self._gate)
+
+
+async def test_long_run_connection_not_evicted_mid_flight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A long ``run`` pins its connection so a concurrent idle sweep cannot
+    close it mid-drain.
+
+    Regression for the idle-reaper-vs-in-use bug on the ``run`` path. ``run``
+    connects once and drives the channel directly, so its cache entry's
+    ``last_used`` freezes at connect time. When ``max_timeout`` exceeds
+    ``ssh_idle_timeout`` (both are independently configurable — a valid
+    posture), a run can outlive the idle window; before the fix a concurrent
+    ``connect()``'s ``_sweep_conns`` then evicted and closed the connection out
+    from under the running command. ``run`` now pins for its whole duration.
+    """
+    gate = asyncio.Event()
+    conn = _GatedConn(gate)
+
+    async def fake_connect(*_a: object, **_k: object) -> _GatedConn:
+        return conn
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+        ssh_idle_timeout=300,  # aggressive reaping ...
+        max_timeout=3600,  # ... while long commands are permitted
+    )
+    inv = Inventory(str(tmp_path / "no_ssh_config"), "").load()
+    pool = SshPool(settings=settings, inventory=inv)
+
+    run_task = asyncio.create_task(
+        pool.run("h1.example", "sleep 3600", timeout=3600, connect_kwargs=_CK)
+    )
+    try:
+        # Let run connect + reach the drain, then confirm it pinned.
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if pool._conns:
+                break
+        key = next(iter(pool._conns))
+        assert pool._conns[key].pins == 1, "an in-flight run must pin its connection"
+
+        # Age the entry past the idle window and fire the sweep. The pin holds.
+        pool._conns[key].last_used = time.monotonic() - 1000
+        await pool._sweep_conns()
+        assert key in pool._conns, "run's live connection must survive the idle sweep"
+        assert not conn.is_closed(), "run's connection must not be closed mid-flight"
+    finally:
+        gate.set()  # let the command finish
+        _out, code = await asyncio.wait_for(run_task, 5)
+    assert code == 0
+    # Pin released once run returned; the now-idle entry becomes evictable.
+    assert pool._conns[key].pins == 0
+    pool._conns[key].last_used = time.monotonic() - 1000
+    await pool._sweep_conns()
+    assert key not in pool._conns, "connection is evictable once the run completes"
+
+
 async def test_close_all_during_connect_discards_conn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

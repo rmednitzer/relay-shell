@@ -344,84 +344,88 @@ class SshPool:
         max_output_bytes: int | None = None,
     ) -> tuple[str, int | None]:
         conn = await self.connect(target, **connect_kwargs)
-        # No explicit pin here: `timeout` is required and the caller clamps it
-        # to <= max_timeout, which is below the default idle timeout, so a run
-        # cannot outlive the idle window and be evicted mid-flight. (Sessions,
-        # forwards, and timeout=0 SFTP transfers are unbounded, so those pin.)
-        # Both code paths now use the same explicit-create_process +
+        # Pin for the run's duration. A run connects once and drives the channel
+        # directly, so its cache entry's last_used freezes at connect time; if
+        # the run outlives the idle window a concurrent connect()'s sweep would
+        # otherwise evict and close the connection mid-drain. The run timeout is
+        # clamped to max_timeout, but max_timeout (up to 86400) can exceed
+        # ssh_idle_timeout (down to 0), so the window is not guaranteed by the
+        # clamp — pin explicitly rather than rely on a cross-setting invariant.
+        # Both code paths use the same explicit-create_process +
         # terminate-on-timeout cleanup so a TimeoutError never leaves a
         # remote process parked on the SSH connection. The bounded path
         # additionally caps the kept bytes; the unbounded path keeps
         # everything received.
         cap = max_output_bytes if (max_output_bytes is not None and max_output_bytes > 0) else None
 
-        out_parts: list[bytes] = []
-        err_parts: list[bytes] = []
-        out_seen = 0
-        err_seen = 0
-        out_kept = [0]
-        err_kept = [0]
+        async with self._pinned(conn):
+            out_parts: list[bytes] = []
+            err_parts: list[bytes] = []
+            out_seen = 0
+            err_seen = 0
+            out_kept = [0]
+            err_kept = [0]
 
-        async def _drain(stream: Any, parts: list[bytes], seen: int, kept: list[int]) -> int:
-            while True:
-                chunk = await stream.read(65536)
-                if not chunk:
-                    return seen
-                seen += len(chunk)
-                if cap is None:
-                    parts.append(chunk)
-                    kept[0] += len(chunk)
-                else:
-                    budget = cap - kept[0]
-                    if budget > 0:
-                        piece = chunk[:budget]
-                        parts.append(piece)
-                        kept[0] += len(piece)
+            async def _drain(stream: Any, parts: list[bytes], seen: int, kept: list[int]) -> int:
+                while True:
+                    chunk = await stream.read(65536)
+                    if not chunk:
+                        return seen
+                    seen += len(chunk)
+                    if cap is None:
+                        parts.append(chunk)
+                        kept[0] += len(chunk)
+                    else:
+                        budget = cap - kept[0]
+                        if budget > 0:
+                            piece = chunk[:budget]
+                            parts.append(piece)
+                            kept[0] += len(piece)
 
-        proc: Any | None = None
+            proc: Any | None = None
 
-        async def _open_and_drain() -> tuple[int, int]:
-            # ``create_process`` is the first remote-side await: a server
-            # that accepts the TCP/SSH connection but stalls on session/
-            # process creation must still be bounded by ``timeout``, not
-            # by waiting for the remote to ever respond. Including it in
-            # the same wait_for envelope keeps ``ssh_exec(timeout=...)``
-            # honest end-to-end.
-            nonlocal proc
-            proc = await conn.create_process(command, encoding=None)
-            return await asyncio.gather(
-                _drain(proc.stdout, out_parts, out_seen, out_kept),
-                _drain(proc.stderr, err_parts, err_seen, err_kept),
+            async def _open_and_drain() -> tuple[int, int]:
+                # ``create_process`` is the first remote-side await: a server
+                # that accepts the TCP/SSH connection but stalls on session/
+                # process creation must still be bounded by ``timeout``, not
+                # by waiting for the remote to ever respond. Including it in
+                # the same wait_for envelope keeps ``ssh_exec(timeout=...)``
+                # honest end-to-end.
+                nonlocal proc
+                proc = await conn.create_process(command, encoding=None)
+                return await asyncio.gather(
+                    _drain(proc.stdout, out_parts, out_seen, out_kept),
+                    _drain(proc.stderr, err_parts, err_seen, err_kept),
+                )
+
+            try:
+                out_seen, err_seen = await asyncio.wait_for(_open_and_drain(), timeout)
+                # _open_and_drain set proc before returning the gather result;
+                # the assert narrows the Optional for the type checker.
+                assert proc is not None
+                # wait_closed needs its own bound: drains hitting EOF normally
+                # means the remote is exiting, but a misbehaving peer could
+                # still hold the channel open. 5s is generous for a clean reap.
+                await asyncio.wait_for(proc.wait_closed(), 5)
+            except TimeoutError:
+                # Terminate so the remote process doesn't park on the SSH
+                # connection until the connection itself dies, then bound the
+                # post-terminate wait so cleanup itself can't hang either.
+                # ``proc`` may be None if the timeout fired during
+                # create_process; in that case there is nothing local to clean up.
+                if proc is not None:
+                    with contextlib.suppress(Exception):
+                        proc.terminate()
+                    with contextlib.suppress(Exception):
+                        await asyncio.wait_for(proc.wait_closed(), 2)
+                return (f"[TIMEOUT after {timeout}s]", None)
+            out = b"".join(out_parts).decode("utf-8", "replace") + b"".join(err_parts).decode(
+                "utf-8", "replace"
             )
-
-        try:
-            out_seen, err_seen = await asyncio.wait_for(_open_and_drain(), timeout)
-            # _open_and_drain set proc before returning the gather result;
-            # the assert narrows the Optional for the type checker.
-            assert proc is not None
-            # wait_closed needs its own bound: drains hitting EOF normally
-            # means the remote is exiting, but a misbehaving peer could
-            # still hold the channel open. 5s is generous for a clean reap.
-            await asyncio.wait_for(proc.wait_closed(), 5)
-        except TimeoutError:
-            # Terminate so the remote process doesn't park on the SSH
-            # connection until the connection itself dies, then bound the
-            # post-terminate wait so cleanup itself can't hang either.
-            # ``proc`` may be None if the timeout fired during
-            # create_process; in that case there is nothing local to clean up.
-            if proc is not None:
-                with contextlib.suppress(Exception):
-                    proc.terminate()
-                with contextlib.suppress(Exception):
-                    await asyncio.wait_for(proc.wait_closed(), 2)
-            return (f"[TIMEOUT after {timeout}s]", None)
-        out = b"".join(out_parts).decode("utf-8", "replace") + b"".join(err_parts).decode(
-            "utf-8", "replace"
-        )
-        if cap is not None and out_seen + err_seen > cap:
-            out = truncate(out, cap)
-        code = proc.exit_status
-        return (str(out), int(code) if isinstance(code, int) else None)
+            if cap is not None and out_seen + err_seen > cap:
+                out = truncate(out, cap)
+            code = proc.exit_status
+            return (str(out), int(code) if isinstance(code, int) else None)
 
     async def open_process(
         self,
