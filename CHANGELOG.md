@@ -100,9 +100,13 @@ All notable changes to this project are documented here. The format follows
   (`ConvertTo-SecureString 'P@ss' -AsPlainText -Force`, positional / `-String` /
   after-switches) while leaving a `$var` handle or a bare switch untouched. A new
   `(?<![A-Za-z])` guard on the CLI-flag rule stops it over-scrubbing the token
-  after a PowerShell `Verb-Noun` cmdlet (`Get-Credential -Message …`) — a strict
-  reduction in false-scrub that never lowers true redaction (a real secret flag
-  is never preceded by a letter). Existing keyword redaction is byte-identical;
+  after a PowerShell `Verb-Noun` cmdlet (`Get-Credential -Message …`). The guard
+  is subtractive for *every* keyword (`password`/`secret`/`token`/… as well as
+  `credential`), but the only shape it stops matching is a letter glued directly
+  to the dash (`foo-password …`), which is never a real flag token — a real
+  secret flag is preceded by whitespace / start / `=` / a quote, and the `=`/`:`
+  forms stay covered by the untouched generic keyword rule regardless. So it
+  lowers false-scrub without lowering true redaction on any realistic input.
   `PATTERNS_VERSION` 10→11. Paired over/under-scrub + ReDoS-ceiling tests in
   `tests/test_redaction.py`. Positional secrets with no keyword (`net user bob
   P@ss`) remain unredactable — documented in `docs/deployment.md` §8b.
