@@ -73,7 +73,7 @@ centrally; failure paths never crash the transport. The reasoning layer sits
 | Tool | Purpose |
 |------|---------|
 | `server_info` | Server version, effective limits, policy mode, audit path. |
-| `audit_tail` | Return the last N audit records (read-only, Tier 0). |
+| `audit_tail` | Return recent audit records as JSONL, optionally filtered by `tool`/`tier`/`denied` (read-only, Tier 0). |
 | `operation_confirm` | Arm a Tier-3 confirmation token (opt-in broker, ADR 0009), then re-issue the call. |
 
 The HTTP transport also exposes `GET /metrics` (Prometheus text format):

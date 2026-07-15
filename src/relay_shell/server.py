@@ -120,6 +120,34 @@ def _confirm_op_key(policy_text: str, audit_args: dict[str, Any]) -> str:
     return f"{policy_text}\x00{canonical}"
 
 
+def _filter_audit_records(text: str, tool: str, tier: int, denied: bool | None) -> str:
+    """Keep the JSONL audit records in ``text`` that match the given filters.
+
+    ``tool`` exact-matches the record's ``tool`` (empty = any); ``tier`` matches
+    the integer tier (``< 0`` = any); ``denied`` matches the boolean
+    ``denied`` field (``None`` = any). Order is preserved. A line that is not
+    valid JSON is dropped while filtering (the on-disk log is well-formed JSONL;
+    this is defensive against a torn final write). Used only by the read-only
+    ``audit_tail`` view — never on the write path.
+    """
+    out: list[str] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if tool and rec.get("tool") != tool:
+            continue
+        if tier >= 0 and rec.get("tier") != tier:
+            continue
+        if denied is not None and bool(rec.get("denied", False)) != denied:
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def _ctx_ids(ctx: Context | None) -> tuple[str, str]:
     if ctx is None:
         return "", ""
@@ -1525,24 +1553,55 @@ def build_server(settings: Settings | None = None) -> FastMCP:
         )
 
     @mcp.tool()
-    async def audit_tail(lines: int = 50, ctx: Context | None = None) -> str:
-        """Return the last N records from the audit log (Tier 0, read-only)."""
+    async def audit_tail(
+        lines: int = 50,
+        tool: str = "",
+        tier: int = -1,
+        denied: bool | None = None,
+        ctx: Context | None = None,
+    ) -> str:
+        """Return recent audit-log records as JSONL (oldest first), optionally filtered.
+
+        Scans the last ``lines`` records (clamped to ``[1, 1000]``) and returns
+        those matching the optional filters: ``tool`` (exact tool name, e.g.
+        ``shell_exec``; empty = any), ``tier`` (``0``..``3``; ``-1`` = any), and
+        ``denied`` (``true``/``false``; unset = any). Filtering narrows *within*
+        the scanned window, so widen ``lines`` to reach further back. Read-only,
+        Tier 0 — an operator MCP client can triage the audit trail (only denied
+        calls, only one tool) without shelling into the host. Returns the empty
+        string if the log is absent/empty or nothing in the window matches.
+        """
         # Clamp to a generous but bounded ceiling so a misconfigured client
         # cannot ask for the whole log. The output budget on the wrapper is
         # the second line of defence: even at 1000 lines x worst-case
         # record size, the bound truncates rather than the response
         # blowing the transport.
         bounded = clamp(lines, 1, 1000)
+        # Only the filters that are actually set reach the audit args, so an
+        # unfiltered call records the same {"lines": N} shape as before.
+        audit_args: dict[str, Any] = {"lines": bounded}
+        if tool:
+            audit_args["tool_filter"] = tool
+        if tier >= 0:
+            audit_args["tier_filter"] = tier
+        if denied is not None:
+            audit_args["denied_filter"] = denied
+
+        def _read_and_filter() -> str:
+            # File read is blocking; the (cheap) parse+filter rides the same
+            # offload so the event loop stays free even at 1000 records.
+            text = app.audit.tail(bounded)
+            if not tool and tier < 0 and denied is None:
+                return text  # unfiltered path is byte-identical to before
+            return _filter_audit_records(text, tool, tier, denied)
 
         async def _work() -> tuple[str, int | None]:
-            # File read is blocking; offload so the event loop stays free.
-            body = await asyncio.to_thread(app.audit.tail, bounded)
-            return body, None
+            return await asyncio.to_thread(_read_and_filter), None
 
         return await app.run(
             tool="audit_tail",
             ctx=ctx,
-            audit_args={"lines": bounded},
+            audit_args=audit_args,
             policy_text="",
             max_output=app.clamp_output(cfg.max_output),
             work=_work,
@@ -1753,7 +1812,7 @@ Choosing a tool:
   known_hosts with ssh_keyscan.
 
 Diagnostics: server_info reports limits and policy mode; audit_tail returns
-the last N audit records.
+recent audit records as JSONL, optionally filtered by tool / tier / denied.
 
 Every call is tier-classified, bounded (timeout + output caps), and appended
 to an append-only audit log (output is hashed, never stored). When the
@@ -1823,7 +1882,8 @@ Moving data and ports
 Diagnostics
 -----------
 - server_info  version, effective limits, policy mode, audit path and state.
-- audit_tail   the last N audit records (read-only).
+- audit_tail   recent audit records as JSONL (read-only); optional filters
+               tool / tier / denied triage the scanned window.
 
 Confirming an irreversible operation (opt-in)
 ---------------------------------------------

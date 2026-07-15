@@ -210,12 +210,12 @@ Closed (engagement PR):
 | DOC-1 | Living docs named the superseded pin (`mcp==1.27.2` / `asyncssh` 2.23.1) after Renovate moved it to `mcp==1.28.1` / `asyncssh==2.24.0` | **Closed** (this PR). Reconciled the README status line + compatibility matrix and the `docs/architecture.md` diagram; "last validated" → 2026-07-15. Frozen ADRs / prior engagement records left intact per convention. |
 | ENV-1 | `.env.example` missing `RELAY_SHELL_CONFIRM_TIER3` / `RELAY_SHELL_CONFIRM_TTL` | **Closed** (PR #129). Added the two commented vars mirroring `docs/deployment.md` §8a (this session couldn't edit `.env*` paths; done in a follow-up). |
 | DOC-6 (L3) | No deploy-host HIDS / config-drift guidance | **Closed** (DOC-6 PR). `docs/deployment.md` §3a "Host integrity + config-drift monitoring" documents etckeeper / AIDE / fail2ban / lynis as detection compensating for the intentionally-partial systemd confinement. Docs only. |
+| AUD-1 (L2) | No in-band audit verify / correlate tool | **Closed as a split disposition** (AUD-1 PR), after evaluating the lesson against ADR 0007 + the actual audit schema. **Shipped:** read-only triage filters on `audit_tail` (`tool`/`tier`/`denied`, Tier 0, tool contract unchanged) — the operator-diagnostic use case that already justifies `audit_tail`. **Declined:** in-band chain-*verify* stays the CLI `--verify-audit` (ADR 0007 — the audited model must not drive verification of its own trail). **N/A:** correlate-by-input-`sha256` — relay-shell hashes the *output*, not the input, so there is no input hash to correlate on. |
 
 Open deferrals (severity order; smaller effort first):
 
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
-| AUD-1 (L2) | No in-band audit verify / correlate tool | low | M | Lesson from the comparison: a read-only `audit_verify` (chain-verify + correlate-by-input-`sha256`) MCP tool mirroring `audit_tail`'s wiring (Tier 0, stable audit `tool` name). Needs an ADR weighing the ADR-0007 tradeoff (verification was deliberately kept *off* the tool surface); the CLI `--verify-audit` already covers the operator/forensic path. | maintainer |
 | OPS-2 (L4) | `pip-audit` has no KEV/EPSS exploit prioritization | info | S | Lesson from the comparison: layer Known-Exploited / EPSS signal on top of the existing `pip-audit` gate for prioritization. Advisory only — `pip-audit` already fails closed. Low value for the small pinned set; revisit if the dependency set grows. | maintainer |
 
 ## Notes on items NOT added here

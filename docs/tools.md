@@ -199,12 +199,18 @@ inventory size. Tier 0.
 Tests: `tests/test_tool_wrappers.py`, `tests/test_stdio_e2e.py`.
 
 ### `audit_tail`
-Return the last `lines` records from the audit log as JSONL (oldest first).
-`lines` defaults to 50 and is clamped to `[1, 1000]`. Returns the empty
-string if the audit file does not exist or is empty. Read-only: opens a
-fresh fd so the writer's append-only handle is untouched. Useful for an
-operator MCP client debugging a session without shelling into the host.
-Tier 0.
+Return recent audit-log records as JSONL (oldest first), optionally filtered.
+`lines` defaults to 50 and is clamped to `[1, 1000]` — it is the size of the
+scanned window. Optional read-only triage filters narrow *within* that window
+(widen `lines` to reach further back): `tool` (exact tool name, e.g.
+`shell_exec`; empty = any), `tier` (`0`..`3`; `-1` = any), and `denied`
+(`true`/`false`; unset = any). Returns the empty string if the audit file does
+not exist, is empty, or nothing in the window matches. Read-only: opens a fresh
+fd so the writer's append-only handle is untouched. Useful for an operator MCP
+client triaging a session (only denied calls, only one tool) without shelling
+into the host. Tier 0. (Chain *verification* stays off the tool surface — it is
+the CLI `relay-shell --verify-audit`, an operator/forensic action; see
+[ADR 0007](adr/0007-audit-hash-chain.md).)
 
 Tests: `tests/test_audit_tail_tool.py`.
 
