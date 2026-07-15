@@ -104,7 +104,7 @@ jobs:
             exit 1
           fi
           # Configure the trusted release-signing key for SSH signature verification.
-          # deploy/release-signing.pub holds the authorised signer(s) in OpenSSH
+          # deploy/release-signing.pub holds the authorized signer(s) in OpenSSH
           # allowed_signers format (principal SP keytype SP base64-key).
           git config gpg.ssh.allowedSignersFile "$(pwd)/deploy/release-signing.pub"
           # Verify the tag signature against the trusted key set
