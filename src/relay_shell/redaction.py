@@ -10,11 +10,16 @@ PEM blocks, ``Authorization`` headers, ``Bearer``/``key=value`` pairs
 (including the JSON-quoted-key shape ``"password": "x"`` — RED-6),
 long-name CLI flags - matching either a double dash (``--password=...``,
 ``--token VALUE``) or the single-dash long-name style some Go-flavored
-tools use (``-token=foo``, ``-password VALUE``), including quoted values
-and escape-aware backslash-space - URL-embedded credentials, a few
-cloud-provider assignment forms (AWS ``*_SECRET_ACCESS_KEY=``, Azure
-connection-string ``AccountKey=``/``SharedAccessKey=`` and SAS ``sig=``),
-and a handful of provider token shapes. Short-form single-letter flags like ``-p<value>``
+tools and PowerShell use (``-token=foo``, ``-Password VALUE``,
+``-Credential VALUE``), including quoted values and escape-aware
+backslash-space (the flag rule ignores the dash of a PowerShell
+``Verb-Noun`` cmdlet such as ``Get-Credential`` so it does not over-scrub
+the following token) - the PowerShell ``ConvertTo-SecureString 'plaintext'
+-AsPlainText`` inline-secret idiom (WIN-1 / ADR 0011) - URL-embedded
+credentials, a few cloud-provider assignment forms (AWS
+``*_SECRET_ACCESS_KEY=``, Azure connection-string
+``AccountKey=``/``SharedAccessKey=`` and SAS ``sig=``), and a handful of
+provider token shapes. Short-form single-letter flags like ``-p<value>``
 are redacted **only** when a MySQL-family CLI (``mysql``, ``mariadb-*``,
 ``mycli``) appears in the same argument string: ``-p`` is overloaded
 across SSH (``-p22``), nmap (``-p1-1000``), and other tools, so the

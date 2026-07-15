@@ -801,10 +801,13 @@ commitment.
   and escaped `guarded`/`readonly` mode and the ADR 0009 broker. Increments
   **A** (pwsh-aware Tier-2/3 + priv-esc patterns — same anchoring/ReDoS
   discipline, POSIX byte-identical, `PATTERNS_VERSION` 9→10, paired FP tests) +
-  **B** (docs §8b) **landed**. Remaining follow-up (P3): **C** —
-  `-Credential`/`-AsPlainText` redaction coverage. Encoding/PTY (D/E) stay
-  documented caveats (pwsh is UTF-8 by default). No command/path translation
-  layer, no new transport/tool. Classification stays heuristic (ADR 0003).
+  **B** (docs §8b) and **C** (PowerShell credential redaction —
+  `credential` keyword + `ConvertTo-SecureString` inline-plaintext rule +
+  `Verb-Noun` over-scrub guard; `PATTERNS_VERSION` 11) **landed**.
+  Encoding/PTY (D/E) stay documented caveats (pwsh is UTF-8 by default). No
+  command/path translation layer, no new transport/tool. Classification and
+  redaction stay heuristic (ADR 0003) — a positional secret with no keyword is
+  not redactable.
 
 ### 7.2 Quality + automation
 

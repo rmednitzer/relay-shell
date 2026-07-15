@@ -153,6 +153,62 @@ def test_red8_unterminated_quote_is_redacted_but_wellformed_unchanged() -> None:
     assert out.startswith("--token=[REDACTED]")
 
 
+def test_win1_credential_keyword_redacted() -> None:
+    # WIN-1 / ADR 0011 increment C: PowerShell `-Credential`, connection-string
+    # `credential=`, and JSON `"credential":` shapes must not reach the audit log.
+    assert redact("-Credential MyP@ssw0rd") == "-Credential [REDACTED]"
+    assert "secret123" not in redact("--credential=secret123")
+    assert "connsecret" not in redact("Server=x;credential=connsecret;Db=y")
+    assert "jsonsecret" not in redact('{"credential": "jsonsecret"}')
+
+
+def test_win1_convertto_securestring_inline_plaintext_redacted() -> None:
+    # WIN-1: the canonical pwsh idiom for inlining a secret. The quoted or bare
+    # literal operand of ConvertTo-SecureString is collapsed, in the positional,
+    # -String, and flags-before-value forms.
+    for inp, secret in (
+        ("ConvertTo-SecureString 'P@ss123' -AsPlainText -Force", "P@ss123"),
+        ('ConvertTo-SecureString -String "Sekret99" -AsPlainText', "Sekret99"),
+        ("ConvertTo-SecureString BarePass77 -AsPlainText -Force", "BarePass77"),
+        ("ConvertTo-SecureString -AsPlainText -Force PlainX9", "PlainX9"),
+    ):
+        out = redact(inp)
+        assert secret not in out, inp
+        assert "[REDACTED]" in out, inp
+
+    # Negatives: an already-encrypted `$var` handle (not plaintext) and the bare
+    # switches must never be over-scrubbed.
+    out = redact("ConvertTo-SecureString $encrypted -Key $k")
+    assert "$encrypted" in out and "$k" in out
+    assert "[REDACTED]" not in out
+
+
+def test_win1_verb_noun_cmdlet_not_overscrubbed() -> None:
+    # The `(?<![A-Za-z])` guard keeps the CLI-flag rule from binding the dash of
+    # a PowerShell Verb-Noun cmdlet (`Get-Credential`, `Get-Secret`), which
+    # contains `-Credential`/`-Secret` but takes no inline secret — so the next
+    # token (a message, a name) must survive.
+    assert redact("Get-Credential -Message hi") == "Get-Credential -Message hi"
+    assert redact("Get-Secret Foo") == "Get-Secret Foo"
+    assert redact("Remove-Secret Bar") == "Remove-Secret Bar"
+    # But a genuine secret flag (preceded by whitespace / start) still redacts.
+    assert redact("cmd -Secret abc123") == "cmd -Secret [REDACTED]"
+    assert "hunter2" not in redact("--password hunter2")
+
+
+def test_win1_convertto_securestring_is_redos_bounded() -> None:
+    # The ConvertTo-SecureString rule skips leading switches with a bounded
+    # `{0,8}?` gap (RED-7 discipline); a large argument that repeats the cmdlet
+    # with only switches (never an operand) must stay linear.
+    import time
+
+    payload = "ConvertTo-SecureString -AsPlainText " * 100000  # ~3.6 MB, no operand
+    t0 = time.perf_counter()
+    redact(payload)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 3.0, f"redact() took {elapsed:.1f}s — possible ReDoS regression"
+
+
 def test_redact_cli_flag_handles_backslash_escaped_space() -> None:
     # Shell-style ``--password top\ secret`` must scrub the whole value, not
     # just up to the unescaped space. Common when avoiding quotes.

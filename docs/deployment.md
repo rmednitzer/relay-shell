@@ -445,6 +445,13 @@ Administering **Windows hosts over OpenSSH with PowerShell 7 (`pwsh`) as the
   As on POSIX, the deny list (`RELAY_SHELL_POLICY_DENY`, e.g. `Remove-Item`,
   `Format-Volume`) and `readonly`/`guarded` mode remain the hard controls; the
   classifier is defence in depth.
+- **Secret redaction.** Audited command *arguments* redact the PowerShell
+  credential shapes — `-Credential` / `credential=`, and the
+  `ConvertTo-SecureString 'plaintext' -AsPlainText` inline-secret idiom — as
+  well as the shared `-Password`/`-Token`/`-ApiKey` forms. As on POSIX this is
+  best-effort: a positional secret with no keyword (`net user bob NewP@ss`)
+  cannot be recognized and is not redacted, so prefer credential objects
+  (`Get-Credential`, a `PSCredential`) over inline plaintext.
 - **Output encoding.** `pwsh` 7 defaults to **UTF-8**, so audited output is
   decoded correctly. The one edge: a legacy native `.exe` invoked *from* pwsh
   (e.g. `diskpart.exe`) may emit OEM-codepage bytes, which decode with `�`
