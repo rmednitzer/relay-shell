@@ -191,8 +191,10 @@ Tests: `tests/test_sessions.py`, `tests/test_tool_wrappers.py`.
 Version, transport, policy mode, effective limits, audit path / degraded
 flag / format / chain (the tamper-evident hash chain state, ADR 0007),
 seccomp-notify state (`notify` enabled, `supported` + `reason`, the per-call
-`cap`, the `filter_version`; ADR 0006), SSH defaults (known-hosts mode,
-connect/keepalive/idle timeouts), inventory size. Tier 0.
+`cap`, the `filter_version`; ADR 0006), the Tier-3 confirmation-broker state
+(`confirm.tier3` enabled, `confirm.ttl`, live `confirm.pending` token count;
+ADR 0009), SSH defaults (known-hosts mode, connect/keepalive/idle timeouts),
+inventory size. Tier 0.
 
 Tests: `tests/test_tool_wrappers.py`, `tests/test_stdio_e2e.py`.
 
@@ -205,6 +207,22 @@ operator MCP client debugging a session without shelling into the host.
 Tier 0.
 
 Tests: `tests/test_audit_tail_tool.py`.
+
+### `operation_confirm`
+Second step of the **opt-in Tier-3 confirmation flow** (ADR 0009; off unless
+`RELAY_SHELL_CONFIRM_TIER3=true`). Takes a single `token`. When the broker is
+enabled, an irreversible (Tier 3) call does not run on first request — it
+returns `[CONFIRM REQUIRED tier 3: … token="…" …]` and is audited with
+`action=confirm_plan` (no side effect). Pass that token to `operation_confirm`
+to arm it, then **re-issue the exact same call** to execute it (audited with
+`action=confirm_execute`). Tokens are single-use, bound to the exact operation
+(tool + every executor-visible byte), and expire after
+`RELAY_SHELL_CONFIRM_TTL` seconds. The raw token is never written to the audit
+log (only a short fingerprint). When the broker is disabled, this reports so
+and changes nothing. Tier 0 (it arms ephemeral state and authorizes nothing on
+its own; the retried call is re-classified and re-admitted from scratch).
+
+Tests: `tests/test_broker.py`, `tests/test_tool_wrappers.py`.
 
 ## Resources
 

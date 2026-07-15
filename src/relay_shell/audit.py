@@ -404,8 +404,17 @@ class AuditLogger:
         request_id: str = "",
         client_id: str = "",
         denied: bool = False,
+        action: str = "",
     ) -> None:
-        """Append one audit line. Best-effort; swallows its own errors."""
+        """Append one audit line. Best-effort; swallows its own errors.
+
+        ``action`` is an optional, additive marker for a control-plane phase of
+        a call (the Tier-3 confirmation broker sets ``confirm_plan`` on the
+        challenge record and ``confirm_execute`` on the executed record; ADR
+        0009). Like ``request_id``/``client_id`` it is written only when
+        non-empty, so a default call (and the whole default-off configuration)
+        produces a byte-identical record.
+        """
         entry: dict[str, Any] = {
             "ts": now_iso(),
             "tool": tool,
@@ -420,6 +429,8 @@ class AuditLogger:
             entry["request_id"] = request_id
         if client_id:
             entry["client_id"] = client_id
+        if action:
+            entry["action"] = action
         self._emit(entry)
 
     def record_syscall(

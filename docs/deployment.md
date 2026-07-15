@@ -347,6 +347,22 @@ prohibitions with OS/network controls — an egress firewall (DNS-rebinding-proo
 seccomp/AppArmor, a restricted service account, `readonly`/`guarded` mode — not
 the deny list alone. See ADR 0003.
 
+### 8a. Tier-3 confirmation broker (optional)
+
+`open` runs Tier-3 (IRREVERSIBLE) commands with no friction; `guarded` refuses
+them wholesale. For the middle ground — *permit irreversible admin work, but
+require a deliberate second step per call* — set `RELAY_SHELL_CONFIRM_TIER3=true`
+([ADR 0009](adr/0009-tier3-confirmation-broker.md)). When on, a Tier-3 call that
+passed the deny list and mode check does not run on first request: it returns a
+single-use, TTL-bounded token (audited `action=confirm_plan`, no side effect),
+and the caller must arm it with the `operation_confirm` tool then re-issue the
+exact same call (audited `action=confirm_execute`). Tokens are bound to the
+exact operation and expire after `RELAY_SHELL_CONFIRM_TTL` seconds (default 120,
+range 5..3600). This is an added safeguard, never a bypass — the deny list and
+mode policy still run first — so it composes with any mode. Default off keeps
+the audit record byte-identical. `server_info.confirm` reports the live posture
+(`tier3`, `ttl`, `pending` token count).
+
 ## 9. Health
 
 `scripts/healthcheck.sh` checks the local HTTP port. For stdio, liveness is

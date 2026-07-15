@@ -28,6 +28,7 @@ _EXPECTED = {
     "ssh_hosts",
     "server_info",
     "audit_tail",
+    "operation_confirm",
 }
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +39,7 @@ async def test_all_tools_registered(settings: Settings) -> None:
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
     assert names == _EXPECTED
-    assert len(names) == 21
+    assert len(names) == 22
 
 
 async def test_every_tool_has_description(settings: Settings) -> None:
