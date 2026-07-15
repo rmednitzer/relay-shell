@@ -187,8 +187,13 @@ moves this ADR to Accepted:
   forms), the UTF-8 / native-`.exe` encoding edge, and the ConPTY / `session_kill`
   signal note.
 
-Increment **C** (`-Credential` / `-AsPlainText` redaction) remains a small
-follow-up (runbook §7.1, WIN-1); increments **D** (encoding) and **E** (PTY)
-stay documented caveats, not features, per the decision above. No change to the
-tool contract, transport surface, audit-record shape, or the ADR 0002/0003 trust
-boundary.
+Increment **C** (PowerShell credential redaction) also landed: `credential`
+joined the generic keyword and CLI-flag redaction rules, a dedicated
+`ConvertTo-SecureString` rule collapses an inline plaintext operand (positional,
+`-String`, or after switches) while leaving a `$var` handle untouched, and a
+`(?<![A-Za-z])` guard stops the flag rule from over-scrubbing the token after a
+`Verb-Noun` cmdlet (`Get-Credential`). `PATTERNS_VERSION` 10 → 11; paired
+over/under-scrub + ReDoS-ceiling tests in `tests/test_redaction.py`. Increments
+**D** (encoding) and **E** (PTY) stay documented caveats, not features, per the
+decision above. No change to the tool contract, transport surface, audit-record
+shape, or the ADR 0002/0003 trust boundary.

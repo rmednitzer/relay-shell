@@ -126,7 +126,14 @@ __all__ = [
 #      parameter abbreviation / aliases / pipeline-delete forms can still evade
 #      it (documented in ADR 0011), so the deny list + modes remain the hard
 #      controls.
-PATTERNS_VERSION = "10"
+# v11: 2026-07-15 Windows/pwsh redaction (ADR 0011 increment C, WIN-1). Added
+#      `credential` to the generic keyword rule and the CLI-flag rule (covers
+#      `-Credential x`, `credential=x`, `"credential":"x"`), and a dedicated
+#      `ConvertTo-SecureString` rule that redacts an inline plaintext operand
+#      (`ConvertTo-SecureString 'P@ss' -AsPlainText -Force`) while leaving a
+#      `$var` handle or a bare switch untouched. Keeps existing keyword behavior
+#      byte-identical (pure additions).
+PATTERNS_VERSION = "11"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -178,7 +185,7 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # pre-RED-6 unquoted case redacts byte-identically.
     (
         re.compile(
-            r"(?i)(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd)"
+            r"(?i)(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd|credential)"
             r"[\"']?\s*[:=]\s*[\"']?)"
             # Value = non-space, non-quote run. Stopping at a quote catches the
             # JSON-quoted-key shape `"password": "x"` (the value ends at the
@@ -232,11 +239,20 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # ``--api-key "two words"``, ``--password top\ secret``. See the
     # docstring of :mod:`relay_shell.redaction` for scope and the reasoning
     # around interactive flags / dash-prefixed values.
+    #
+    # The leading ``(?<![A-Za-z])`` keeps the dash from binding to the tail of a
+    # PowerShell ``Verb-Noun`` cmdlet: ``Get-Credential`` / ``Get-Secret`` /
+    # ``Remove-Secret`` contain ``-Credential`` / ``-Secret`` but take no inline
+    # secret, and without the guard the rule would over-scrub the *next* token
+    # (`-Message`, a task name, …). A real secret flag is preceded by
+    # whitespace / start / ``=`` / a quote — never a letter — so the guard never
+    # reduces true redaction (WIN-1 / ADR 0011 increment C).
     (
         re.compile(
             r"""(?ix)
             (?P<prefix>
-                --?(?:password|passwd|pwd|secret|token|api[_-]?key)
+                (?<![A-Za-z])
+                --?(?:password|passwd|pwd|secret|token|api[_-]?key|credential)
                 [=\ \t]+
             )
             (?:
@@ -259,6 +275,31 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
                                         # bare value, treating \\<char> as one unit;
                                         # allow single-dash-prefixed secrets (-abc)
                                         # but still reject next long option (--host)
+            )
+            """,
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # PowerShell inline plaintext via ``ConvertTo-SecureString`` (WIN-1 / ADR
+    # 0011 increment C). The canonical pwsh idiom for putting a secret on the
+    # command line:
+    #   ConvertTo-SecureString 'P@ss' -AsPlainText -Force
+    #   ConvertTo-SecureString -String "P@ss" -AsPlainText
+    # Redact the operand so the plaintext never reaches the audit log. The
+    # bounded ``(?:-\w+\s+){0,8}?`` skips any leading switches (`-AsPlainText`,
+    # `-Force`, `-String`) — bounded like the RED-7 rules so it stays linear —
+    # then the operand is a quoted string OR a bare non-flag/non-variable token.
+    # Requiring ``(?![-$])`` on the bare branch means a switch or a `$var`
+    # (an already-encrypted handle, not plaintext) is never over-scrubbed; only
+    # an inline literal secret is collapsed.
+    (
+        re.compile(
+            r"""(?ix)
+            (?P<prefix>convertto-securestring\s+(?:-\w+\s+){0,8}?)
+            (?:
+                "(?:[^"\\]|\\.)*"          # double-quoted secret
+              | '(?:[^'\\]|\\.)*'          # single-quoted secret
+              | (?![-$])\S+                # bare literal (not a switch, not a $var)
             )
             """,
         ),

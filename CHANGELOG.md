@@ -93,6 +93,23 @@ All notable changes to this project are documented here. The format follows
   list and modes remain the hard controls); `docs/deployment.md` §8b documents
   what works, the caveats, and the UTF-8/native-`.exe` and ConPTY notes. Paired
   positive/negative pattern tests in `tests/test_patterns.py`.
+- **Windows/PowerShell-7 secret redaction** (ADR 0011 increment C, WIN-1).
+  `credential` joined the generic keyword rule and the CLI-flag rule (covers
+  `-Credential x`, `credential=x`, `"credential":"x"`), and a dedicated
+  `ConvertTo-SecureString` rule collapses an inline plaintext operand
+  (`ConvertTo-SecureString 'P@ss' -AsPlainText -Force`, positional / `-String` /
+  after-switches) while leaving a `$var` handle or a bare switch untouched. A new
+  `(?<![A-Za-z])` guard on the CLI-flag rule stops it over-scrubbing the token
+  after a PowerShell `Verb-Noun` cmdlet (`Get-Credential -Message …`). The guard
+  is subtractive for *every* keyword (`password`/`secret`/`token`/… as well as
+  `credential`), but the only shape it stops matching is a letter glued directly
+  to the dash (`foo-password …`), which is never a real flag token — a real
+  secret flag is preceded by whitespace / start / `=` / a quote, and the `=`/`:`
+  forms stay covered by the untouched generic keyword rule regardless. So it
+  lowers false-scrub without lowering true redaction on any realistic input.
+  `PATTERNS_VERSION` 10→11. Paired over/under-scrub + ReDoS-ceiling tests in
+  `tests/test_redaction.py`. Positional secrets with no keyword (`net user bob
+  P@ss`) remain unredactable — documented in `docs/deployment.md` §8b.
 - The audit record gains one optional `action` field, written only under the
   confirmation broker (`confirm_plan` / `confirm_execute`); like
   `request_id`/`client_id` it is absent otherwise, so the default configuration's
