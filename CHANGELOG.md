@@ -52,13 +52,17 @@ All notable changes to this project are documented here. The format follows
     connects once and then drives the channel directly, never re-`connect()`ing,
     so its cache entry ages past `ssh_idle_timeout` while the holder is live.
     `_sweep_conns` then evicted and closed the connection out from under it.
-    Connections now carry a `pins` count: `open_process`, `add_forward`, and the
-    SFTP transfers pin their connection for their lifetime (released in
-    `aclose` / `close_forward` / on the transfer's exit), and the sweep never
-    idle-evicts a pinned entry. A *closed* connection is still purged regardless
-    of pins, and `run` stays unpinned (its clamped timeout is below the idle
-    window, so it cannot outlive it). Pins are released in `finally`, so a
-    failed close cannot leak a pin and wedge an entry alive forever.
+    Connections now carry a `pins` count: `open_process`, `add_forward`, the
+    SFTP transfers, and `run` pin their connection for the operation's lifetime
+    (released in `aclose` / `close_forward` / on the operation's exit), and the
+    sweep never idle-evicts a pinned entry. A *closed* connection is still purged
+    regardless of pins. Pins are released in `finally`, so a failed close cannot
+    leak a pin and wedge an entry alive forever. (`run` was initially left
+    unpinned on the assumption that its clamped timeout stays below the idle
+    window; that holds only at the default `max_timeout` (900s) < `ssh_idle_timeout`
+    (1800s) — a valid config with a larger `max_timeout` or a smaller
+    `ssh_idle_timeout` lets a long `ssh_exec` outlive the window and be evicted
+    mid-drain, so `run` now pins like the other channel-driving operations.)
   - **Session registry (`sessions.py`).** `recv` refreshed `last_used` only on
     entry, so a long poll whose `timeout` exceeds the registry idle timeout let
     the session age into "idle" *while a client was blocked waiting on it*; a
