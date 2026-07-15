@@ -13,6 +13,31 @@ its kind is tracked (runbook §7 for capability/quality/ops/security-hardening,
 
 Severity order within each section: low before info; smaller effort first.
 
+## 2026-07-15 adversarial + performance pass
+
+Findings from the red-team + profiling pass
+([`audit/2026-07-15-adversarial-engagement.md`](audit/2026-07-15-adversarial-engagement.md)),
+prompted by "is everything lean, secure, performant?".
+
+Closed (engagement PR):
+
+| ID | Sev | Title | Resolution |
+|----|-----|-------|------------|
+| RED-6 | HIGH | JSON-quoted-key secret leak in redaction | Quote-tolerant separator + linear char-class value run on the generic + AWS `secret_access_key` rules (`PATTERNS_VERSION` 8). Paired JSON-shape over/under-scrub tests. |
+| RED-6a | HIGH | ReDoS introduced by the first RED-6 draft (lookahead O(n²)) | Replaced with a linear char-class matcher; 1 MB scan 165 s → 196 ms. Linearity regression test. |
+| P1 | MED | Redaction scanned the full untruncated arg on the event loop | `_scrub_str` bounds the scan to `max_len + 16 KiB` (lossless — the tail is truncated out anyway); 1–4 MB arg now constant ~12 ms. Bounded-scan test. |
+| POL-2 | MED | `TIER3_PATTERN` missed non-obfuscated `rm` long options | Bounded (`{0,16}`) long-option `rm` alternative; positive/negative + ReDoS-ceiling tests. |
+| SSH-4 | MED | Deny-list blind to host for `ssh_exec`/`ssh_spawn`/`ssh_fanout`/`ssh_check` | Fold the destination host (canonical-IP widened) into their deny probes; wiring test. |
+| BRK-3 | MED | Broker binding omitted SSH identity (`user`/`port`/`key_path`) | Added to `ssh_exec`/`ssh_spawn` audit_args → op-key binding + audit visibility; ADR 0009 follow-up; binding test. |
+
+Open deferrals (low-priority perf; measure before acting — none on a hot path):
+
+| ID | Item | Sev | Effort | Rationale | Owner role |
+|----|------|-----|--------|-----------|------------|
+| PERF-1 | `AuditLogger._emit` does a synchronous file write+flush on the event loop (the read path is already offloaded via `asyncio.to_thread`) | low | S | Local append is fast; offload only if a slow/networked audit sink shows up. Consistency, not a measured stall. | maintainer |
+| PERF-2 | `SshPool._sweep_conns` is O(n) over cached connections under one lock per `connect()` | low | S | n is bounded by the connection cache (small); revisit only for very large fleets. | maintainer |
+| PERF-3 | `Session.buffer` uses `bytearray` front-deletion (memmove) on overflow/drain | low | S | Buffer is bounded (`session_buffer_bytes`); a deque-of-chunks would avoid the memmove if it ever matters. | maintainer |
+
 ## Closed (follow-up work after the audit pass)
 
 Resolved in the backlog-work PRs that followed the 2026-06-12 audit pass.

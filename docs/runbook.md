@@ -820,6 +820,14 @@ the mandatory LEEF 2.0 delimiter field) in the P2/P3 follow-up PR; **FMT-2
 - **OPS-2 (L4, P3)** — layer KEV/EPSS exploit-prioritization signal on top of
   the existing `pip-audit` gate (advisory only; `pip-audit` already fails
   closed). Low value for the small pinned set; revisit if it grows.
+- **PERF-1/2/3 (P3, low)** — deferred from the 2026-07-15 adversarial+perf pass
+  (`BACKLOG.md`), none on a measured hot path: the synchronous audit
+  write+flush on the event loop (offload like the read path only if a slow sink
+  appears); `SshPool._sweep_conns` O(n)-under-lock per connect; and
+  `Session.buffer` `bytearray` front-deletion. The hot-path redaction/classify
+  costs from that pass (RED-6a/P1/POL-2 ReDoS + the unbounded scan) were
+  **fixed** in the pass PR — see
+  [`audit/2026-07-15-adversarial-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-07-15-adversarial-engagement.md).
 
 ### 7.4 Docs and contribution
 
