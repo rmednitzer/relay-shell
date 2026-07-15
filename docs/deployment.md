@@ -413,6 +413,47 @@ mode policy still run first — so it composes with any mode. Default off keeps
 the audit record byte-identical. `server_info.confirm` reports the live posture
 (`tier3`, `ttl`, `pending` token count).
 
+### 8b. Windows targets over OpenSSH + PowerShell 7
+
+Administering **Windows hosts over OpenSSH with PowerShell 7 (`pwsh`) as the
+`DefaultShell`** is supported ([ADR 0011](adr/0011-windows-openssh-powershell.md)).
+
+- **Execution and file transfer already work as-is.** `ssh_exec` / `ssh_spawn` /
+  `ssh_fanout` pass the command straight to the remote's own shell (no POSIX
+  wrapping), so `pwsh` interprets it; SFTP paths (`ssh_upload` / `ssh_download`)
+  pass through opaquely, so a caller uses `C:\...` remote paths as the server
+  expects. There is no command- or path-translation layer — the caller supplies
+  PowerShell-appropriate syntax.
+- **The tier classifier now covers common Windows/pwsh destructive operations**
+  so `guarded` / `readonly` mode and the Tier-3 confirmation broker apply to
+  Windows targets, not just POSIX ones. Tier 3 (irreversible): `Remove-Item
+  -Recurse`/`-Force`, `Clear-Disk`, `Format-Volume`, `Stop-Computer` /
+  `Restart-Computer`, `Remove-Service`, `Remove-LocalUser`, `Clear-EventLog`,
+  plus native `del /s`, `rd /s`, `format <drive>`, `diskpart`, `vssadmin delete
+  shadows`, `bcdedit`, `cipher /w`, `reg delete`, `sc delete`, `wevtutil cl`.
+  Tier 2 (stateful): `Stop-`/`Set-Service`, `sc`/`net stop`, `Install-Module`/
+  `-Package`, `choco`/`winget install`, `Remove-`/`Disable-NetFirewallRule`,
+  `netsh advfirewall`, `reg add`, `New-LocalUser`, `Register-ScheduledTask`,
+  `Set-ExecutionPolicy`. Privilege escalation: `runas` and `Start-Process -Verb
+  RunAs` (the same tier bump as `sudo`).
+- **Classification stays heuristic — sharper caveat for PowerShell.** pwsh
+  parameters are case-insensitive, abbreviatable (`-Recurse` → `-rec` → `-r`),
+  and `:`-bindable, and cmdlets have aliases (`ri`, `del`, `rd`); a pipeline
+  form (`Get-ChildItem -Recurse | Remove-Item`) hides the recursion from the
+  `Remove-Item` token. Fully-abbreviated or aliased destructive forms can still
+  under-classify, exactly as shell obfuscation evades the deny list (ADR 0003).
+  As on POSIX, the deny list (`RELAY_SHELL_POLICY_DENY`, e.g. `Remove-Item`,
+  `Format-Volume`) and `readonly`/`guarded` mode remain the hard controls; the
+  classifier is defence in depth.
+- **Output encoding.** `pwsh` 7 defaults to **UTF-8**, so audited output is
+  decoded correctly. The one edge: a legacy native `.exe` invoked *from* pwsh
+  (e.g. `diskpart.exe`) may emit OEM-codepage bytes, which decode with `�`
+  replacement — a display artifact, not a correctness or security issue.
+- **Interactive sessions (`ssh_spawn`).** Modern Windows OpenSSH + pwsh 7 handle
+  the ConPTY-backed PTY and window resize. On older Windows OpenSSH builds the
+  SSH `signal` request may be unimplemented, so `session_kill` degrades to a
+  best-effort channel close rather than a delivered signal.
+
 ## 9. Health
 
 `scripts/healthcheck.sh` checks the local HTTP port. For stdio, liveness is
