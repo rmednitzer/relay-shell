@@ -121,7 +121,8 @@ Returns a forward id and the listening port. Tier 2.
 Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 
 ### `ssh_forward_list` / `ssh_forward_close`
-List active forwards / close one by id. Tier 1.
+List active forwards (`ssh_forward_list`, Tier 0) / close one by id
+(`ssh_forward_close`, Tier 1).
 
 Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 

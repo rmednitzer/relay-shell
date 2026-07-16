@@ -49,7 +49,9 @@ that a persuaded model still cannot exceed the operator-defined envelope:
   cannot prove its own newest record is the true end).
 - **Secret redaction.** Audited arguments are scrubbed for bearer tokens,
   API keys, private-key blocks, `Authorization` headers, long-name CLI
-  flags (both `--password` and single-dash `-token=` forms),
+  flags (both `--password` and single-dash `-token=` forms, including
+  PowerShell `-Credential VALUE` and the `ConvertTo-SecureString '...'
+  -AsPlainText` inline-secret idiom — WIN-1 / ADR 0011),
   URL-embedded credentials, cloud-provider assignment forms (AWS
   `*_SECRET_ACCESS_KEY=`, Azure connection-string `AccountKey=`/
   `SharedAccessKey=` and SAS `sig=`), and a set of structurally-anchored
@@ -116,7 +118,8 @@ Pin to the latest `0.x` minor and upgrade forward.
 
 | Version | Supported          |
 |---------|--------------------|
-| 0.2.x   | :white_check_mark: |
+| 0.3.x   | :white_check_mark: |
+| 0.2.x   | :x:                |
 | 0.1.x   | :x:                |
 
 ## Reporting a vulnerability

@@ -18,8 +18,8 @@ operators intentionally choose that posture.
 ## Required development loop
 
 1. Inspect relevant source + tests. For any change touching `policy`,
-   `redaction`, `audit`, `patterns`, or the `Relay.run` body, step 1 is
-   `docs/runbook.md` §2 (Audit) — those modules are the trust boundary.
+   `redaction`, `audit`, `patterns`, `broker`, or the `Relay.run` body, step 1
+   is `docs/runbook.md` §2 (Audit) — those modules are the trust boundary.
 2. Run baseline checks (`ruff check .`, `ruff format --check .`, `mypy`, `pytest -q`).
 3. Implement minimal safe improvements.
 4. Add/adjust tests for changed behavior.

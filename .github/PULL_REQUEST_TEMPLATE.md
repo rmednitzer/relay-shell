@@ -45,8 +45,9 @@ backlog item if applicable: "Closes B-007 from docs/runbook.md". -->
 
 Tick if this PR touches any of: `patterns.py`, `audit.py`, `redaction.py`,
 `policy.py`, the `Relay.run()` body or a resource handler in `server.py`,
-`auth/oauth.py`, `metrics.py`, `seccomp.py`, `deploy/install*.sh`, or
-`deploy/Caddyfile`. (Full list with rationale: runbook §3.3.)
+`auth/oauth.py`, `metrics.py`, `seccomp.py`, `broker.py`,
+`deploy/install*.sh`, or `deploy/Caddyfile`. (Full list with rationale:
+runbook §3.3.)
 
 - [ ] This PR is security-sensitive.
 
