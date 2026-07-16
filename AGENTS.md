@@ -84,6 +84,7 @@ inventing scope mid-PR.
 - `src/relay_shell/server.py`: tool + resource registration; audited execution wrapper; `/metrics` route on HTTP
 - `src/relay_shell/config.py`: typed `RELAY_SHELL_*` settings; fail-fast on invalid values
 - `src/relay_shell/policy.py`: Tier 0..3 classification + admission control (consumes `patterns`)
+- `src/relay_shell/broker.py`: opt-in Tier-3 confirmation broker (ADR 0009); issues/verifies single-use, TTL-bounded confirmation tokens so an irreversible call is gated behind `operation_confirm`, layered *after* the deny/mode check (never a bypass)
 - `src/relay_shell/audit.py`: append-only JSONL audit sink (hash of output, not body)
 - `src/relay_shell/redaction.py`: argument secret scrubbing (consumes `patterns`)
 - `src/relay_shell/patterns.py`: version-pinned compiled regex tables for redaction + tier classification (`PATTERNS_VERSION` is a monotonic counter)

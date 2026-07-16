@@ -1,8 +1,11 @@
-# Backlog — 2026-06-12 audit pass deferrals
+# Backlog — audit pass deferrals (2026-06-12 onward)
 
-This file is the deferral register for the 2026-06-12 full audit pass. Each
-item is a finding from `audit/02-security-findings.md` that was **not** fixed
-in the pass, with the schema the audit charter requires.
+This file is the running deferral register for the project's full and
+adversarial audit passes, beginning with the 2026-06-12 full audit pass and
+extended by each subsequent pass (through 2026-07-15). Each item is a finding
+that was **not** fixed in its pass — the initial entries come from
+`audit/02-security-findings.md`, later ones from the dated `audit/*.md`
+engagement records — recorded with the schema the audit charter requires.
 
 The project's **canonical, living backlog** is [`docs/runbook.md`](docs/runbook.md)
 §7 (and the §8 per-file docs plan). This file does not replace it; it records

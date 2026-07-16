@@ -11,13 +11,16 @@
 *                                       @rmednitzer
 
 # Trust boundary (runbook §3.3): policy admission, audit pipeline,
-# secret redaction, the central Relay.run() body, and the auth provider.
+# secret redaction, syscall-notify channel, the Tier-3 confirmation broker,
+# the central Relay.run() body, and the auth provider.
 /src/relay_shell/audit.py               @rmednitzer
 /src/relay_shell/redaction.py           @rmednitzer
 /src/relay_shell/policy.py              @rmednitzer
 /src/relay_shell/patterns.py            @rmednitzer
 /src/relay_shell/server.py              @rmednitzer
 /src/relay_shell/metrics.py             @rmednitzer
+/src/relay_shell/seccomp.py             @rmednitzer
+/src/relay_shell/broker.py              @rmednitzer
 /src/relay_shell/verifier.py            @rmednitzer
 /src/relay_shell/auth/                  @rmednitzer
 

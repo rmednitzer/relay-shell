@@ -339,6 +339,7 @@ Trigger an extra review pass if the diff touches:
 - `auth/oauth.py` (any TTL, store, or token-shape change)
 - `metrics.py` (label-cardinality and label-value-escaping invariants are part of the trust boundary - a model that controls a label could otherwise smuggle data into the exposition)
 - `seccomp.py` (the BPF filter, the notified-syscall set, the `CAP_SYS_ADMIN` gate, or the never-`no_new_privs` / always-CONTINUE invariants - a change here can alter the audit shape or the no-sandbox posture)
+- `broker.py` (ADR 0009 Tier-3 confirmation broker: the plan->execute token identity/binding, its TTL, and the always-*after*-the-deny/mode-check layering - a change here can weaken the friction on irreversible operations or, if it ran before the deny/mode check, turn a safeguard into a bypass)
 - `deploy/install*.sh` (anything that writes a systemd unit / EnvironmentFile)
 - `deploy/Caddyfile` (CIDR matcher or header changes)
 
@@ -375,7 +376,7 @@ These keep coming back; check them explicitly:
 
 1. **New tool added but `tests/test_server.py::_EXPECTED` not updated** -
    the count assertion catches it but the message is confusing if the test
-   maintainer forgot to bump `len(names) == 21`.
+   maintainer forgot to bump `len(names) == 22`.
 2. **Redaction pattern that eats the next argv token** - quoted/escaped
    values are tested; if you change `REDACTION_PREFIX_PATTERNS` in
    `patterns.py`, run `tests/test_redaction.py` and
@@ -706,7 +707,7 @@ as input). The workflow has three gated jobs:
      GitHub, and matches the `[project] version` in `pyproject.toml`.
      A lightweight tag or an unsigned annotated tag fails here, before
      anything is built.
-  2. **build** - dev install on Python 3.12, full test suite, then
+  2. **build** - dev install on Python 3.14, full test suite, then
      `python -m build` + `twine check` against the produced
      wheel + sdist.
   3. **publish** - runs in the `pypi` GitHub environment; uses OIDC
@@ -1030,10 +1031,11 @@ by the same checklist.
   - "Disclosure timeline" subsection under "Reporting a vulnerability"
     (acknowledge in 7 days, fix or mitigation plan in 30, public
     advisory + credit when shipped).
-- Add (still open):
-  - A "Supported versions" table once the project tags a second
-    release (today only 0.1.0 exists). Until then, omit rather than
-    fake.
+  - "Supported versions" table (added once the project tagged a second
+    release). It lists the latest minor as supported and older minors as
+    unsupported; refresh the table's rows each release so the current
+    `0.x` minor is the supported one.
+- Add (still open): nothing.
 - Remove: nothing.
 
 ### 8.3 `CHANGELOG.md`

@@ -121,7 +121,7 @@ worth calling out explicitly:
 
 A PR is security-sensitive if it touches any of: `patterns.py`, `audit.py`,
 `redaction.py`, `policy.py`, the `Relay.run()` body or a resource handler in
-`server.py`, `auth/oauth.py`, `metrics.py`, `seccomp.py`,
+`server.py`, `auth/oauth.py`, `metrics.py`, `seccomp.py`, `broker.py`,
 `deploy/install*.sh`, or `deploy/Caddyfile` (the canonical list, with
 per-file rationale, is runbook §3.3). The PR-template checklist (under
 `.github/`) has a section for these; tick it and walk the runbook §3.3

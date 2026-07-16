@@ -39,6 +39,11 @@ type safety, and how much transport/auth code we own versus delegate.
     suite plus the ADR 0005 step-3 upstream-symbol check (FastMCP/`Context`
     kwargs and the nine OAuth provider methods resolve unchanged); recorded
     in the [ADR 0005](0005-codebase-validation.md) 2026-06-12 outcome.
+  - `mcp` 1.27.2 → 1.28.1 and `asyncssh` 2.23.1 → 2.24.0 (shipped in v0.3.0,
+    2026-07-15; `pyproject.toml` / `requirements.txt`). The living docs
+    (README status line + compatibility matrix, `docs/architecture.md`) were
+    reconciled to the same pins in that window (CHANGELOG DOC-1); the release
+    pipeline runs the full test suite as its build gate.
 
 ## Rejected
 
