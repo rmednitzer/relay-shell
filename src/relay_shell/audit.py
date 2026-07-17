@@ -30,8 +30,23 @@ from .util import now_iso, sha256_hex
 __all__ = ["AuditLogger", "ChainResult", "verify_chain"]
 
 
+_U64_MASK = (1 << 64) - 1
+_I64_SIGN_BIT = 1 << 63
+
+
 def _format_jsonl(entry: dict[str, Any]) -> str:
     return json.dumps(entry, default=str, ensure_ascii=False)
+
+
+def _syscall_arg_fields(args: tuple[int, ...]) -> tuple[list[int], list[str]]:
+    """Return index-compatible signed values and lossless unsigned hex values."""
+    unsigned = [arg & _U64_MASK for arg in args]
+    signed = [
+        value if value < _I64_SIGN_BIT else value - (_U64_MASK + 1)
+        for value in unsigned
+    ]
+    exact_hex = [f"0x{value:016x}" for value in unsigned]
+    return signed, exact_hex
 
 
 def _stringify(value: Any) -> str:
@@ -448,9 +463,13 @@ class AuditLogger:
         a single allowed-to-continue syscall in a spawned child. It is an
         ADDITIONAL line in the same stream, never a replacement for the
         per-call record: it carries no output hash (there is no output) and
-        records only the raw scalar register arguments — never a dereferenced
-        user buffer. Off-host parsers key on ``tool`` to route it.
+        records only scalar register arguments — never a dereferenced user
+        buffer. The numeric array uses signed 64-bit two's-complement values
+        so common SIEM integer mappings can ingest every kernel ``__u64``;
+        the aligned hexadecimal array preserves the exact unsigned bits.
+        Off-host parsers key on ``tool`` to route it.
         """
+        signed_args, exact_hex_args = _syscall_arg_fields(args)
         entry: dict[str, Any] = {
             "ts": now_iso(),
             "tool": "syscall_notify",
@@ -458,7 +477,8 @@ class AuditLogger:
             "pid": pid,
             "syscall": syscall,
             "nr": nr,
-            "syscall_args": list(args),
+            "syscall_args": signed_args,
+            "syscall_args_hex": exact_hex_args,
         }
         if request_id:
             entry["request_id"] = request_id

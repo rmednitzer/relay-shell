@@ -251,10 +251,30 @@ def test_record_syscall_event_shape(tmp_path: Path) -> None:
     assert rec["syscall"] == "execve"
     assert rec["nr"] == 59
     assert rec["syscall_args"] == [1, 2, 3, 4, 5, 6]
+    assert rec["syscall_args_hex"] == [
+        "0x0000000000000001",
+        "0x0000000000000002",
+        "0x0000000000000003",
+        "0x0000000000000004",
+        "0x0000000000000005",
+        "0x0000000000000006",
+    ]
     assert rec["request_id"] == "r9"
     # A distinct shape from a tool-call record: no output hash, no args dict.
     assert "output_sha256" not in rec
     assert "args" not in rec
+
+
+def test_record_syscall_converts_unsigned_args_losslessly(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    log.record_syscall(
+        pid=4321, syscall="openat", nr=257, args=(0xFFFFFFFFFFFFFF9C, 0, 0, 0, 0, 0)
+    )
+    rec = json.loads(path.read_text())
+    assert rec["syscall_args"][0] == -100
+    assert rec["syscall_args_hex"][0] == "0xffffffffffffff9c"
+    assert len(rec["syscall_args"]) == len(rec["syscall_args_hex"]) == 6
 
 
 def test_record_syscall_overflow_shape(tmp_path: Path) -> None:
