@@ -1,0 +1,4 @@
+# Place inside table inet filter / chain input after invalid-state rejection.
+# Only the verified Talos-host egress used by the Axiom-cluster vmagent may
+# scrape the Relay exporter. The exporter separately binds only 100.97.186.72.
+iifname "tailscale0" ip saddr 100.122.61.42 tcp dport 9100 accept

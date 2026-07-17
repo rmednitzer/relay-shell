@@ -1,0 +1,13 @@
+[Unit]
+Description=Collect Relay host and edge health metrics every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+RandomizedDelaySec=5s
+Persistent=true
+Unit=relay-health-metrics.service
+
+[Install]
+WantedBy=timers.target
