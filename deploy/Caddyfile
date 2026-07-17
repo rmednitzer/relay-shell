@@ -24,23 +24,17 @@
 #
 # To stage against the Let's Encrypt staging CA before going live, set
 # RELAY_SHELL_EDGE_ACME_CA=https://acme-staging-v02.api.letsencrypt.org/directory.
-
 {
 	email {$RELAY_SHELL_EDGE_ACME_EMAIL}
 	acme_ca {$RELAY_SHELL_EDGE_ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
 }
 
 {$RELAY_SHELL_EDGE_DOMAIN} {
-	# EDGE-1: /authorize and the /.well-known/* discovery endpoints are
-	# handled BEFORE the CIDR @blocked rule below, so they are reachable from
-	# any source IP. This is intentional: the OAuth authorization-code flow
-	# redirects a *browser* (the operator's, from anywhere) to /authorize, and
-	# RFC 8414 discovery must be fetchable by the client before it has a token.
-	# They are not unauthenticated access to tools: /authorize still requires a
-	# registered client + PKCE, and tool traffic and /token remain CIDR-gated.
-	# For a machine-only deployment with no browser leg (the client reaches
-	# /authorize from an allowlisted host), move these three `handle` blocks
-	# below the `@blocked` rule so the CIDR allowlist covers them too.
+	# EDGE-1: OAuth browser/redirect, discovery, dynamic client registration,
+	# token exchange, protected-resource metadata, and MCP transport are handled
+	# before the CIDR block so ChatGPT can reach the complete OAuth/MCP flow.
+	# Public network reachability is intentional; protocol validation, PKCE,
+	# grant checks, and bearer-token authorization still gate sensitive actions.
 	handle /authorize {
 		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
 			header_up Host {upstream_hostport}
@@ -56,9 +50,24 @@
 			header_up Host {upstream_hostport}
 		}
 	}
+	handle /register {
+		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
+			header_up Host {upstream_hostport}
+		}
+	}
+	handle /token {
+		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
+			header_up Host {upstream_hostport}
+		}
+	}
+	handle /mcp {
+		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
+			header_up Host {upstream_hostport}
+		}
+	}
 
-	# Everything else (tool traffic, /token) is CIDR-restricted. Override
-	# RELAY_SHELL_EDGE_CLIENT_CIDRS to the source ranges of your MCP client.
+	# Everything else is CIDR-restricted. Override
+	# RELAY_SHELL_EDGE_CLIENT_CIDRS for any extra operational paths you expose.
 	@blocked not remote_ip {$RELAY_SHELL_EDGE_CLIENT_CIDRS:127.0.0.1/8 ::1}
 	handle @blocked {
 		respond "Forbidden" 403
@@ -73,12 +82,8 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "no-referrer"
-		# EDGE-2: lock down what the only HTML surface (the /authorize consent
-		# page) may load. `default-src 'self'` blocks third-party and inline
-		# resources; `frame-ancestors 'none'` is the CSP-level clickjacking
-		# guard alongside X-Frame-Options. CSP only affects HTML rendering, so
-		# this is inert for the JSON tool/token responses. If a customized
-		# authorize page needs inline styles/scripts, relax this here.
+		# EDGE-2: restrict the authorization page to same-origin resources and
+		# block framing/base-tag abuse; JSON protocol responses are unaffected.
 		Content-Security-Policy "default-src 'self'; frame-ancestors 'none'; base-uri 'none'"
 		-Server
 	}
