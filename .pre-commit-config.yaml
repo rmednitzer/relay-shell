@@ -15,7 +15,7 @@ repos:
     # Pin to a known-good ruff release. Update this `rev` and the
     # `ruff>=` floor in `[project.optional-dependencies] dev` together
     # so local pre-commit and `pip install -e ".[dev]"` agree.
-    rev: v0.15.20
+    rev: v0.15.22
     hooks:
       - id: ruff
         args: [--fix]
