@@ -428,6 +428,24 @@ pytest -x -vv -s
 `pytest-asyncio` mode is `auto` (see `pyproject.toml`); you do not need to
 mark coroutines.
 
+If the test command is itself launched through a running Relay instance whose
+seccomp-notify channel is enabled, the live `seccomp` tests inherit the outer
+tool call's listener. Linux permits only one user-notify listener in a filter
+hierarchy, so the nested install returns `EBUSY` and is an environment artifact,
+not a product failure. Run that marked suite from a fresh PID 1 child instead:
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --uid="$(id -un)" --gid="$(id -gn)" \
+  --working-directory="$PWD" --setenv=PYTHONPATH=src \
+  -p AmbientCapabilities=CAP_SYS_ADMIN \
+  -p CapabilityBoundingSet=CAP_SYS_ADMIN \
+  "$PWD/.venv/bin/pytest" -q -m seccomp tests/test_seccomp.py
+```
+
+Keep the transient unit scoped to `CAP_SYS_ADMIN`; do not disable the running
+Relay channel or relax its service posture just to execute the tests.
+
 ### 4.3 Coverage (CI floor: 90%, current ~92%)
 
 `coverage` is in the dev extra and runs as part of the CI loop with a

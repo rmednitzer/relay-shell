@@ -3,6 +3,8 @@ Description=relay-shell - MCP server for shell and SSH operations
 Documentation=https://github.com/rmednitzer/relay-shell
 After=network-online.target
 Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=300
 
 [Service]
 Type=simple
@@ -18,8 +20,6 @@ Environment=RELAY_SHELL_AUDIT_PATH=/var/log/relay-shell/audit.jsonl
 ExecStart=/var/lib/relay-shell/venv/bin/relay-shell
 Restart=on-failure
 RestartSec=5
-StartLimitBurst=5
-StartLimitIntervalSec=300
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=relay-shell
