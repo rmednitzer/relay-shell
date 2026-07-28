@@ -173,6 +173,7 @@ def main() -> int:
     tls_not_after = 0.0
     try:
         context = ssl.create_default_context()
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         with (
             socket.create_connection((domain, 443), timeout=TIMEOUT_SECONDS) as raw,
             context.wrap_socket(raw, server_hostname=domain) as tls,
