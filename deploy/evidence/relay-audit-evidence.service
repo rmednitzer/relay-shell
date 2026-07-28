@@ -1,0 +1,26 @@
+[Unit]
+Description=Verify and externalize Relay Shell audit evidence
+After=network-online.target relay-shell.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=relay-shell
+Group=relay-shell
+EnvironmentFile=-/etc/relay-shell/audit-evidence.env
+ExecStart=/usr/local/libexec/relay-audit-evidence-sync
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/log/relay-shell
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+UMask=0077

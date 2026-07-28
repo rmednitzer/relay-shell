@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import os
 from pathlib import Path
@@ -251,10 +252,28 @@ def test_record_syscall_event_shape(tmp_path: Path) -> None:
     assert rec["syscall"] == "execve"
     assert rec["nr"] == 59
     assert rec["syscall_args"] == [1, 2, 3, 4, 5, 6]
+    assert rec["syscall_args_hex"] == [
+        "0x0000000000000001",
+        "0x0000000000000002",
+        "0x0000000000000003",
+        "0x0000000000000004",
+        "0x0000000000000005",
+        "0x0000000000000006",
+    ]
     assert rec["request_id"] == "r9"
     # A distinct shape from a tool-call record: no output hash, no args dict.
     assert "output_sha256" not in rec
     assert "args" not in rec
+
+
+def test_record_syscall_converts_unsigned_args_losslessly(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    log.record_syscall(pid=4321, syscall="openat", nr=257, args=(0xFFFFFFFFFFFFFF9C, 0, 0, 0, 0, 0))
+    rec = json.loads(path.read_text())
+    assert rec["syscall_args"][0] == -100
+    assert rec["syscall_args_hex"][0] == "0xffffffffffffff9c"
+    assert len(rec["syscall_args"]) == len(rec["syscall_args_hex"]) == 6
 
 
 def test_record_syscall_overflow_shape(tmp_path: Path) -> None:
@@ -355,6 +374,75 @@ def test_chain_resumes_across_reinit(tmp_path: Path) -> None:
     assert [r["seq"] for r in recs] == [0, 1, 2]
     assert recs[2]["prev"] == recs[1]["chain"]  # continued, not reset
     assert verify_chain(str(path)).ok
+
+
+def test_chain_resumes_from_rotated_file_when_active_is_empty(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 2)
+    rotated = tmp_path / "audit.jsonl-20260728"
+    path.replace(rotated)
+    path.touch()
+
+    AuditLogger(str(path), chain=True).record(
+        tool="t", args={"i": 2}, output="x", exit_code=0, tier=1
+    )
+
+    resumed = json.loads(path.read_text().strip())
+    assert resumed["seq"] == 2
+    assert resumed["prev"] == recs[-1]["chain"]
+
+
+def test_chain_resumes_from_compressed_rotated_file(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 2)
+    rotated = tmp_path / "audit.jsonl-20260728.gz"
+    with gzip.open(rotated, "wt", encoding="utf-8") as fh:
+        fh.write(path.read_text())
+    path.unlink()
+    path.touch()
+
+    AuditLogger(str(path), chain=True).record(
+        tool="t", args={"i": 2}, output="x", exit_code=0, tier=1
+    )
+
+    resumed = json.loads(path.read_text().strip())
+    assert resumed["seq"] == 2
+    assert resumed["prev"] == recs[-1]["chain"]
+
+
+def test_chain_ignores_unrelated_newer_siblings(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    recs = _write_chained(path, 2)
+    rotated = tmp_path / "audit.jsonl-20260728"
+    path.replace(rotated)
+    path.touch()
+    (tmp_path / "audit.jsonl.tmp").write_text("not-json\n", encoding="utf-8")
+
+    AuditLogger(str(path), chain=True).record(
+        tool="t", args={"i": 2}, output="x", exit_code=0, tier=1
+    )
+
+    resumed = json.loads(path.read_text().strip())
+    assert resumed["seq"] == 2
+    assert resumed["prev"] == recs[-1]["chain"]
+
+
+def test_chain_does_not_hide_malformed_active_tail_with_rotated_fallback(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "audit.jsonl"
+    _write_chained(path, 2)
+    path.replace(tmp_path / "audit.jsonl-20260728")
+    path.write_text("not-json\n", encoding="utf-8")
+
+    AuditLogger(str(path), chain=True).record(
+        tool="t", args={"i": 2}, output="x", exit_code=0, tier=1
+    )
+
+    lines = path.read_text().splitlines()
+    resumed = json.loads(lines[-1])
+    assert resumed["seq"] == 0
+    assert resumed["prev"] == _GENESIS
 
 
 def test_verify_chain_intact(tmp_path: Path) -> None:

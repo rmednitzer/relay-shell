@@ -1,0 +1,7 @@
+package=prometheus-node-exporter
+version=1.10.2-1
+architecture=amd64
+repository=Ubuntu resolute/universe
+retrieved_utc=2026-07-17
+deb_sha256=64dc6b1fd378013829cb75a46e2f93603da361aeeb616f2ebaac9a7162ce266b
+installed_binary_sha256=3505ad0799040414dad356043aae695786f80ba97e6681c066a2e9746b52ce6a

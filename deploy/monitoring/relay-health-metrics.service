@@ -1,0 +1,35 @@
+[Unit]
+Description=Emit Relay host, edge, TLS, and audit evidence metrics
+After=network-online.target relay-shell.service caddy.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=relay-shell
+Group=relay-shell
+EnvironmentFile=/etc/relay-shell/relay-monitoring.env
+ExecStart=/usr/local/libexec/relay-health-metrics
+TimeoutStartSec=45s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths=/var/log/relay-shell
+ReadWritePaths=/var/lib/prometheus/node-exporter
+UMask=0027

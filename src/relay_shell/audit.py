@@ -15,11 +15,13 @@ logger degrades to stderr (or silence) and records ``degraded=True``.
 from __future__ import annotations
 
 import contextlib
+import gzip
 import json
 import logging
 import os
 import sys
 import threading
+from collections import deque
 from dataclasses import dataclass
 from logging.handlers import WatchedFileHandler
 from pathlib import Path
@@ -30,8 +32,20 @@ from .util import now_iso, sha256_hex
 __all__ = ["AuditLogger", "ChainResult", "verify_chain"]
 
 
+_U64_MASK = (1 << 64) - 1
+_I64_SIGN_BIT = 1 << 63
+
+
 def _format_jsonl(entry: dict[str, Any]) -> str:
     return json.dumps(entry, default=str, ensure_ascii=False)
+
+
+def _syscall_arg_fields(args: tuple[int, ...]) -> tuple[list[int], list[str]]:
+    """Return index-compatible signed values and lossless unsigned hex values."""
+    unsigned = [arg & _U64_MASK for arg in args]
+    signed = [value if value < _I64_SIGN_BIT else value - (_U64_MASK + 1) for value in unsigned]
+    exact_hex = [f"0x{value:016x}" for value in unsigned]
+    return signed, exact_hex
 
 
 def _stringify(value: Any) -> str:
@@ -102,6 +116,55 @@ _FORMATTERS = {"jsonl": _format_jsonl, "cef": _format_cef, "leef": _format_leef}
 # file inherits its anchor from the last record of the prior file, carried
 # forward in that record's `chain` and the next record's `prev`.
 _CHAIN_GENESIS = "0" * 64
+
+
+def _tail_path(path: Path, lines: int) -> str:
+    """Return the last non-empty lines from a plain or gzip-compressed file."""
+    if lines <= 0:
+        return ""
+
+    if path.suffix == ".gz":
+        compressed_records: deque[str] = deque(maxlen=lines)
+        with gzip.open(path, "rt", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if raw.strip():
+                    compressed_records.append(raw.rstrip("\r\n"))
+        return "\n".join(compressed_records)
+
+    with path.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        if size == 0:
+            return ""
+
+        chunk_size = 8192
+        data = b""
+        offset = size
+        while offset > 0 and data.count(b"\n") <= lines:
+            read = min(chunk_size, offset)
+            offset -= read
+            fh.seek(offset)
+            data = fh.read(read) + data
+
+    text = data.decode("utf-8", errors="replace")
+    text_records = [line for line in text.splitlines() if line.strip()]
+    return "\n".join(text_records[-lines:])
+
+
+def _latest_rotated_path(target: Path) -> Path | None:
+    """Find the newest sibling produced by dateext or numeric log rotation."""
+    candidates: list[tuple[int, str, Path]] = []
+    for path in target.parent.iterdir():
+        if path == target or not path.is_file():
+            continue
+        suffix = path.name[len(target.name) :]
+        if suffix.endswith(".gz"):
+            suffix = suffix[:-3]
+        if not (len(suffix) > 1 and suffix[0] in {"-", "."} and suffix[1:].isdigit()):
+            continue
+        candidates.append((path.stat().st_mtime_ns, path.name, path))
+    latest = max(candidates, default=None)
+    return latest[2] if latest is not None else None
 
 
 def _chain_value(prev: str, entry_without_chain: dict[str, Any]) -> str:
@@ -378,14 +441,23 @@ class AuditLogger:
         """Continue an existing chain across restarts and log rotation.
 
         Reads the last on-disk record and resumes from its ``seq`` + ``chain``
-        so a restart does not reset the chain to genesis mid-stream.
-        Best-effort: a missing / empty / unchained / unparseable tail leaves
-        the chain at genesis (seq 0). That produces a *visible seam* a
-        verifier reports — a seq reset, never a silent gap. Never raises;
-        construction of the audit logger must not fail.
+        so a restart does not reset the chain to genesis mid-stream. If the
+        active log is empty, as it is after logrotate creates a fresh file,
+        the newest rotated sibling supplies the anchor. A non-empty malformed
+        active tail never falls back to older history: it starts a visible
+        genesis seam rather than masking possible corruption.
+
+        Best-effort: a missing / unchained / unparseable tail leaves the chain
+        at genesis (seq 0). That produces a *visible seam* a verifier reports,
+        never a silent gap. Construction of the audit logger must not fail.
         """
         with contextlib.suppress(Exception):
-            last = self.tail(1).strip()
+            target = Path(self.path).expanduser()
+            last = _tail_path(target, 1).strip()
+            if not last and target.stat().st_size == 0:
+                rotated = _latest_rotated_path(target)
+                if rotated is not None:
+                    last = _tail_path(rotated, 1).strip()
             if not last:
                 return
             rec = json.loads(last)
@@ -448,9 +520,13 @@ class AuditLogger:
         a single allowed-to-continue syscall in a spawned child. It is an
         ADDITIONAL line in the same stream, never a replacement for the
         per-call record: it carries no output hash (there is no output) and
-        records only the raw scalar register arguments — never a dereferenced
-        user buffer. Off-host parsers key on ``tool`` to route it.
+        records only scalar register arguments — never a dereferenced user
+        buffer. The numeric array uses signed 64-bit two's-complement values
+        so common SIEM integer mappings can ingest every kernel ``__u64``;
+        the aligned hexadecimal array preserves the exact unsigned bits.
+        Off-host parsers key on ``tool`` to route it.
         """
+        signed_args, exact_hex_args = _syscall_arg_fields(args)
         entry: dict[str, Any] = {
             "ts": now_iso(),
             "tool": "syscall_notify",
@@ -458,7 +534,8 @@ class AuditLogger:
             "pid": pid,
             "syscall": syscall,
             "nr": nr,
-            "syscall_args": list(args),
+            "syscall_args": signed_args,
+            "syscall_args_hex": exact_hex_args,
         }
         if request_id:
             entry["request_id"] = request_id
@@ -535,29 +612,6 @@ class AuditLogger:
         # embedded NUL, or an unexpected decoding failure must collapse
         # to "" rather than propagate to the diagnostic tool's caller.
         try:
-            path = Path(self.path).expanduser()
-            with path.open("rb") as fh:
-                fh.seek(0, os.SEEK_END)
-                size = fh.tell()
-                if size == 0:
-                    return ""
-
-                chunk_size = 8192
-                data = b""
-                offset = size
-                # Read backward until we have at least one more newline
-                # than requested, or we hit the start of the file.
-                while offset > 0 and data.count(b"\n") <= lines:
-                    read = min(chunk_size, offset)
-                    offset -= read
-                    fh.seek(offset)
-                    data = fh.read(read) + data
-
-            text = data.decode("utf-8", errors="replace")
-            # Drop blank trailing lines (logger does not write them, but
-            # a caller might tail a partial write window) and strip the
-            # line terminator on each record for consistent line output.
-            records = [ln for ln in text.splitlines() if ln.strip()]
-            return "\n".join(records[-lines:])
+            return _tail_path(Path(self.path).expanduser(), lines)
         except Exception:  # noqa: BLE001 - contract is "never raise"
             return ""
