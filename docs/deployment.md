@@ -302,12 +302,12 @@ relay-shell --verify-audit --audit-path /var/log/relay-shell/audit.jsonl-2026060
 **Rotation.** While the process keeps running, rotation preserves the chain:
 the in-memory anchor follows the file (`WatchedFileHandler` reopens, or
 `copytruncate` keeps the fd), so the new file continues the same `seq`/`chain`.
-A rotation **immediately followed by a restart** (before any record lands in
-the fresh file) re-anchors at genesis: the new file is a fresh genesis segment
-with `seq` restarting at 0 — a visible seam, not a silent gap. Verify each
-genesis-anchored segment independently; cross-segment continuity lives in the
-ordered off-host stream, consistent with ADR 0007's delegation of cross-file
-durability to off-host shipping.
+If a restart finds the active file empty, the logger resumes from the newest
+dateext- or numeric-named rotated sibling, including a gzip-compressed one.
+A missing, unchained, or unparseable tail creates a visible genesis seam
+instead; a non-empty malformed active tail is never bypassed with older
+history. Verify cross-file seams against the ordered off-host stream, which
+remains authoritative for tail-truncation and durability.
 
 ### 6b. Syscall-level audit channel (optional)
 

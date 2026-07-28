@@ -69,20 +69,18 @@ Add an **opt-in, additive** per-record hash chain to the audit log.
   `RELAY_SHELL_AUDIT_FORMAT=cef|leef` is **rejected at startup** (a config
   validation error, fail-fast per the `config` module contract). CEF/LEEF
   target a SIEM that owns integrity on its side.
-- **Restart- and rotation-safe (while the process runs).** On construction
-  the logger reads the last record and resumes from its `seq + 1` and
-  `chain`. A missing / empty / unchained / unparseable tail starts a fresh
-  chain at genesis — a *visible seam* (a `seq` reset) that a verifier
-  surfaces, never a silent gap. While the process keeps running, rotation
-  preserves the chain: the in-memory anchor follows the file
+- **Restart- and rotation-safe.** On construction the logger reads the last
+  record and resumes from its `seq + 1` and `chain`. If the active file is
+  empty after rotation, it reads the newest dateext- or numeric-named rotated
+  sibling (plain or gzip-compressed) and resumes from that tail. While the
+  process keeps running, the in-memory anchor follows the file
   (`WatchedFileHandler` reopens after a rename; `copytruncate` keeps the same
-  fd), so the new file continues the same `seq`/`chain`. A rotation
-  **immediately followed by a restart** — before any record lands in the
-  fresh empty file — re-anchors at genesis: resume reads the empty file and
-  starts a new genesis-anchored segment (seq restarts at 0). This is a
-  visible seam, not a silent gap; cross-segment continuity is the ordered
-  off-host stream's job (see "Limits" below), consistent with this ADR's
-  delegation of cross-file durability to off-host shipping.
+  fd), so the new file continues the same `seq`/`chain`. A missing,
+  unchained, or unparseable active tail starts a fresh chain at genesis — a
+  *visible seam* (a `seq` reset) that a verifier surfaces, never a silent gap.
+  In particular, a non-empty malformed active tail is never bypassed in favor
+  of older rotated history. The off-host stream remains authoritative for
+  detecting missing tails and validating cross-file seams.
 - **Ordering invariant under concurrency.** The `seq`/`prev` read-modify-write
   and the line emit are taken under one lock, so the chain stays
   monotonic and correctly linked even if a future caller records from
@@ -160,12 +158,12 @@ in the file; tail-truncation and cross-file/durability off-host.
   `--verify-audit --audit-path` — the fail-closed default is what you want
   for a log that should be complete from genesis — and add `--segment` only
   when verifying a mid-stream rotation segment. When the process ran across a
-  rotation, cross-rotation continuity is an equality check on the seam
+  rotation, or restarted with an empty active file, cross-rotation continuity is
+  an equality check on the seam
   (`prev` of file *N+1*'s first record == `chain` of file *N*'s last record),
-  which the verifier prints as the start anchor. When a restart fell between
-  the rotation and the next record, file *N+1* is a new genesis segment instead;
-  verify each genesis-anchored segment independently and rely on the ordered
-  off-host stream for continuity across segments.
+  which the verifier prints as the start anchor. Unexpected genesis segments
+  remain verification failures unless an operator explicitly records and
+  reviews the reset as an incident.
 
 ## Rejected alternatives
 
@@ -247,10 +245,10 @@ non-genesis start (head-truncation) all exit 2 by default, with `--segment`
 the explicit opt-out for a rotation segment; (b) added `ChainResult.anchored`
 / `present` so head-truncation and absence are surfaced; (c) scoped
 **tail-truncation** and cross-file durability to the off-host stream in every
-user-facing claim; and (d) corrected the rotation-safety wording to
-distinguish rotation-while-running (chain continues) from rotation-then-restart
-(a new genesis segment, which the fail-closed default still verifies because
-it is genesis-anchored). See the "What the single-file chain proves" section.
+user-facing claim. A 2026-07-28 operational review subsequently closed the
+rotation-then-restart gap: an empty active file now resumes from the newest
+rotated sibling, while a non-empty malformed tail still fails visibly instead
+of falling back. See the "What the single-file chain proves" section.
 Regression tests pin
 head-truncation (`anchored=false`), tail-truncation (valid-prefix, the
 documented limitation), and the fail-closed CLI exit codes for missing,

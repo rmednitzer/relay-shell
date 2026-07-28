@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Relay Shell audit evidence verification and off-host copy
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+Unit=relay-audit-evidence.service
+
+[Install]
+WantedBy=timers.target
