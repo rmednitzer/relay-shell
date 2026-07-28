@@ -53,6 +53,34 @@ from . import patterns
 
 __all__ = ["redact", "redact_args"]
 
+# Every whole-match rule has a fixed, case-sensitive structural anchor.  A
+# cheap substring gate avoids running all provider-token regexes over large
+# inputs that cannot possibly match.  Keep this tuple conservative: a false
+# positive only costs a regex pass, while a missing anchor could leak a secret.
+_WHOLE_MATCH_HINTS = (
+    "-----BEGIN ",
+    "gith_pat_",
+    "github_pat_",
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "sk-",
+    "hf_",
+    "AKIA",
+    "xox",
+    "hooks.slack.com/services/",
+    "AIza",
+    "ya29.",
+    "sk_",
+    "rk_",
+    "glpat-",
+    "npm_",
+    "pypi-",
+    "ey",
+)
+
 
 def redact(text: str) -> str:
     """Replace secret-looking spans in ``text`` with a placeholder."""
@@ -60,8 +88,9 @@ def redact(text: str) -> str:
     out = patterns.URL_CREDS_PATTERN.sub(f"://{placeholder}@", text)
     for pat, repl in patterns.REDACTION_PREFIX_PATTERNS:
         out = pat.sub(repl, out)
-    for pat in patterns.REDACTION_PATTERNS:
-        out = pat.sub(placeholder, out)
+    if any(hint in out for hint in _WHOLE_MATCH_HINTS):
+        for pat in patterns.REDACTION_PATTERNS:
+            out = pat.sub(placeholder, out)
     if patterns.MYSQL_FAMILY_CLI_PATTERN.search(out):
         out = patterns.MYSQL_COMPACT_PASSWORD_PATTERN.sub(
             lambda m: f"{m.group(1)}{placeholder}", out
