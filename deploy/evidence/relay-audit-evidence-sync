@@ -5,26 +5,37 @@ set -u
 : "${RELAY_AUDIT_RSYNC_DEST:?RELAY_AUDIT_RSYNC_DEST is required}"
 : "${RELAY_AUDIT_SSH_KNOWN_HOSTS:=/var/lib/relay-shell/.ssh/known_hosts}"
 : "${RELAY_AUDIT_RSYNC_PATH:=sudo -n /usr/bin/rsync}"
+: "${RELAY_AUDIT_VERIFY_BIN:=/usr/local/libexec/relay-audit-evidence}"
+: "${RELAY_AUDIT_RSYNC_BIN:=/usr/bin/rsync}"
 
 set --
 if [ -n "${RELAY_AUDIT_RSYNC_CHOWN:-}" ]; then
   set -- "--chown=$RELAY_AUDIT_RSYNC_CHOWN"
 fi
 
-/usr/local/libexec/relay-audit-evidence
+"$RELAY_AUDIT_VERIFY_BIN"
 verify_status=$?
+[ "$verify_status" -eq 0 ] || exit "$verify_status"
 
-/usr/bin/rsync \
-  --archive --checksum --compress --protect-args \
+"$RELAY_AUDIT_RSYNC_BIN" \
+  --archive --checksum --compress --protect-args --delay-updates \
   --chmod=F640,D750 \
   "$@" \
   --include='audit.jsonl*' \
   --include='chain-verification.jsonl' \
-  --include='latest-anchor.json' \
   --exclude='*' \
   --rsync-path="$RELAY_AUDIT_RSYNC_PATH" \
   -e "/usr/bin/ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RELAY_AUDIT_SSH_KNOWN_HOSTS -o ControlMaster=no -o ControlPath=none" \
   "$RELAY_AUDIT_LOG_DIR/" "$RELAY_AUDIT_RSYNC_DEST"
 sync_status=$?
+[ "$sync_status" -eq 0 ] || exit "$sync_status"
 
-[ "$verify_status" -eq 0 ] && [ "$sync_status" -eq 0 ]
+"$RELAY_AUDIT_RSYNC_BIN" \
+  --archive --checksum --compress --protect-args --delay-updates \
+  --chmod=F640,D750 \
+  "$@" \
+  --include='latest-anchor.json' \
+  --exclude='*' \
+  --rsync-path="$RELAY_AUDIT_RSYNC_PATH" \
+  -e "/usr/bin/ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RELAY_AUDIT_SSH_KNOWN_HOSTS -o ControlMaster=no -o ControlPath=none" \
+  "$RELAY_AUDIT_LOG_DIR/" "$RELAY_AUDIT_RSYNC_DEST"

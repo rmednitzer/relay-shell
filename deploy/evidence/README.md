@@ -78,5 +78,12 @@ The verifier writes:
 - `chain-verification.jsonl`: append-only verification history;
 - `latest-anchor.json`: atomic compact state for health and ingestion checks.
 
+The sync wrapper fails before publishing anything when verification fails. It
+uses delayed replacements and publishes audit segments plus verification
+history first, then publishes `latest-anchor.json` in a second rsync pass. The
+anchor is therefore the commit marker for the off-host generation: consumers
+must reject stale or invalid anchors and must not infer completeness from a
+partially transferred payload.
+
 The off-host copy remains authoritative for tail-truncation detection. This
 verifier cannot prove that a locally removed newest record never existed.
