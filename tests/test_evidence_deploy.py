@@ -95,3 +95,11 @@ def test_sync_does_not_publish_anchor_when_payload_fails(tmp_path: Path) -> None
     assert result.returncode == 23
     assert count.read_text(encoding="utf-8").strip() == "1"
     assert len(_calls(log)) == 1
+
+
+def test_sync_reports_failure_when_anchor_publish_fails(tmp_path: Path) -> None:
+    result, log, count = _run_sync(tmp_path, fail_rsync_call=2)
+
+    assert result.returncode == 23
+    assert count.read_text(encoding="utf-8").strip() == "2"
+    assert len(_calls(log)) == 2
