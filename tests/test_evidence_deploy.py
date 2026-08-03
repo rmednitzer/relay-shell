@@ -39,9 +39,12 @@ printf '%s\n' "$n" > "$FAKE_RSYNC_COUNT"
 [ "${FAKE_RSYNC_FAIL_CALL:-0}" -ne "$n" ] || exit 23
 """,
     )
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
     env = {
         **os.environ,
-        "RELAY_AUDIT_LOG_DIR": str(tmp_path / "evidence"),
+        "RELAY_AUDIT_LOG_DIR": str(evidence_dir),
         "RELAY_AUDIT_RSYNC_DEST": "test.invalid:/evidence/",
         "RELAY_AUDIT_SSH_KNOWN_HOSTS": str(tmp_path / "known_hosts"),
         "RELAY_AUDIT_VERIFY_BIN": str(verifier),
