@@ -27,6 +27,28 @@ All notable changes to this project are documented here. The format follows
   so peak transient memory per call was up to 2× the cap — the returned string
   was still correctly bounded, but `ssh_fanout`'s per-host sizing math assumes a
   footprint of `cap`, not 2×cap, across concurrent hosts.
+- The single-host exec paths now **bound the output buffered in relay memory**
+  to `max_output_hard` instead of accumulating the child's entire output before
+  truncating (PERF-4, 2026-08-04 backlog follow-up). `shell_exec` / `shell_script`
+  drained the local child via `communicate()`, and `ssh_exec` called
+  `SshPool.run` with no cap (`cap is None`) — so a high-volume producer
+  (`cat /dev/zero`, a runaway build log) could grow the long-lived relay process
+  without limit, a memory DoS reachable by a Tier-1 command that even `guarded`
+  mode permits. The child still runs to completion (exit code + true byte count
+  preserved) and the returned output is byte-identical after truncation; only
+  peak relay memory changes. The interactive/PTY paths were already bounded by
+  `session_buffer_bytes`, and `ssh_fanout` already passed a cap.
+- The audit-evidence verifier (`deploy/evidence/relay-audit-evidence.py`) now
+  orders retained segments by the **first record's timestamp** instead of file
+  mtime, and tolerates a single **torn trailing record** on the live segment
+  (EVID-1, 2026-08-04 backlog follow-up). logrotate `delaycompress` rewrites a
+  rotated segment's mtime when it is compressed on a later cycle, which could
+  invert the segment order and make the cross-segment seam check report a
+  spurious "broken rotation seam"; and reading the concurrently-appended
+  `audit.jsonl` `errors="strict"` turned a benign torn write into an "invalid
+  JSON" failure. Either false failure made `relay-audit-evidence-sync` silently
+  skip the off-host publish — the anti-tail-truncation control (ADR 0007). The
+  evidence record gains a `torn_tails` counter for visibility.
 
 ### Security
 
