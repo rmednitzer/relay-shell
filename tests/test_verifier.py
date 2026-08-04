@@ -247,6 +247,21 @@ def test_caddyfile_sets_content_security_policy() -> None:
     assert "default-src 'self'" in caddy
 
 
+def test_caddyfile_exposes_revoke_before_cidr_block() -> None:
+    # EDGE-3: the OAuth provider enables revocation (RevocationOptions), so
+    # /revoke is advertised in the discovery metadata. It must be reachable by
+    # remote clients (handled before the @blocked CIDR gate) exactly like
+    # /token, or a client cannot self-revoke a leaked token from the public edge.
+    caddy = (TEMPLATES_DIR / "Caddyfile").read_text(encoding="utf-8")
+    assert "handle /revoke {" in caddy, "the edge must proxy the /revoke endpoint"
+    revoke_pos = caddy.index("handle /revoke {")
+    blocked_pos = caddy.index("@blocked")
+    assert revoke_pos < blocked_pos, (
+        "/revoke must be handled before the CIDR @blocked gate so a remote "
+        "OAuth client can reach it (like /token)"
+    )
+
+
 def test_installers_create_relay_shell_dir_not_world_listable() -> None:
     # DEP-2: /etc/relay-shell is created 0750 (not a world-listable 0755) in
     # both installers.

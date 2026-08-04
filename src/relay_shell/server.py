@@ -1477,6 +1477,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                     "max_output_hard": cfg.max_output_hard,
                     "max_sessions": cfg.max_sessions,
                     "max_forwards": cfg.max_forwards,
+                    "max_conns": cfg.max_conns,
                 },
                 "audit": {
                     "path": app.audit.path,

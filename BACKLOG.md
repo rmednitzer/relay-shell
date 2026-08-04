@@ -2,7 +2,7 @@
 
 This file is the running deferral register for the project's full and
 adversarial audit passes, beginning with the 2026-06-12 full audit pass and
-extended by each subsequent pass (through 2026-07-15). Each item is a finding
+extended by each subsequent pass (through 2026-08-04). Each item is a finding
 that was **not** fixed in its pass — the initial entries come from
 `audit/02-security-findings.md`, later ones from the dated `audit/*.md`
 engagement records — recorded with the schema the audit charter requires.
@@ -15,6 +15,30 @@ its kind is tracked (runbook §7 for capability/quality/ops/security-hardening,
 §8 for docs).
 
 Severity order within each section: low before info; smaller effort first.
+
+## 2026-08-04 audit + gap-analysis pass
+
+Findings from the 2026-08-04 in-depth repo audit + adversarial review
+([`audit/2026-08-04-engagement.md`](audit/2026-08-04-engagement.md)), covering
+the trust-boundary core, the SSH/session/seccomp runtime, the OAuth/edge
+surface, and the newest deploy tooling (the 2026-07 evidence + host-monitoring
+additions, least-audited in the tree). No P0/P1. Four MEDIUM defence-in-depth /
+correctness gaps: three fixed in the engagement PR, one deferred with a design.
+
+Closed (engagement PR):
+
+| ID | Sev | Title | Resolution |
+|----|-----|-------|------------|
+| CONN-1 | MED | `SshPool._conns` connection cache unbounded (only opportunistic idle eviction), unlike its `max_sessions`/`max_forwards` siblings | **Closed** (this PR). `RELAY_SHELL_MAX_CONNS` (default 256, `ge=1, le=4096`); `connect()` evicts the LRU **unpinned** entry before caching (`_select_conn_evictions`); a pinned in-use connection is never evicted. Surfaced in `server_info.config.max_conns`. Runbook §7.3. Tests: cap-enforced-and-LRU-closed, pinned-never-evicted, upper-bound rejected. |
+| CONN-2 | MED | `SshPool.run()` output cap applied per-stream → up to 2×`max_output_bytes` transient memory | **Closed** (this PR). One shared `kept` budget across stdout+stderr; the read/write of the budget has no `await` between them so the concurrent drains never interleave. Test: both streams over cap → combined kept ≤ cap. |
+| EDGE-3 | MED | Edge Caddyfile omitted `/revoke` from the pre-CIDR allowlist though the provider advertises `revocation_endpoint` | **Closed** (this PR). `handle /revoke` before the `@blocked` CIDR gate, mirroring `/token`; RFC 7009 makes public reachability safe. Drift test: `/revoke` handled before `@blocked`. |
+
+Open deferrals (severity order):
+
+| ID | Item | Sev | Effort | Rationale / approach | Owner role |
+|----|------|-----|--------|----------------------|------------|
+| EVID-1 | `deploy/evidence/relay-audit-evidence.py` orders retained segments by filesystem mtime (logrotate `delaycompress` can invert it) and reads the live `audit.jsonl` `errors="strict"`, so a torn write or mtime inversion marks the run `valid:false` → `relay-audit-evidence-sync` silently suppresses the off-host copy (the anti-tail-truncation control, ADR 0007) | MED | M | Two-phase restructure: verify each segment independently, then order by `first_seq` (self-describing from the chain) for the seam checks; tolerate a single torn final line on the active (non-`.gz`) segment. Needs dedicated multi-segment tests (out-of-mtime-order verifies clean; torn final line stays valid; broken interior line fails). Design in the engagement record §3. | maintainer |
+| PERF-4 (info) | Single-host exec buffers unbounded output before truncation: `shell_exec`/`shell_script` (`communicate()`) and `ssh_exec` (`SshPool.run` with `max_output_bytes` unset → `cap is None`). The interactive/PTY paths are bounded (`session_buffer_bytes`) and `ssh_fanout` passes a cap, so this is the one-shot asymmetry | info | S | Symmetric between local and SSH single-host paths and consistent with the no-sandbox posture (ADR 0002), so recorded as a hardening opportunity, not a regression. If actioned, mirror `SshPool.run`'s bounded drain: cap the kept buffer at `max_output_hard` (the existing absolute ceiling), draining to EOF so the exit code + true byte-count survive. Returned output is byte-identical (only the marker's total count under-reports past the ceiling). | maintainer |
 
 ## 2026-07-15 adversarial + performance pass
 

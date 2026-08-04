@@ -477,9 +477,11 @@ covered above:
   `127.0.0.1:8080`; see §4).
 - **Resource bounds:** `RELAY_SHELL_MAX_OUTPUT` / `_MAX_OUTPUT_HARD` (output
   caps), `RELAY_SHELL_DEFAULT_TIMEOUT` / `_MAX_TIMEOUT` (per-call timeout +
-  clamp), `RELAY_SHELL_MAX_SESSIONS` / `_MAX_FORWARDS` (concurrency caps),
-  `RELAY_SHELL_SESSION_IDLE_TIMEOUT` / `_SESSION_BUFFER_BYTES` (PTY session
-  reaping + per-session buffer).
+  clamp), `RELAY_SHELL_MAX_SESSIONS` / `_MAX_FORWARDS` / `_MAX_CONNS`
+  (concurrency caps — sessions, port forwards, and the SSH connection cache;
+  `_MAX_CONNS` defaults to 256 and evicts the least-recently-used idle
+  connection when full), `RELAY_SHELL_SESSION_IDLE_TIMEOUT` /
+  `_SESSION_BUFFER_BYTES` (PTY session reaping + per-session buffer).
 - **SSH connect tuning:** `RELAY_SHELL_SSH_CONNECT_TIMEOUT` / `_SSH_KEEPALIVE`
   (dial timeout + keepalive; `_SSH_IDLE_TIMEOUT` for the pool reaper is in §7).
 - **Audit sink:** `RELAY_SHELL_AUDIT_STDERR` (also mirror audit lines to stderr).

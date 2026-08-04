@@ -6,6 +6,38 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`RELAY_SHELL_MAX_CONNS`** (default 256) — a hard ceiling on the live SSH
+  connection cache (`SshPool._conns`), mirroring `max_sessions` / `max_forwards`
+  for the cache that sits underneath them (CONN-1, 2026-08-04 audit pass). Idle
+  eviction (`ssh_idle_timeout`) is opportunistic and unbounded in count, so a
+  caller varying the target or per-call `user`/`port`/`key_path` across many
+  reachable hosts could accumulate live SSH sessions between sweeps. When the
+  cache is full a new connect evicts the least-recently-used **unpinned** entry
+  (a connection in active use — a session, forward, or in-flight run — is never
+  evicted, so the cap is transiently exceeded rather than dropping a live
+  connection). Surfaced in `server_info.config.max_conns`.
+
+### Fixed
+
+- `SshPool.run()`'s output cap is now a single budget **shared** across stdout
+  and stderr, so the combined buffered bytes stay within `max_output_bytes`
+  (CONN-2, 2026-08-04 audit pass). Previously each stream had its own counter,
+  so peak transient memory per call was up to 2× the cap — the returned string
+  was still correctly bounded, but `ssh_fanout`'s per-host sizing math assumes a
+  footprint of `cap`, not 2×cap, across concurrent hosts.
+
+### Security
+
+- The edge Caddyfile now proxies `POST /revoke` before the CIDR allowlist gate
+  (EDGE-3, 2026-08-04 audit pass). The OAuth provider enables revocation
+  (`RevocationOptions`), so `/revoke` is advertised in the discovery metadata; a
+  remote client that obtained a token through the public flow could not
+  self-revoke a leaked bearer token (the CIDR block returned a flat `403`).
+  RFC 7009 requires presenting the token being revoked, so public reachability
+  is safe — the same posture as `/token`.
+
 ## [0.3.0] - 2026-07-15
 
 ### Added

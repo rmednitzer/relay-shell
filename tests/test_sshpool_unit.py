@@ -559,3 +559,155 @@ async def test_add_forward_enforces_cap(tmp_path: Path) -> None:
         await pool.add_forward("h", "L:0:localhost:22", connect_kwargs={})
     # The refused call neither dialled nor grew the registry.
     assert pool.forward_count() == 2
+
+
+async def test_conn_cache_enforces_max_conns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The connection cache is hard-bounded by ``max_conns``.
+
+    Regression for the unbounded-``_conns`` gap: unlike ``max_sessions`` /
+    ``max_forwards``, the connection cache underneath them had no ceiling and
+    grew until an opportunistic idle sweep happened to reclaim an entry. A
+    caller varying the target (or per-call ``user``/``port``/``key_path``)
+    across many reachable hosts could accumulate live SSH sessions unbounded.
+    Now a new connect evicts the least-recently-used *unpinned* entry so the
+    cache never exceeds the cap; the evicted connection is closed.
+    """
+    conns: list[_MockConn] = []
+
+    async def fake_connect(*_a: object, **_k: object) -> _MockConn:
+        c = _MockConn()
+        conns.append(c)
+        return c
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+        ssh_idle_timeout=0,  # idle eviction OFF: only the cap can bound the cache
+        max_conns=3,
+    )
+    inv = Inventory(str(tmp_path / "no_ssh_config"), "").load()
+    pool = SshPool(settings=settings, inventory=inv)
+
+    # Connect to 5 distinct targets; each opens a fresh cached connection.
+    for i in range(5):
+        await pool.connect(f"h{i}.example")
+        # Space out last_used so LRU ordering is deterministic.
+        await asyncio.sleep(0)
+
+    assert len(pool._conns) == 3, f"cache must stay within max_conns=3, got {len(pool._conns)}"
+    # The two least-recently-used connections (h0, h1) were evicted and closed.
+    assert conns[0].is_closed() and conns[1].is_closed(), (
+        "evicted (LRU) connections must be closed, not leaked"
+    )
+    # The three most-recent survive and are open.
+    assert not any(c.is_closed() for c in conns[2:])
+
+
+async def test_conn_cache_cap_never_evicts_pinned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pinned (in-use) connection is never evicted to honour the cap; the
+    cache is transiently exceeded rather than dropping a live connection."""
+    conns: list[_MockConn] = []
+
+    async def fake_connect(*_a: object, **_k: object) -> _MockConn:
+        c = _MockConn()
+        conns.append(c)
+        return c
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+        ssh_idle_timeout=0,
+        max_conns=1,
+    )
+    inv = Inventory(str(tmp_path / "no_ssh_config"), "").load()
+    pool = SshPool(settings=settings, inventory=inv)
+
+    first = await pool.connect("pinned.example")
+    # Pin it as an in-flight run/session would.
+    entry = await pool._pin(first)
+    assert entry is not None
+    # A second distinct target cannot evict the pinned entry, so both remain.
+    await pool.connect("other.example")
+    assert not first.is_closed(), "a pinned connection must never be evicted"
+    assert len(pool._conns) == 2, "cap is transiently exceeded rather than dropping a live conn"
+    await pool._unpin(entry)
+
+
+class _BulkStream:
+    """A stream that yields ``total`` bytes in fixed chunks, then EOF."""
+
+    def __init__(self, total: int, chunk: int = 4096) -> None:
+        self._left = total
+        self._chunk = chunk
+
+    async def read(self, _n: int) -> bytes:
+        if self._left <= 0:
+            return b""
+        n = min(self._chunk, self._left)
+        self._left -= n
+        return b"x" * n
+
+
+class _BulkProc:
+    def __init__(self, out_total: int, err_total: int) -> None:
+        self.stdout = _BulkStream(out_total)
+        self.stderr = _BulkStream(err_total)
+        self.exit_status = 0
+
+    async def wait_closed(self) -> None:
+        return None
+
+    def terminate(self) -> None:  # pragma: no cover - happy path
+        pass
+
+
+class _BulkConn(_MockConn):
+    def __init__(self, out_total: int, err_total: int) -> None:
+        super().__init__()
+        self._out = out_total
+        self._err = err_total
+
+    async def create_process(self, *_a: object, **_k: object) -> _BulkProc:
+        return _BulkProc(self._out, self._err)
+
+
+async def test_run_output_budget_is_shared_across_streams(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``run``'s ``max_output_bytes`` bounds the COMBINED stdout+stderr buffer.
+
+    Regression for the per-stream budget: stdout and stderr each had their own
+    ``cap`` counter, so peak transient memory was up to 2x cap. With both
+    streams producing well over ``cap``, the combined kept bytes (the returned
+    string before the post-drain marker) must not exceed ``cap``.
+    """
+    cap = 8192
+    conn = _BulkConn(out_total=cap * 4, err_total=cap * 4)
+
+    async def fake_connect(*_a: object, **_k: object) -> _BulkConn:
+        return conn
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    pool = _make_pool(tmp_path)
+
+    out, code = await pool.run(
+        "h1.example", "bulk", timeout=10, connect_kwargs=_CK, max_output_bytes=cap
+    )
+    assert code == 0
+    # Strip the truncate marker's tail so we measure only the kept payload.
+    payload = out.split("\n\n[TRUNCATED", 1)[0]
+    assert len(payload.encode("utf-8")) <= cap, (
+        f"combined kept bytes {len(payload.encode('utf-8'))} exceeded the shared cap {cap}; "
+        "pre-fix stdout+stderr could each keep up to cap (2x total)"
+    )
