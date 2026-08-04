@@ -685,6 +685,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                 merge_stderr=merge_stderr,
                 use_shell=use_shell,
                 env_json=env_json,
+                output_cap=app.settings.max_output_hard,
             ),
         )
 
@@ -729,6 +730,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
                 timeout=t,
                 cwd=cwd,
                 env_json=env_json,
+                output_cap=app.settings.max_output_hard,
             ),
         )
 
@@ -825,7 +827,17 @@ def build_server(settings: Settings | None = None) -> FastMCP:
             },
             policy_text=_policy_text_ssh_exec(host, command),
             max_output=65536,
-            work=lambda: app.ssh.run(host, command, timeout=t, connect_kwargs=ck),
+            # PERF-4: bound the buffered remote output to the absolute ceiling
+            # (max_output_hard) via SshPool.run's drain instead of the
+            # cap=None unbounded path. Returned bytes are byte-identical after
+            # the max_output truncation; only relay memory is bounded.
+            work=lambda: app.ssh.run(
+                host,
+                command,
+                timeout=t,
+                connect_kwargs=ck,
+                max_output_bytes=app.settings.max_output_hard,
+            ),
         )
 
     @mcp.tool()

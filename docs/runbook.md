@@ -850,8 +850,10 @@ detail in [`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BAC
 [`audit/2026-06-21-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-21-engagement.md).
 
 The **2026-08-04 audit + gap-analysis pass** (`audit/2026-08-04-engagement.md`)
-closed three MEDIUM defence-in-depth / correctness gaps in the engagement PR and
-deferred one with a design:
+closed three MEDIUM defence-in-depth / correctness gaps in the engagement PR
+(CONN-1/CONN-2/EDGE-3); the **2026-08-04 backlog follow-up**
+(`audit/2026-08-04-backlog-followup.md`) then closed the two deferred items
+(EVID-1, PERF-4):
 
 - **CONN-1 (P2)** — **Closed**. `RELAY_SHELL_MAX_CONNS` (default 256) hard-bounds
   the `SshPool._conns` connection cache with LRU-unpinned eviction, mirroring
@@ -862,14 +864,20 @@ deferred one with a design:
 - **EDGE-3 (P2)** — **Closed**. The edge Caddyfile proxies `/revoke` before the
   CIDR gate so a remote OAuth client can self-revoke a leaked token (the provider
   advertises `revocation_endpoint`; RFC 7009 makes public reachability safe).
-- **EVID-1 (P2)** — **Deferred** (design in the engagement record §3). The
-  audit-evidence verifier orders retained segments by filesystem mtime (which
-  logrotate `delaycompress` can invert) and reads the live log `errors="strict"`,
-  so a benign torn write or a mtime inversion marks the run invalid and the sync
-  gate silently suppresses the off-host copy — the anti-tail-truncation control.
-  Fix is a two-phase restructure (verify per-segment, order by `first_seq`) plus
-  tolerating a torn final line on the active segment; needs dedicated
-  multi-segment tests, so it lands as a focused follow-up.
+- **EVID-1 (P2)** — **Closed** (follow-up). The audit-evidence verifier now
+  orders retained segments by the first record's `ts` (chain-authoritative,
+  immune to the logrotate `delaycompress` mtime inversion) via a two-phase
+  `verify_segment()` restructure, and tolerates a single torn trailing record on
+  the live segment (`torn_tails` counter). Removes the spurious "broken rotation
+  seam" / "invalid JSON" false failures that silently suppressed the off-host
+  sync (the anti-tail-truncation control, ADR 0007). 4 verifier tests.
+- **PERF-4 (P2)** — **Closed** (follow-up). The single-host exec paths bound the
+  output buffered in relay memory to `max_output_hard` (`shelltools._drive`'s
+  bounded concurrent drain; `ssh_exec` passes `max_output_bytes`) instead of
+  buffering the whole child output before truncating — a memory DoS reachable by
+  a Tier-1 command `guarded` mode permits. Returned output byte-identical; child
+  runs to completion. 7 tests. (Raised from info to P2/MED on review — it crosses
+  the `guarded` boundary.)
 
 ### 7.3 Operations + observability
 
