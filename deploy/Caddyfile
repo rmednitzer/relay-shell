@@ -60,6 +60,19 @@
 			header_up Host {upstream_hostport}
 		}
 	}
+	# EDGE-3: RFC 7009 token revocation. The OAuth provider enables revocation
+	# (RevocationOptions), so /revoke is advertised in the discovery metadata
+	# (revocation_endpoint). A remote client that obtained a token through the
+	# public flow above must be able to revoke it — token self-revocation is the
+	# client's incident-response path for a leaked bearer token. Revocation
+	# requires presenting the token itself (RFC 7009), so public reachability is
+	# safe, exactly like /token. Without this handle the CIDR block below returns
+	# a flat 403 and the client cannot revoke.
+	handle /revoke {
+		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
+			header_up Host {upstream_hostport}
+		}
+	}
 	handle /mcp {
 		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
 			header_up Host {upstream_hostport}

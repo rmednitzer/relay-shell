@@ -842,10 +842,34 @@ default suite from one warning to zero with no dependency change.)
 
 The 2026-06-21 full audit pass closed **QUAL-2 (P3)** (`ssh_forward` now raises a
 bounded error on a malformed spec) and **FMT-1 (P3)** (the LEEF formatter emits
-the mandatory LEEF 2.0 delimiter field) in the P2/P3 follow-up PR; **FMT-2
-(info)** (CEF header-field escaping — no runtime defect) remains. Full detail in
-[`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md) (2026-06-21 section) and
+the mandatory LEEF 2.0 delimiter field) in the P2/P3 follow-up PR. **FMT-2
+(info)** (CEF header-field escaping — no runtime defect) is **Closed** (PR #111,
+`_cef_header_escape`; header fields are constants so the bytes are byte-identical,
+the escape is structural insurance against a future dynamic header field). Full
+detail in [`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md) (2026-06-21 section) and
 [`audit/2026-06-21-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-21-engagement.md).
+
+The **2026-08-04 audit + gap-analysis pass** (`audit/2026-08-04-engagement.md`)
+closed three MEDIUM defence-in-depth / correctness gaps in the engagement PR and
+deferred one with a design:
+
+- **CONN-1 (P2)** — **Closed**. `RELAY_SHELL_MAX_CONNS` (default 256) hard-bounds
+  the `SshPool._conns` connection cache with LRU-unpinned eviction, mirroring
+  `max_sessions` / `max_forwards` for the cache beneath them (idle eviction was
+  the only prior bound and is opportunistic + unbounded in count).
+- **CONN-2 (P2)** — **Closed**. `SshPool.run()`'s output cap is now a single
+  budget shared across stdout+stderr, so peak transient memory is `cap` not 2×cap.
+- **EDGE-3 (P2)** — **Closed**. The edge Caddyfile proxies `/revoke` before the
+  CIDR gate so a remote OAuth client can self-revoke a leaked token (the provider
+  advertises `revocation_endpoint`; RFC 7009 makes public reachability safe).
+- **EVID-1 (P2)** — **Deferred** (design in the engagement record §3). The
+  audit-evidence verifier orders retained segments by filesystem mtime (which
+  logrotate `delaycompress` can invert) and reads the live log `errors="strict"`,
+  so a benign torn write or a mtime inversion marks the run invalid and the sync
+  gate silently suppresses the off-host copy — the anti-tail-truncation control.
+  Fix is a two-phase restructure (verify per-segment, order by `first_seq`) plus
+  tolerating a torn final line on the active segment; needs dedicated
+  multi-segment tests, so it lands as a focused follow-up.
 
 ### 7.3 Operations + observability
 
@@ -989,8 +1013,8 @@ the mandatory LEEF 2.0 delimiter field) in the P2/P3 follow-up PR; **FMT-2
   model). **SEC-8** also closed in a follow-up: `_Store` creates the OAuth state dir
   `mode=0o700` and fails closed if it remains group/other-accessible (a
   correctly-`0o700` dir owned by another uid still passes). Remaining 2026-06-21
-  items are info-only (**FMT-2** / **CI-3** / **DOC-5**) and out-of-scope
-  **B-025** (aarch64); see `BACKLOG.md`.
+  items are info-only (**CI-3** / **DOC-5**) and out-of-scope **B-025**
+  (aarch64); **FMT-2** closed in PR #111 (see §7.2 above); see `BACKLOG.md`.
 - **2026-06-21 adversarial (red-team) pass** — incremental hardening, no
   posture change. Full register in [`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md) (2026-06-21
   adversarial section) and

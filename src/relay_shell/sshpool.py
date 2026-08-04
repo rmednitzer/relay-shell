@@ -178,6 +178,30 @@ class SshPool:
             with contextlib.suppress(Exception):
                 conn.close()
 
+    def _select_conn_evictions(self, need: int) -> list[str]:
+        """Keys of the least-recently-used *unpinned* cached connections to drop
+        so inserting ``need`` more entries keeps ``_conns`` within ``max_conns``.
+
+        Caller holds ``_lock``. Mirrors the ``max_sessions`` / ``max_forwards``
+        ceilings for the connection cache underneath them: idle eviction
+        (``ssh_idle_timeout``) is opportunistic and unbounded in count, so this
+        adds a hard ceiling. Only ``pins == 0`` entries are candidates — a
+        pinned connection is in active use (a session, forward, or in-flight
+        run) and must never be evicted; if every entry is pinned the cap is
+        transiently exceeded rather than dropping a live connection.
+        """
+        cap = int(getattr(self.settings, "max_conns", 0) or 0)
+        if cap <= 0:
+            return []
+        overflow = len(self._conns) + need - cap
+        if overflow <= 0:
+            return []
+        evictable = sorted(
+            (key for key, entry in self._conns.items() if entry.pins == 0),
+            key=lambda key: self._conns[key].last_used,
+        )
+        return evictable[:overflow]
+
     async def _pin(self, conn: Any) -> _ConnEntry | None:
         """Pin the cached entry backing ``conn`` so the idle reaper cannot evict
         it while a caller is still using it. Returns the entry (pass it to
@@ -327,11 +351,22 @@ class SshPool:
                 if self._pending.get(key) is own_future:
                     self._pending.pop(key, None)
             raise asyncio.CancelledError("SshPool was closed while connecting")
+        doomed: list[Any] = []
         async with self._lock:
+            # Enforce the connection-cache ceiling (max_conns) before caching:
+            # evict the least-recently-used unpinned entries to make room. Close
+            # them outside the lock, as the idle sweep does. `need` is 0 when we
+            # are overwriting an existing key (net growth 0), 1 for a fresh key.
+            need = 0 if key in self._conns else 1
+            for evict_key in self._select_conn_evictions(need):
+                doomed.append(self._conns.pop(evict_key).conn)
             self._conns[key] = _ConnEntry(conn=conn)
             if self._pending.get(key) is own_future:
                 self._pending.pop(key, None)
         own_future.set_result(conn)
+        for dead in doomed:
+            with contextlib.suppress(Exception):
+                dead.close()
         return conn
 
     async def run(
@@ -363,8 +398,15 @@ class SshPool:
             err_parts: list[bytes] = []
             out_seen = 0
             err_seen = 0
-            out_kept = [0]
-            err_kept = [0]
+            # One shared kept-budget across stdout+stderr so the *combined*
+            # buffered bytes stay within `cap`. A per-stream budget let stdout
+            # and stderr each accumulate up to `cap`, so peak transient memory
+            # was up to 2x cap before the post-drain truncate trimmed the
+            # returned string — the concurrent-drain footprint fanout's sizing
+            # math assumes is `cap`, not 2x cap. Reading `cap - kept[0]` and
+            # writing `kept[0] +=` happen with no `await` between them, so the
+            # two concurrent drains never interleave inside that window.
+            kept = [0]
 
             async def _drain(stream: Any, parts: list[bytes], seen: int, kept: list[int]) -> int:
                 while True:
@@ -394,8 +436,8 @@ class SshPool:
                 nonlocal proc
                 proc = await conn.create_process(command, encoding=None)
                 return await asyncio.gather(
-                    _drain(proc.stdout, out_parts, out_seen, out_kept),
-                    _drain(proc.stderr, err_parts, err_seen, err_kept),
+                    _drain(proc.stdout, out_parts, out_seen, kept),
+                    _drain(proc.stderr, err_parts, err_seen, kept),
                 )
 
             try:

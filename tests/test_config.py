@@ -98,6 +98,7 @@ def test_limit_upper_bounds_reject_absurd_values(
         ("RELAY_SHELL_MAX_TIMEOUT", "1000000000"),
         ("RELAY_SHELL_SESSION_IDLE_TIMEOUT", "1000000000"),
         ("RELAY_SHELL_SESSION_BUFFER_BYTES", "1000000000000"),
+        ("RELAY_SHELL_MAX_CONNS", "1000000000"),
     ):
         monkeypatch.setenv(var, val)
         with pytest.raises(ValidationError):

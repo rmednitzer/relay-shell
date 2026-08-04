@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     max_timeout: int = Field(default=900, ge=1, le=86_400)
     max_sessions: int = Field(default=64, ge=1, le=1024)
     max_forwards: int = Field(default=64, ge=1, le=1024)
+    # Hard ceiling on the live SSH connection cache (`SshPool._conns`). Mirrors
+    # `max_sessions` / `max_forwards`: without it the cache is bounded only by
+    # opportunistic idle eviction (`ssh_idle_timeout`), so a caller varying the
+    # target or per-call auth (`user`/`port`/`key_path`) across many *real*
+    # reachable hosts can accumulate live TCP+SSH sessions (fds/memory) between
+    # sweeps. When the cache is full a new connect evicts the least-recently-used
+    # *unpinned* entry first; entries in active use (a session, forward, or
+    # in-flight run pins them) are never evicted, so the cap can be transiently
+    # exceeded only by connections that are actually in use.
+    max_conns: int = Field(default=256, ge=1, le=4096)
     session_idle_timeout: int = Field(default=1800, ge=10, le=86_400)
     session_buffer_bytes: int = Field(default=262_144, ge=4096, le=16_777_216)
 
