@@ -43,7 +43,7 @@ dev = [
   "coverage[toml]>=7.6",
   "pre-commit>=4.0",
   "PyJWT>=2.13.0",
-  "cryptography>=48.0.1",
+  "cryptography>=50.0.0",
 ]
 
 [project.scripts]
