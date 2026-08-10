@@ -1,35 +1,12 @@
 {
-  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
-  extends: [
-    'config:best-practices',
-    ':semanticCommits',
-    ':timezone(Europe/Vienna)',
-    'schedule:weekly',
-  ],
-  labels: ['dependencies'],
-  prConcurrentLimit: 10,
-  prHourlyLimit: 2,
-  lockFileMaintenance: { enabled: true, schedule: ['before 5am on monday'] },
-  vulnerabilityAlerts: { labels: ['security'] },
-  osvVulnerabilityAlerts: true,
-  'pre-commit': { enabled: true },
-  packageRules: [
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>rmednitzer/infra:renovate-preset"],
+  "pre-commit": { "enabled": true },
+  "packageRules": [
     {
-      description: 'Group non-major GitHub Actions updates into one PR; majors stay separate for review.',
-      matchManagers: ['github-actions'],
-      matchUpdateTypes: ['minor', 'patch', 'digest'],
-      groupName: 'github-actions',
-    },
-    {
-      description: 'Group non-major Python dependency updates into one PR.',
-      matchManagers: ['pep621', 'pip_requirements', 'pip-compile', 'poetry', 'setup-cfg'],
-      matchUpdateTypes: ['minor', 'patch'],
-      groupName: 'python dependencies',
-    },
-    {
-      description: 'Group pre-commit hook updates into one PR.',
-      matchManagers: ['pre-commit'],
-      groupName: 'pre-commit hooks',
-    },
-  ],
+      "description": "Group pre-commit hook updates into one PR.",
+      "matchManagers": ["pre-commit"],
+      "groupName": "pre-commit hooks"
+    }
+  ]
 }
