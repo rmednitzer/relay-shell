@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .audit import verify_chain
 from .config import get_settings
-from .server import Relay, build_server
+from .server import Relay, build_server, http_transport_kwargs
 from .verifier import Status, verify_deploy
 
 
@@ -350,7 +350,7 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 0
     try:
         if settings.transport == "http":
-            server.run(transport="streamable-http")
+            server.run(transport="streamable-http", **http_transport_kwargs(settings))
         else:
             server.run(transport="stdio")
     except KeyboardInterrupt:

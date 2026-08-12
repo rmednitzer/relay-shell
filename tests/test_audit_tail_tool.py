@@ -27,7 +27,7 @@ async def test_audit_tail_returns_existing_records(settings: Settings) -> None:
     await mcp.call_tool("server_info", {})
     await mcp.call_tool("server_info", {})
 
-    content, _ = await mcp.call_tool("audit_tail", {"lines": 5})
+    content = (await mcp.call_tool("audit_tail", {"lines": 5})).content
     text = "".join(b.text for b in content if getattr(b, "type", "") == "text")
     # tail() output is JSONL; each line should parse and have the
     # required audit-record keys.
@@ -49,7 +49,7 @@ async def test_audit_tail_clamps_lines_argument(settings: Settings) -> None:
     mcp = build_server(settings)
     # An out-of-bound argument must not crash; the wrapper clamps to
     # [1, 1000].
-    content, _ = await mcp.call_tool("audit_tail", {"lines": 999999})
+    content = (await mcp.call_tool("audit_tail", {"lines": 999999})).content
     assert content  # tool returned bounded output, not an error string
     # The audit record for this call must show the *clamped* value, not
     # the raw input.
@@ -57,7 +57,7 @@ async def test_audit_tail_clamps_lines_argument(settings: Settings) -> None:
     assert last["tool"] == "audit_tail"
     assert last["args"]["lines"] == 1000
     # And: zero / negative inputs collapse to 1.
-    content2, _ = await mcp.call_tool("audit_tail", {"lines": 0})
+    content2 = (await mcp.call_tool("audit_tail", {"lines": 0})).content
     assert content2
     last2 = _audit_lines(Path(settings.audit_path))[-1]
     assert last2["args"]["lines"] == 1
@@ -67,7 +67,7 @@ async def test_audit_tail_empty_on_fresh_log(settings: Settings) -> None:
     mcp = build_server(settings)
     # No tool has been called yet (build_server itself does not call
     # tools), so the audit file exists but contains zero records.
-    content, _ = await mcp.call_tool("audit_tail", {"lines": 50})
+    content = (await mcp.call_tool("audit_tail", {"lines": 50})).content
     text = "".join(b.text for b in content if getattr(b, "type", "") == "text")
     # The tool's OWN call lands in the audit too, but it lands AFTER the
     # tail() read (the audit.record() call happens after work() returns).
@@ -88,7 +88,7 @@ async def test_audit_tail_does_not_leak_output_body(settings: Settings) -> None:
     # surfaces "body-42-only" in audit_tail output is a real body leak.
     mcp = build_server(settings)
     await mcp.call_tool("shell_exec", {"command": "echo body-$((21 + 21))-only"})
-    content, _ = await mcp.call_tool("audit_tail", {"lines": 10})
+    content = (await mcp.call_tool("audit_tail", {"lines": 10})).content
     text = "".join(b.text for b in content if getattr(b, "type", "") == "text")
     assert "body-42-only" not in text
 
@@ -134,7 +134,7 @@ def _guarded(tmp_path: Path) -> Settings:
 async def test_audit_tail_filter_by_tool(tmp_path: Path) -> None:
     mcp = build_server(_guarded(tmp_path))
     await _seed_mixed(mcp)
-    content, _ = await mcp.call_tool("audit_tail", {"lines": 50, "tool": "shell_exec"})
+    content = (await mcp.call_tool("audit_tail", {"lines": 50, "tool": "shell_exec"})).content
     recs = [json.loads(ln) for ln in _text(content).splitlines() if ln.strip()]
     assert recs and all(r["tool"] == "shell_exec" for r in recs)
     assert len(recs) == 2  # the ok call + the denied call
@@ -143,7 +143,7 @@ async def test_audit_tail_filter_by_tool(tmp_path: Path) -> None:
 async def test_audit_tail_filter_by_denied(tmp_path: Path) -> None:
     mcp = build_server(_guarded(tmp_path))
     await _seed_mixed(mcp)
-    content, _ = await mcp.call_tool("audit_tail", {"lines": 50, "denied": True})
+    content = (await mcp.call_tool("audit_tail", {"lines": 50, "denied": True})).content
     recs = [json.loads(ln) for ln in _text(content).splitlines() if ln.strip()]
     assert recs and all(r["denied"] is True for r in recs)
     assert all(r["tool"] == "shell_exec" for r in recs)  # only the Tier-3 rm was denied
@@ -152,7 +152,7 @@ async def test_audit_tail_filter_by_denied(tmp_path: Path) -> None:
 async def test_audit_tail_filter_by_tier(tmp_path: Path) -> None:
     mcp = build_server(_guarded(tmp_path))
     await _seed_mixed(mcp)
-    content, _ = await mcp.call_tool("audit_tail", {"lines": 50, "tier": 0})
+    content = (await mcp.call_tool("audit_tail", {"lines": 50, "tier": 0})).content
     recs = [json.loads(ln) for ln in _text(content).splitlines() if ln.strip()]
     assert recs and all(r["tier"] == 0 for r in recs)  # server_info (+ prior audit_tail reads)
 
@@ -168,5 +168,5 @@ async def test_audit_tail_filters_recorded_only_when_set(tmp_path: Path) -> None
 async def test_audit_tail_no_match_returns_empty(tmp_path: Path) -> None:
     mcp = build_server(_guarded(tmp_path))
     await _seed_mixed(mcp)
-    content, _ = await mcp.call_tool("audit_tail", {"lines": 50, "tool": "no_such_tool"})
+    content = (await mcp.call_tool("audit_tail", {"lines": 50, "tool": "no_such_tool"})).content
     assert _text(content) == ""
