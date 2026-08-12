@@ -43,7 +43,7 @@ dev = [
   # -e ".[dev]"` (what CI does) no longer provides it. Declared explicitly
   # because a package the suite imports should never be a transitive.
   "httpx>=0.28,<1",
-  "ruff>=0.8,<0.17",
+  "ruff>=0.16.2,<0.17",
   "mypy>=1.13,<3",
   "coverage[toml]>=7.6,<8",
   "pre-commit>=4.0,<5",
