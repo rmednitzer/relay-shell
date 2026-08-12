@@ -32,7 +32,7 @@ def _text(content: object) -> str:
 
 async def test_shell_exec_wrapper(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("shell_exec", {"command": "echo hello"})
+    content = (await mcp.call_tool("shell_exec", {"command": "echo hello"})).content
     out = _text(content)
     assert "hello" in out
     assert "[exit 0]" in out
@@ -40,7 +40,7 @@ async def test_shell_exec_wrapper(settings: Settings) -> None:
 
 async def test_shell_script_wrapper(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("shell_script", {"script": "echo first; echo second"})
+    content = (await mcp.call_tool("shell_script", {"script": "echo first; echo second"})).content
     out = _text(content)
     assert "first" in out and "second" in out
 
@@ -65,10 +65,12 @@ async def test_shell_script_env_json_in_policy_text(tmp_path: Path) -> None:
         ssh_config=str(tmp_path / "no_ssh_config"),
     )
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "shell_script",
-        {"script": "echo hello", "env_json": '{"LD_PRELOAD": "/tmp/x.so"}'},
-    )
+    content = (
+        await mcp.call_tool(
+            "shell_script",
+            {"script": "echo hello", "env_json": '{"LD_PRELOAD": "/tmp/x.so"}'},
+        )
+    ).content
     out = _text(content)
     assert "DENIED" in out, (
         f"shell_script env_json must reach policy_text; got {out!r}. "
@@ -110,10 +112,12 @@ async def test_shell_spawn_env_json_in_policy_text(tmp_path: Path) -> None:
         ssh_config=str(tmp_path / "no_ssh_config"),
     )
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "shell_spawn",
-        {"command": "/bin/sh", "env_json": '{"LD_PRELOAD": "/tmp/x.so"}'},
-    )
+    content = (
+        await mcp.call_tool(
+            "shell_spawn",
+            {"command": "/bin/sh", "env_json": '{"LD_PRELOAD": "/tmp/x.so"}'},
+        )
+    ).content
     out = _text(content)
     assert "DENIED" in out, (
         f"shell_spawn env_json must reach policy_text; got {out!r}. "
@@ -131,10 +135,12 @@ async def test_shell_spawn_env_json_in_audit_args(tmp_path: Path) -> None:
         ssh_config=str(tmp_path / "no_ssh_config"),
     )
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "shell_spawn",
-        {"command": "/bin/sh", "env_json": '{"MY_VAR": "value"}'},
-    )
+    content = (
+        await mcp.call_tool(
+            "shell_spawn",
+            {"command": "/bin/sh", "env_json": '{"MY_VAR": "value"}'},
+        )
+    ).content
     # Best-effort cleanup so the registry doesn't carry a live PTY across
     # tests; the audit record we care about is already written.
     sid_text = _text(content)
@@ -156,7 +162,7 @@ async def test_session_lifecycle_covers_session_wrappers(settings: Settings) -> 
     mcp = build_server(settings)
 
     # shell_spawn: starts a PTY session and returns the id in the body.
-    content, _ = await mcp.call_tool("shell_spawn", {"command": "/bin/sh"})
+    content = (await mcp.call_tool("shell_spawn", {"command": "/bin/sh"})).content
     spawn_out = _text(content)
     # Body format is "[session <id> started] ...". Extract the id.
     assert "started" in spawn_out
@@ -164,11 +170,13 @@ async def test_session_lifecycle_covers_session_wrappers(settings: Settings) -> 
     sid = spawn_out.split("session ", 1)[1].split()[0]
     try:
         # session_list shows it.
-        content, _ = await mcp.call_tool("session_list", {})
+        content = (await mcp.call_tool("session_list", {})).content
         assert sid in _text(content)
 
         # session_send writes to it.
-        content, _ = await mcp.call_tool("session_send", {"session_id": sid, "data": "echo hi\n"})
+        content = (
+            await mcp.call_tool("session_send", {"session_id": sid, "data": "echo hi\n"})
+        ).content
         send_out = _text(content)
         # Either an "ok" / "wrote N bytes" indicator or empty - both exercise
         # the wrapper. The byte count framing is what matters here.
@@ -178,20 +186,20 @@ async def test_session_lifecycle_covers_session_wrappers(settings: Settings) -> 
         await asyncio.sleep(0.2)
 
         # session_recv pulls accumulated output.
-        content, _ = await mcp.call_tool("session_recv", {"session_id": sid, "wait_ms": 200})
+        content = (await mcp.call_tool("session_recv", {"session_id": sid, "wait_ms": 200})).content
         recv_out = _text(content)
         # We may or may not see "hi" depending on PTY echo, but the
         # wrapper must produce some bytes.
         assert isinstance(recv_out, str)
 
         # session_resize accepts cols/rows.
-        content, _ = await mcp.call_tool(
-            "session_resize", {"session_id": sid, "cols": 80, "rows": 24}
-        )
+        content = (
+            await mcp.call_tool("session_resize", {"session_id": sid, "cols": 80, "rows": 24})
+        ).content
         assert _text(content) is not None
     finally:
         # session_kill terminates the PTY.
-        content, _ = await mcp.call_tool("session_kill", {"session_id": sid})
+        content = (await mcp.call_tool("session_kill", {"session_id": sid})).content
         kill_out = _text(content)
         assert "killed" in kill_out or "ended" in kill_out or sid in kill_out
 
@@ -199,7 +207,9 @@ async def test_session_lifecycle_covers_session_wrappers(settings: Settings) -> 
 async def test_session_recv_unknown_id_surfaces_error(settings: Settings) -> None:
     # Unknown ids must surface a structured error, not an exception.
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("session_recv", {"session_id": "does-not-exist", "wait_ms": 0})
+    content = (
+        await mcp.call_tool("session_recv", {"session_id": "does-not-exist", "wait_ms": 0})
+    ).content
     out = _text(content)
     # The wrapper passes the unknown id through the same ERROR-string
     # path; either "no such session" / similar marker, or an empty
@@ -209,27 +219,31 @@ async def test_session_recv_unknown_id_surfaces_error(settings: Settings) -> Non
 
 async def test_session_kill_unknown_id_surfaces_error(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("session_kill", {"session_id": "does-not-exist"})
+    content = (await mcp.call_tool("session_kill", {"session_id": "does-not-exist"})).content
     assert isinstance(_text(content), str)
 
 
 async def test_session_resize_unknown_id_surfaces_error(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "session_resize", {"session_id": "does-not-exist", "cols": 80, "rows": 24}
-    )
+    content = (
+        await mcp.call_tool(
+            "session_resize", {"session_id": "does-not-exist", "cols": 80, "rows": 24}
+        )
+    ).content
     assert isinstance(_text(content), str)
 
 
 async def test_session_send_unknown_id_surfaces_error(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("session_send", {"session_id": "does-not-exist", "data": "x"})
+    content = (
+        await mcp.call_tool("session_send", {"session_id": "does-not-exist", "data": "x"})
+    ).content
     assert isinstance(_text(content), str)
 
 
 async def test_session_list_empty(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("session_list", {})
+    content = (await mcp.call_tool("session_list", {})).content
     # The wrapper returns either "[]" / "no sessions" / an empty
     # listing - all bodies pass through the wrapper's audit path.
     assert isinstance(_text(content), str)
@@ -246,10 +260,12 @@ async def test_session_list_empty(settings: Settings) -> None:
 
 async def test_ssh_exec_unreachable_wrapper(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "ssh_exec",
-        {"host": "no-such-host-123.invalid", "command": "true", "timeout": 1},
-    )
+    content = (
+        await mcp.call_tool(
+            "ssh_exec",
+            {"host": "no-such-host-123.invalid", "command": "true", "timeout": 1},
+        )
+    ).content
     # The wrapper returns either an ERROR string or a non-zero exit
     # code; both go through the audit + truncate path.
     assert _text(content) is not None
@@ -257,10 +273,12 @@ async def test_ssh_exec_unreachable_wrapper(settings: Settings) -> None:
 
 async def test_ssh_spawn_unreachable_wrapper(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "ssh_spawn",
-        {"host": "no-such-host-123.invalid", "timeout": 1},
-    )
+    content = (
+        await mcp.call_tool(
+            "ssh_spawn",
+            {"host": "no-such-host-123.invalid", "timeout": 1},
+        )
+    ).content
     assert _text(content) is not None
 
 
@@ -268,54 +286,62 @@ async def test_ssh_upload_unreachable_wrapper(settings: Settings, tmp_path: Path
     src = tmp_path / "src.txt"
     src.write_text("hi")
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "ssh_upload",
-        {
-            "host": "no-such-host-123.invalid",
-            "local_path": str(src),
-            "remote_path": "/tmp/dst.txt",
-            "timeout": 1,
-        },
-    )
+    content = (
+        await mcp.call_tool(
+            "ssh_upload",
+            {
+                "host": "no-such-host-123.invalid",
+                "local_path": str(src),
+                "remote_path": "/tmp/dst.txt",
+                "timeout": 1,
+            },
+        )
+    ).content
     assert _text(content) is not None
 
 
 async def test_ssh_download_unreachable_wrapper(settings: Settings, tmp_path: Path) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "ssh_download",
-        {
-            "host": "no-such-host-123.invalid",
-            "remote_path": "/tmp/whatever",
-            "local_path": str(tmp_path / "dst.txt"),
-            "timeout": 1,
-        },
-    )
+    content = (
+        await mcp.call_tool(
+            "ssh_download",
+            {
+                "host": "no-such-host-123.invalid",
+                "remote_path": "/tmp/whatever",
+                "local_path": str(tmp_path / "dst.txt"),
+                "timeout": 1,
+            },
+        )
+    ).content
     assert _text(content) is not None
 
 
 async def test_ssh_forward_unreachable_wrapper(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "ssh_forward",
-        {
-            "host": "no-such-host-123.invalid",
-            "spec": "L:127.0.0.1:18080:example.org:80",
-            "timeout": 1,
-        },
-    )
+    content = (
+        await mcp.call_tool(
+            "ssh_forward",
+            {
+                "host": "no-such-host-123.invalid",
+                "spec": "L:127.0.0.1:18080:example.org:80",
+                "timeout": 1,
+            },
+        )
+    ).content
     assert _text(content) is not None
 
 
 async def test_ssh_forward_list_wrapper(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("ssh_forward_list", {})
+    content = (await mcp.call_tool("ssh_forward_list", {})).content
     assert isinstance(_text(content), str)
 
 
 async def test_ssh_forward_close_unknown_id_wrapper(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("ssh_forward_close", {"forward_id": "fwd-does-not-exist"})
+    content = (
+        await mcp.call_tool("ssh_forward_close", {"forward_id": "fwd-does-not-exist"})
+    ).content
     assert isinstance(_text(content), str)
 
 
@@ -324,22 +350,22 @@ async def test_ssh_check_against_inventory_wrapper(settings: Settings) -> None:
     # hosts" message via its short-circuit path. Either way the body
     # executes.
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("ssh_check", {})
+    content = (await mcp.call_tool("ssh_check", {})).content
     assert isinstance(_text(content), str)
 
 
 async def test_ssh_check_with_explicit_hosts_wrapper(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "ssh_check", {"hosts": "no-such-host-123.invalid", "timeout": 1}
-    )
+    content = (
+        await mcp.call_tool("ssh_check", {"hosts": "no-such-host-123.invalid", "timeout": 1})
+    ).content
     out = _text(content)
     assert "UNREACHABLE" in out or "no-such-host" in out
 
 
 async def test_ssh_hosts_wrapper(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("ssh_hosts", {})
+    content = (await mcp.call_tool("ssh_hosts", {})).content
     # Empty inventory -> "[]" / similar. Body executed regardless.
     assert isinstance(_text(content), str)
 
@@ -352,7 +378,7 @@ async def test_server_info_reports_documented_fields(settings: Settings) -> None
     # stdio e2e test but not by itself. A direct test confirming every
     # documented field is present catches silent removals.
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("server_info", {})
+    content = (await mcp.call_tool("server_info", {})).content
     info = json.loads(_text(content))
     # Required top-level fields per docs/tools.md.
     for key in ("name", "version", "transport", "policy_mode", "runtime", "limits", "audit", "ssh"):
@@ -472,7 +498,7 @@ async def test_ssh_check_caps_host_count(settings: Settings) -> None:
     # any connection is attempted (mirrors ssh_fanout / ssh_keyscan).
     mcp = build_server(settings)
     hosts = " ".join(f"h{i}.invalid" for i in range(101))
-    content, _ = await mcp.call_tool("ssh_check", {"hosts": hosts, "timeout": 1})
+    content = (await mcp.call_tool("ssh_check", {"hosts": hosts, "timeout": 1})).content
     out = _text(content)
     assert "exceeds the per-call cap" in out
 
@@ -537,10 +563,12 @@ async def test_ssrf2_upload_deny_not_dodged_by_ip_encoding(tmp_path: Path) -> No
         ssh_config=str(tmp_path / "no_ssh_config"),
     )
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "ssh_upload",
-        {"host": "2852039166", "local_path": "/tmp/x", "remote_path": "/srv/y"},
-    )
+    content = (
+        await mcp.call_tool(
+            "ssh_upload",
+            {"host": "2852039166", "local_path": "/tmp/x", "remote_path": "/srv/y"},
+        )
+    ).content
     assert "DENIED" in _text(content)
     recs = [
         json.loads(ln)
@@ -570,7 +598,7 @@ async def test_f2_deny_gates_host_for_rce_tools(tmp_path: Path) -> None:
                 "ssh_exec",
                 {"host": "169.254.169.254", "command": "whoami", "timeout": 1},
             )
-        )[0]
+        ).content
     )
     assert "DENIED" in exec_out
     # decimal spelling of the metadata IP is still gated (SSRF widening)
@@ -580,7 +608,7 @@ async def test_f2_deny_gates_host_for_rce_tools(tmp_path: Path) -> None:
                 "ssh_fanout",
                 {"command": "whoami", "hosts": "2852039166", "timeout": 1},
             )
-        )[0]
+        ).content
     )
     assert "DENIED" in fanout_out
     check_out = _text(
@@ -589,7 +617,7 @@ async def test_f2_deny_gates_host_for_rce_tools(tmp_path: Path) -> None:
                 "ssh_check",
                 {"hosts": "169.254.169.254", "timeout": 1},
             )
-        )[0]
+        ).content
     )
     assert "DENIED" in check_out
     # a non-denied host is not blocked by the deny gate (it fails to connect
@@ -600,6 +628,6 @@ async def test_f2_deny_gates_host_for_rce_tools(tmp_path: Path) -> None:
                 "ssh_exec",
                 {"host": "192.0.2.1", "command": "whoami", "timeout": 1},
             )
-        )[0]
+        ).content
     )
     assert "DENIED" not in ok_out

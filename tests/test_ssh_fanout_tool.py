@@ -108,7 +108,7 @@ async def test_ssh_fanout_runs_command_across_inventory(
 
     monkeypatch.setattr(SshPool, "run", fake_run)
 
-    content, _ = await mcp.call_tool("ssh_fanout", {"command": "uptime", "concurrency": 2})
+    content = (await mcp.call_tool("ssh_fanout", {"command": "uptime", "concurrency": 2})).content
     payload = json.loads(_text(content))
     assert payload["command"] == "uptime"
     assert payload["concurrency"] == 2
@@ -137,10 +137,12 @@ async def test_ssh_fanout_explicit_host_list_overrides_inventory(
     mcp = build_server(fanout_settings)
     # Two explicit hosts (neither in the inventory) — the wrapper must
     # use the explicit list, not fall back to inventory.
-    content, _ = await mcp.call_tool(
-        "ssh_fanout",
-        {"command": "uptime", "hosts": "ad-hoc-1, ad-hoc-2"},
-    )
+    content = (
+        await mcp.call_tool(
+            "ssh_fanout",
+            {"command": "uptime", "hosts": "ad-hoc-1, ad-hoc-2"},
+        )
+    ).content
     payload = json.loads(_text(content))
     assert payload["host_count"] == 2
     assert sorted(r["host"] for r in payload["results"]) == ["ad-hoc-1", "ad-hoc-2"]
@@ -167,7 +169,7 @@ async def test_ssh_fanout_surfaces_per_host_failure(
     monkeypatch.setattr(SshPool, "run", fake_run)
 
     mcp = build_server(fanout_settings)
-    content, _ = await mcp.call_tool("ssh_fanout", {"command": "uptime"})
+    content = (await mcp.call_tool("ssh_fanout", {"command": "uptime"})).content
     payload = json.loads(_text(content))
     by_host = {r["host"]: r for r in payload["results"]}
     assert by_host["host-a"]["exit_code"] == 0
@@ -214,7 +216,7 @@ async def test_ssh_fanout_rejects_oversize_host_list(fanout_settings: Settings) 
     # short-circuits before any SSH call is dispatched.
     mcp = build_server(fanout_settings)
     too_many = ",".join(f"host{i}.example" for i in range(101))
-    content, _ = await mcp.call_tool("ssh_fanout", {"command": "uptime", "hosts": too_many})
+    content = (await mcp.call_tool("ssh_fanout", {"command": "uptime", "hosts": too_many})).content
     text = _text(content)
     assert "exceeds the per-call cap" in text
     assert "101 hosts" in text
@@ -235,7 +237,7 @@ async def test_ssh_fanout_no_hosts_no_inventory(tmp_path: Path) -> None:
         auth_state_dir=str(tmp_path / "oauth"),
     )
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("ssh_fanout", {"command": "uptime"})
+    content = (await mcp.call_tool("ssh_fanout", {"command": "uptime"})).content
     assert "no hosts configured" in _text(content)
 
 
@@ -259,7 +261,7 @@ async def test_ssh_fanout_output_stays_within_max_output(
 
     hosts = ",".join(f"h{i}.example" for i in range(_SSH_FANOUT_MAX_HOSTS))
     mcp = build_server(fanout_settings)
-    content, _ = await mcp.call_tool("ssh_fanout", {"command": "uptime", "hosts": hosts})
+    content = (await mcp.call_tool("ssh_fanout", {"command": "uptime", "hosts": hosts})).content
     text = _text(content)
     # The response is one parseable JSON object - the envelope was not
     # truncated by Relay.run().
@@ -291,7 +293,7 @@ async def test_ssh_fanout_truncates_unreachable_exception_messages(
 
     hosts = ",".join(f"h{i}.example" for i in range(_SSH_FANOUT_MAX_HOSTS))
     mcp = build_server(fanout_settings)
-    content, _ = await mcp.call_tool("ssh_fanout", {"command": "uptime", "hosts": hosts})
+    content = (await mcp.call_tool("ssh_fanout", {"command": "uptime", "hosts": hosts})).content
     text = _text(content)
     # JSON still parses.
     payload = json.loads(text)
@@ -379,7 +381,9 @@ async def test_ssh_fanout_deny_list_fires_on_command(
     monkeypatch.setattr(SshPool, "run", fake_run)
 
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("ssh_fanout", {"command": "rm -rf /tmp/x", "hosts": "h1"})
+    content = (
+        await mcp.call_tool("ssh_fanout", {"command": "rm -rf /tmp/x", "hosts": "h1"})
+    ).content
     text = _text(content)
     assert "DENIED" in text
     assert "RELAY_SHELL_POLICY_DENY" in text

@@ -2,14 +2,14 @@
 # 24.04). Versions here mirror the resolved set `pip install -e ".[dev]"`
 # produces against the lower bounds declared in pyproject.toml; the full
 # test suite + mypy + ruff are green at this combination (ADR 0005,
-# 2026-05-24 validation pass). For library-style installs, use
-# pyproject.toml — the lower bounds there are the contract.
-mcp==1.28.1
+# refreshed 2026-08-12 for the MCP SDK v2 migration). For library-style
+# installs, use pyproject.toml — the lower bounds there are the contract.
+mcp==2.0.0
 pydantic==2.13.4
-pydantic-settings==2.14.2
+pydantic-settings==2.15.0
 asyncssh==2.24.0
-uvicorn==0.51.0
-starlette==1.3.1
+uvicorn==0.52.1
+starlette==1.6.0
 anyio==4.14.2
 httpx==0.28.1
 PyJWT==2.13.0
@@ -17,5 +17,5 @@ cryptography==50.0.0
 # dev / CI
 pytest==9.1.1
 pytest-asyncio==1.4.0
-ruff==0.16.0
+ruff==0.16.2
 mypy==2.3.0

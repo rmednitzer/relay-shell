@@ -39,7 +39,7 @@ def test_ssh_keyscan_classified_tier_one_not_zero() -> None:
 
 async def test_ssh_keyscan_rejects_empty_hosts(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("ssh_keyscan", {"hosts": ""})
+    content = (await mcp.call_tool("ssh_keyscan", {"hosts": ""})).content
     assert "[no hosts" in _text(content)
 
 
@@ -64,7 +64,7 @@ async def test_ssh_keyscan_rejects_shell_metachars(settings: Settings) -> None:
         'host"q"',  # double quote
         "host\\esc",  # backslash
     ):
-        content, _ = await mcp.call_tool("ssh_keyscan", {"hosts": bad})
+        content = (await mcp.call_tool("ssh_keyscan", {"hosts": bad})).content
         text = _text(content)
         assert "rejected host" in text, f"failed to reject {bad!r}: {text!r}"
 
@@ -72,18 +72,20 @@ async def test_ssh_keyscan_rejects_shell_metachars(settings: Settings) -> None:
 async def test_ssh_keyscan_rejects_out_of_range_port(settings: Settings) -> None:
     mcp = build_server(settings)
     for bad_port in (0, -1, 65536, 100000):
-        content, _ = await mcp.call_tool(
-            "ssh_keyscan", {"hosts": "valid.example.org", "port": bad_port}
-        )
+        content = (
+            await mcp.call_tool("ssh_keyscan", {"hosts": "valid.example.org", "port": bad_port})
+        ).content
         assert "out of range" in _text(content)
 
 
 async def test_ssh_keyscan_rejects_unknown_key_type(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "ssh_keyscan",
-        {"hosts": "valid.example.org", "key_types": "rsa,bogus"},
-    )
+    content = (
+        await mcp.call_tool(
+            "ssh_keyscan",
+            {"hosts": "valid.example.org", "key_types": "rsa,bogus"},
+        )
+    ).content
     text = _text(content)
     assert "rejected key type" in text
     assert "'bogus'" in text
@@ -91,10 +93,12 @@ async def test_ssh_keyscan_rejects_unknown_key_type(settings: Settings) -> None:
 
 async def test_ssh_keyscan_rejects_empty_key_types(settings: Settings) -> None:
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "ssh_keyscan",
-        {"hosts": "valid.example.org", "key_types": ",,"},
-    )
+    content = (
+        await mcp.call_tool(
+            "ssh_keyscan",
+            {"hosts": "valid.example.org", "key_types": ",,"},
+        )
+    ).content
     assert "empty key_types" in _text(content)
 
 
@@ -114,15 +118,17 @@ async def test_ssh_keyscan_invokes_ssh_keyscan_with_validated_argv(
 
     with patch("relay_shell.server.run_command", fake_run_command):
         mcp = build_server(settings)
-        content, _ = await mcp.call_tool(
-            "ssh_keyscan",
-            {
-                "hosts": "host.example, other.example",
-                "port": 2222,
-                "key_types": "rsa,ed25519",
-                "timeout": 5,
-            },
-        )
+        content = (
+            await mcp.call_tool(
+                "ssh_keyscan",
+                {
+                    "hosts": "host.example, other.example",
+                    "port": 2222,
+                    "key_types": "rsa,ed25519",
+                    "timeout": 5,
+                },
+            )
+        ).content
 
     out = _text(content)
     assert "host.example ssh-rsa" in out
@@ -147,7 +153,7 @@ async def test_ssh_keyscan_rejects_oversize_host_list(settings: Settings) -> Non
     # sweep tool.
     mcp = build_server(settings)
     too_many = ",".join(f"host{i}.example" for i in range(33))
-    content, _ = await mcp.call_tool("ssh_keyscan", {"hosts": too_many})
+    content = (await mcp.call_tool("ssh_keyscan", {"hosts": too_many})).content
     text = _text(content)
     assert "exceeds the per-call cap" in text
     assert "33 hosts" in text
@@ -195,7 +201,7 @@ async def test_ssh_keyscan_deny_list_gates_scan_targets(tmp_path: Path) -> None:
 
     with patch("relay_shell.server.run_command", fake_run_command):
         mcp = build_server(settings)
-        content, _ = await mcp.call_tool("ssh_keyscan", {"hosts": "169.254.169.254"})
+        content = (await mcp.call_tool("ssh_keyscan", {"hosts": "169.254.169.254"})).content
 
     out = _text(content)
     assert "DENIED" in out, f"deny pattern on the scan host must fire; got {out!r}"
@@ -222,7 +228,7 @@ async def test_ssh_keyscan_allowed_when_host_not_denied(tmp_path: Path) -> None:
 
     with patch("relay_shell.server.run_command", fake_run_command):
         mcp = build_server(settings)
-        content, _ = await mcp.call_tool("ssh_keyscan", {"hosts": "host.example"})
+        content = (await mcp.call_tool("ssh_keyscan", {"hosts": "host.example"})).content
 
     out = _text(content)
     assert "DENIED" not in out and "ssh-ed25519" in out
@@ -317,7 +323,7 @@ async def test_ssh_keyscan_deny_not_dodged_by_ip_encoding(tmp_path: Path) -> Non
     obfuscated = "2852039166"
     with patch("relay_shell.server.run_command", fake_run_command):
         mcp = build_server(settings)
-        content, _ = await mcp.call_tool("ssh_keyscan", {"hosts": obfuscated})
+        content = (await mcp.call_tool("ssh_keyscan", {"hosts": obfuscated})).content
 
     out = _text(content)
     assert "DENIED" in out, f"obfuscated-IP scan target must be denied; got {out!r}"

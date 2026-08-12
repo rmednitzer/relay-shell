@@ -653,9 +653,9 @@ async def test_overflow_caps_emission_but_child_completes(tmp_path: Path) -> Non
 async def test_server_writes_syscall_notify_audit_lines(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool(
-        "shell_exec", {"command": "/bin/echo seccomp-e2e", "use_shell": True}
-    )
+    content = (
+        await mcp.call_tool("shell_exec", {"command": "/bin/echo seccomp-e2e", "use_shell": True})
+    ).content
     text = "".join(getattr(b, "text", "") for b in content)
     assert "seccomp-e2e" in text
 
@@ -682,7 +682,7 @@ async def test_server_writes_syscall_notify_audit_lines(tmp_path: Path) -> None:
 async def test_server_info_reports_seccomp_block(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("server_info", {})
+    content = (await mcp.call_tool("server_info", {})).content
     text = "".join(getattr(b, "text", "") for b in content)
     info = json.loads(text)
     assert info["seccomp"]["notify"] is True
@@ -731,7 +731,7 @@ async def test_shell_spawn_session_emits_syscall_notify_lines(tmp_path: Path) ->
     def _text(content: object) -> str:
         return "".join(getattr(b, "text", "") for b in content)  # type: ignore[union-attr]
 
-    content, _ = await mcp.call_tool("shell_spawn", {"command": "/bin/sh"})
+    content = (await mcp.call_tool("shell_spawn", {"command": "/bin/sh"})).content
     spawn_out = _text(content)
     m = re.search(r"session (\S+) started", spawn_out)
     assert m, spawn_out
@@ -740,7 +740,7 @@ async def test_shell_spawn_session_emits_syscall_notify_lines(tmp_path: Path) ->
     await mcp.call_tool("session_send", {"session_id": sid, "data": "/bin/echo from-session"})
     seen = ""
     for _ in range(20):
-        content, _ = await mcp.call_tool("session_recv", {"session_id": sid, "timeout": 1})
+        content = (await mcp.call_tool("session_recv", {"session_id": sid, "timeout": 1})).content
         seen += _text(content)
         if "from-session" in seen:
             break

@@ -1,4 +1,4 @@
-"""Server assembly: FastMCP instance, the audited tool runner, all tools.
+"""Server assembly: MCPServer instance, the audited tool runner, all tools.
 
 Every tool runs through one path:
 
@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from . import __version__, seccomp
 from .audit import AuditLogger
@@ -619,25 +619,37 @@ class Relay:
         )
 
 
-def build_server(settings: Settings | None = None) -> FastMCP:
-    """Construct the FastMCP server with every tool registered."""
+def http_transport_kwargs(settings: Settings) -> dict[str, Any]:
+    """Transport options for ``MCPServer.run(transport="streamable-http")``.
+
+    In MCP SDK v2 the bind address and the streamable-HTTP response shape
+    are no longer constructor arguments; they are passed per transport at
+    run time. Kept here beside the server so the serve entrypoint does not
+    have to know which options the HTTP transport takes.
+    """
+    return {
+        "host": settings.http_host,
+        "port": settings.http_port,
+        "stateless_http": True,
+        "json_response": True,
+    }
+
+
+def build_server(settings: Settings | None = None) -> MCPServer:
+    """Construct the MCPServer with every tool registered."""
     cfg = settings or get_settings()
     app = Relay(cfg)
 
-    fastmcp_kwargs: dict[str, Any] = {
+    server_kwargs: dict[str, Any] = {
         "instructions": _INSTRUCTIONS,
-        "host": cfg.http_host,
-        "port": cfg.http_port,
-        "stateless_http": True,
-        "json_response": True,
     }
     if cfg.transport == "http" and cfg.auth_enabled:
         from .auth import build_auth_settings, make_oauth_provider
 
-        fastmcp_kwargs["auth"] = build_auth_settings(cfg.auth_issuer)
-        fastmcp_kwargs["auth_server_provider"] = make_oauth_provider(cfg)
+        server_kwargs["auth"] = build_auth_settings(cfg.auth_issuer)
+        server_kwargs["auth_server_provider"] = make_oauth_provider(cfg)
 
-    mcp = FastMCP("relay-shell", **fastmcp_kwargs)
+    mcp = MCPServer("relay-shell", **server_kwargs)
 
     # ---- local shell -------------------------------------------------------
     @mcp.tool()
@@ -1622,7 +1634,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
 
     # --- /metrics (HTTP transport only) -------------------------------------
     #
-    # FastMCP.custom_route bypasses the OAuth layer by design (the upstream
+    # MCPServer.custom_route bypasses the OAuth layer by design (the upstream
     # docstring says health-check style endpoints are intended). The audit
     # log is the source of truth; /metrics is for dashboards only and is
     # firewalled by the Caddy edge in the supported deployment.
@@ -1749,7 +1761,7 @@ def build_server(settings: Settings | None = None) -> FastMCP:
     # --- MCP prompts --------------------------------------------------------
     #
     # A prompt is reusable, client-pullable guidance - the protocol-native home
-    # for *detailed* "when to use which tool" instructions (the FastMCP
+    # for *detailed* "when to use which tool" instructions (the MCPServer
     # `instructions` string carries the concise version surfaced at initialize).
     # Like a resource read, a prompt fetch does NOT flow through `Relay.run`:
     # there is no work to admit, time out, or truncate. But a fetch IS a

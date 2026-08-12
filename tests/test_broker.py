@@ -136,7 +136,7 @@ async def test_off_tier3_runs_and_record_has_no_action(settings: Settings) -> No
     # Default settings: confirm_tier3 is False.
     assert settings.confirm_tier3 is False
     mcp = build_server(settings)
-    content, _ = await mcp.call_tool("shell_exec", {"command": "rm -rf /tmp/relay-nope-xyz"})
+    content = (await mcp.call_tool("shell_exec", {"command": "rm -rf /tmp/relay-nope-xyz"})).content
     text = "".join(b.text for b in content if getattr(b, "type", "") == "text")
     # It executed (no confirmation challenge) ...
     assert "CONFIRM REQUIRED" not in text
@@ -175,17 +175,17 @@ async def test_on_tier3_challenges_then_executes(tmp_path: Path) -> None:
     cmd = f"rm -rf {victim}"
 
     # 1) plan: challenge returned, work() did NOT run (file still present).
-    r1 = _text((await mcp.call_tool("shell_exec", {"command": cmd}))[0])
+    r1 = _text((await mcp.call_tool("shell_exec", {"command": cmd})).content)
     assert "CONFIRM REQUIRED" in r1
     assert victim.exists(), "planned Tier-3 op must not execute"
     token = re.search(r'token="([A-Za-z0-9_-]+)"', r1).group(1)
 
     # 2) arm
-    r2 = _text((await mcp.call_tool("operation_confirm", {"token": token}))[0])
+    r2 = _text((await mcp.call_tool("operation_confirm", {"token": token})).content)
     assert "armed" in r2
 
     # 3) execute: same call now runs (file removed).
-    r3 = _text((await mcp.call_tool("shell_exec", {"command": cmd}))[0])
+    r3 = _text((await mcp.call_tool("shell_exec", {"command": cmd})).content)
     assert "CONFIRM REQUIRED" not in r3
     assert not victim.exists(), "confirmed Tier-3 op must execute"
 
@@ -195,7 +195,7 @@ async def test_on_tier3_challenges_then_executes(tmp_path: Path) -> None:
     assert ("shell_exec", "confirm_plan") in actions
     assert ("shell_exec", "confirm_execute") in actions
     # single-use: a further identical call re-challenges.
-    r4 = _text((await mcp.call_tool("shell_exec", {"command": cmd}))[0])
+    r4 = _text((await mcp.call_tool("shell_exec", {"command": cmd})).content)
     assert "CONFIRM REQUIRED" in r4
 
 
@@ -203,11 +203,11 @@ async def test_on_bad_token_rechallenges(tmp_path: Path) -> None:
     cfg = _on_settings(tmp_path)
     mcp = build_server(cfg)
     cmd = "rm -rf /tmp/relay-nope-xyz"
-    _text((await mcp.call_tool("shell_exec", {"command": cmd}))[0])  # plan
-    r = _text((await mcp.call_tool("operation_confirm", {"token": "bogus-token"}))[0])
+    _text((await mcp.call_tool("shell_exec", {"command": cmd})).content)  # plan
+    r = _text((await mcp.call_tool("operation_confirm", {"token": "bogus-token"})).content)
     assert "invalid or expired" in r
     # Still gated: an unarmed op is re-challenged.
-    again = _text((await mcp.call_tool("shell_exec", {"command": cmd}))[0])
+    again = _text((await mcp.call_tool("shell_exec", {"command": cmd})).content)
     assert "CONFIRM REQUIRED" in again
 
 
@@ -215,7 +215,7 @@ async def test_on_non_tier3_is_unaffected(tmp_path: Path) -> None:
     cfg = _on_settings(tmp_path)
     mcp = build_server(cfg)
     # A plain read/observe command is Tier 1, not gated even with broker on.
-    r = _text((await mcp.call_tool("shell_exec", {"command": "echo ok"}))[0])
+    r = _text((await mcp.call_tool("shell_exec", {"command": "echo ok"})).content)
     assert "CONFIRM REQUIRED" not in r
     assert "ok" in r
 
@@ -223,7 +223,7 @@ async def test_on_non_tier3_is_unaffected(tmp_path: Path) -> None:
 async def test_operation_confirm_disabled_reports(settings: Settings) -> None:
     # Broker off -> operation_confirm reports disabled, changes nothing.
     mcp = build_server(settings)
-    r = _text((await mcp.call_tool("operation_confirm", {"token": "x"}))[0])
+    r = _text((await mcp.call_tool("operation_confirm", {"token": "x"})).content)
     assert "disabled" in r
 
 
@@ -231,7 +231,7 @@ async def test_raw_token_never_written_to_audit(tmp_path: Path) -> None:
     cfg = _on_settings(tmp_path)
     mcp = build_server(cfg)
     cmd = "rm -rf /tmp/relay-nope-xyz"
-    r1 = _text((await mcp.call_tool("shell_exec", {"command": cmd}))[0])
+    r1 = _text((await mcp.call_tool("shell_exec", {"command": cmd})).content)
     token = re.search(r'token="([A-Za-z0-9_-]+)"', r1).group(1)
     await mcp.call_tool("operation_confirm", {"token": token})
     raw_audit = Path(cfg.audit_path).read_text()
@@ -254,17 +254,17 @@ async def test_on_token_bound_to_target_not_just_command(tmp_path: Path) -> None
     cmd = "rm -rf ./keep.txt"
 
     # plan + arm for cwd=dir_a
-    r1 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_a)}))[0])
+    r1 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_a)})).content)
     token = re.search(r'token="([A-Za-z0-9_-]+)"', r1).group(1)
     await mcp.call_tool("operation_confirm", {"token": token})
 
     # Attempt to execute the SAME command against cwd=dir_b: must re-challenge,
     # and dir_b must be untouched (the armed token does not match this target).
-    r2 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_b)}))[0])
+    r2 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_b)})).content)
     assert "CONFIRM REQUIRED" in r2
     assert (dir_b / "keep.txt").exists(), "token for cwd=a must not authorize cwd=b"
     # The original target still executes (token still armed for cwd=a).
-    r3 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_a)}))[0])
+    r3 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_a)})).content)
     assert "CONFIRM REQUIRED" not in r3
     assert not (dir_a / "keep.txt").exists()
 
