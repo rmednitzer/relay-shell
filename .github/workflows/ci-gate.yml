@@ -1,0 +1,105 @@
+name: CI aggregate
+
+on:
+  pull_request:
+
+permissions:
+  checks: read
+  contents: read
+
+jobs:
+  ci-success:
+    name: ci-success
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TARGET_SHA: ${{ github.event.pull_request.head.sha }}
+      REQUIRED_CHECKS: |-
+        check (py3.12)
+        check (py3.13)
+        check (py3.14)
+        gitleaks (secret scan)
+      # Empty by design. Add an exact check name here only when a skipped
+      # result is an explicitly valid outcome for that protected dependency.
+      ALLOWED_SKIPPED_CHECKS: ""
+    steps:
+      - name: Require protected checks to pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t required <<< "${REQUIRED_CHECKS}"
+          mapfile -t allowed_skipped <<< "${ALLOWED_SKIPPED_CHECKS}"
+
+          is_allowed_skipped() {
+            local candidate="$1"
+            local item
+            for item in "${allowed_skipped[@]}"; do
+              [ -n "$item" ] && [ "$candidate" = "$item" ] && return 0
+            done
+            return 1
+          }
+
+          deadline=$((SECONDS + 1500))
+          tab="$(printf '\t')"
+
+          while :; do
+            pending=()
+            failed=()
+
+            for name in "${required[@]}"; do
+              [ -n "$name" ] || continue
+
+              row="$(
+                gh api --method GET \
+                  "repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/check-runs" \
+                  -f check_name="$name" \
+                  -f filter=latest \
+                  -F per_page=1 \
+                  --jq '.check_runs[0] | [.status, (.conclusion // "")] | @tsv'
+              )"
+
+              if [ -z "$row" ]; then
+                pending+=("$name (missing)")
+                continue
+              fi
+
+              IFS="$tab" read -r status conclusion <<< "$row"
+
+              if [ "$status" != "completed" ]; then
+                pending+=("$name ($status)")
+                continue
+              fi
+
+              if [ "$conclusion" = "success" ]; then
+                continue
+              fi
+
+              if [ "$conclusion" = "skipped" ] && is_allowed_skipped "$name"; then
+                continue
+              fi
+
+              failed+=("$name ($conclusion)")
+            done
+
+            if [ "${#failed[@]}" -gt 0 ]; then
+              printf '::error::Protected dependency failed: %s\n' "${failed[*]}"
+              exit 1
+            fi
+
+            if [ "${#pending[@]}" -eq 0 ]; then
+              echo "All protected dependencies passed."
+              exit 0
+            fi
+
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              printf '::error::Timed out waiting for protected dependencies: %s\n' "${pending[*]}"
+              exit 1
+            fi
+
+            printf 'Waiting for protected dependencies: %s\n' "${pending[*]}"
+            sleep 10
+          done
