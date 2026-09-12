@@ -19,6 +19,22 @@ All notable changes to this project are documented here. The format follows
   evicted, so the cap is transiently exceeded rather than dropping a live
   connection). Surfaced in `server_info.config.max_conns`.
 
+### Changed
+
+- **Migrated to the MCP Python SDK v2** and bound every dependency below its
+  next major (PR #164, #165, 2026-08-12). `mcp.server.fastmcp.FastMCP` is now
+  `mcp.server.mcpserver.MCPServer`; the `host`/`port`/`stateless_http`/
+  `json_response` constructor kwargs moved to per-transport `run()` options
+  (`http_transport_kwargs()` in `server.py`); `call_tool` now returns a
+  `CallToolResult` instead of a `(content, structured)` tuple. The dependency
+  moves off the exact pin `mcp==1.28.1` to the range `mcp>=2,<3` (v1 is
+  upstream maintenance-mode only). No change to `policy`, `redaction`,
+  `audit`, `patterns`, `broker`, or the `Relay.run` body — the trust boundary
+  is untouched. See [ADR 0001](docs/adr/0001-runtime-and-sdk.md) pin
+  movement. This pass also reconciled the README status line, the
+  compatibility matrix, and `docs/architecture.md` to the new pin, which had
+  drifted (still reading `mcp==1.28.1`) since the migration landed.
+
 ### Fixed
 
 - `SshPool.run()`'s output cap is now a single budget **shared** across stdout
