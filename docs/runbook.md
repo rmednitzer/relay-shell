@@ -340,6 +340,7 @@ Trigger an extra review pass if the diff touches:
 - `metrics.py` (label-cardinality and label-value-escaping invariants are part of the trust boundary - a model that controls a label could otherwise smuggle data into the exposition)
 - `seccomp.py` (the BPF filter, the notified-syscall set, the `CAP_SYS_ADMIN` gate, or the never-`no_new_privs` / always-CONTINUE invariants - a change here can alter the audit shape or the no-sandbox posture)
 - `broker.py` (ADR 0009 Tier-3 confirmation broker: the plan->execute token identity/binding, its TTL, and the always-*after*-the-deny/mode-check layering - a change here can weaken the friction on irreversible operations or, if it ran before the deny/mode check, turn a safeguard into a bypass)
+- `verifier.py` (the `relay-shell --verify-deploy` drift comparator: a change that silently widens the byte-for-byte comparison, or the single-leader-line strip it allows, could report `OK` for a hand-edited systemd unit or Caddyfile - the same class of hardening-regression the comparator exists to catch)
 - `deploy/install*.sh` (anything that writes a systemd unit / EnvironmentFile)
 - `deploy/Caddyfile` (CIDR matcher or header changes)
 
