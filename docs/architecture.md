@@ -1,18 +1,18 @@
 # Architecture
 
 `relay-shell` is a single Python 3.12+ process exposing shell and SSH
-operations as MCP tools. It is intentionally thin: the MCP SDK (FastMCP)
-owns the protocol and (optional) OAuth edge; `asyncssh` owns SSH; the
-operating system owns execution. `relay-shell` owns the parts that make
-that combination *safe to operate*: classification, bounding, auditing,
-and session lifecycle.
+operations as MCP tools. It is intentionally thin: the MCP SDK (`MCPServer`,
+the v2 successor to FastMCP) owns the protocol and (optional) OAuth edge;
+`asyncssh` owns SSH; the operating system owns execution. `relay-shell` owns
+the parts that make that combination *safe to operate*: classification,
+bounding, auditing, and session lifecycle.
 
 ```
 MCP client (Claude / Inspector / SDK)
         |
         |  stdio  |  streamable-HTTP (+ optional OAuth 2.1, behind a TLS/CIDR proxy)
         v
-   FastMCP (mcp==1.28.1)
+   MCPServer (mcp>=2,<3)
         v
    Relay.run()  ── policy.check ──> tier + admit/deny      (deny list first, always)
         |        ── redaction ───> audit args
@@ -91,7 +91,7 @@ syscall and is default off, so the lifecycle above is otherwise unchanged.
 | `sshpool` | asyncssh connection cache, exec, SFTP, forwarding, PTY adapter. |
 | `auth/oauth` | Optional file-backed OAuth 2.1 provider (HTTP only). |
 | `verifier` | Drift-detection comparator powering `relay-shell --verify-deploy`. |
-| `server` | FastMCP assembly, the audited runner, all tool, resource + prompt definitions. |
+| `server` | `MCPServer` assembly, the audited runner, all tool, resource + prompt definitions. |
 | `__main__` | Entrypoint; stderr-only logging; transport selection; `--check-config` / `--verify-deploy` CLI flags. |
 
 The canonical list of registered tools lives in

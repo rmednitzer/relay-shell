@@ -44,6 +44,18 @@ type safety, and how much transport/auth code we own versus delegate.
     (README status line + compatibility matrix, `docs/architecture.md`) were
     reconciled to the same pins in that window (CHANGELOG DOC-1); the release
     pipeline runs the full test suite as its build gate.
+  - `mcp` 1.28.1 → the v2 line, moving off the exact pin to `mcp>=2,<3` (PR
+    #164/#165, 2026-08-12). `mcp.server.fastmcp.FastMCP` is now
+    `mcp.server.mcpserver.MCPServer`; `host`/`port`/`stateless_http`/
+    `json_response` moved from the constructor to per-transport `run()`
+    kwargs (`http_transport_kwargs()` in `server.py`), and `call_tool` now
+    returns a `CallToolResult` instead of a `(content, structured)` tuple.
+    No change to `policy`, `redaction`, `audit`, `patterns`, `broker`, or the
+    `Relay.run` body — the trust boundary is untouched. Validated by the full
+    test suite (450 passed), `ruff check`/`ruff format --check`, and `mypy
+    --strict` across 20 source files; the living docs (README status line +
+    compatibility matrix, `docs/architecture.md`) were reconciled to the
+    same range in this pass.
 
 ## Rejected
 
