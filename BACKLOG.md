@@ -16,6 +16,19 @@ its kind is tracked (runbook §7 for capability/quality/ops/security-hardening,
 
 Severity order within each section: low before info; smaller effort first.
 
+## 2026-09-13 audit pass
+
+A trust-boundary-focused audit (`policy`/`redaction`/`audit`/`patterns`/
+`broker`/`Relay.run` and the SSH/session/shelltools/oauth/seccomp runtime)
+found the 2026-08-04 backlog follow-up's PERF-4 fix had not been applied to
+every single-host exec call site. One MEDIUM gap, closed in the engagement PR.
+
+Closed (engagement PR):
+
+| ID | Sev | Title | Resolution |
+|----|-----|-------|------------|
+| PERF-4b | MED | PERF-4's "bound buffered output to a cap" fix missed two call sites: `ssh_keyscan`'s `run_command()` and `ssh_check`'s `SshPool.run()` both still passed no cap (`cap is None`, unbounded). `ssh_check` is Tier 0 (permitted even in `readonly` mode, unlike `ssh_keyscan`) and both take a caller-chosen `hosts` argument, so a malicious/compromised remote sshd could stream unbounded data back regardless of mode or of what the fixed `echo ok` probe asked for | **Closed** (this PR). `ssh_keyscan` now passes `output_cap=max_output_hard` to `run_command`, matching `shell_exec`/`shell_script`. `ssh_check` now passes `max_output_bytes=_SSH_CHECK_PER_HOST_OUTPUT_CAP` (4 KiB — generous for a probe that only ever inspects the `"ok"` substring) to `SshPool.run`, applied per concurrent probe (bounded by `_SSH_CHECK_CONCURRENCY`=8). Returned output unchanged in the non-adversarial case; only relay memory is bounded. 2 tests (`tests/test_ssh_keyscan_tool.py`, `tests/test_tool_wrappers.py`). |
+
 ## 2026-08-04 audit + gap-analysis pass
 
 Findings from the 2026-08-04 in-depth repo audit + adversarial review

@@ -65,6 +65,22 @@ All notable changes to this project are documented here. The format follows
   JSON" failure. Either false failure made `relay-audit-evidence-sync` silently
   skip the off-host publish — the anti-tail-truncation control (ADR 0007). The
   evidence record gains a `torn_tails` counter for visibility.
+- Two more local-exec paths now bound their buffered output the same way the
+  PERF-4 pass bounded `shell_exec` / `shell_script` / `ssh_exec`, closing gaps
+  the original pass missed:
+  - **`ssh_keyscan`**'s `run_command()` call omitted `output_cap` entirely
+    (`cap=None`, unbounded), so a caller-chosen host whose sshd streams an
+    oversized banner before the handshake fails could grow relay memory
+    without limit across a multi-host scan. Now passes
+    `output_cap=max_output_hard`, matching every other local-exec tool.
+  - **`ssh_check`**'s `SshPool.run()` call omitted `max_output_bytes` entirely.
+    `ssh_check` is Tier 0 (permitted even in `readonly` mode, unlike
+    `ssh_keyscan`) and its `hosts` argument is caller-chosen, so a malicious or
+    compromised remote sshd could stream unbounded data back on the exec
+    channel regardless of what the fixed `echo ok` probe asked for — up to
+    `_SSH_CHECK_CONCURRENCY` (8) such streams concurrently. Now bounded to
+    `_SSH_CHECK_PER_HOST_OUTPUT_CAP` (4 KiB), generous for a probe that only
+    ever inspects the `"ok"` substring.
 
 ### Security
 
