@@ -67,6 +67,14 @@ _SSH_FANOUT_MAX_HOSTS = 100
 # the input list regardless of completion order.
 _SSH_CHECK_MAX_HOSTS = 100
 _SSH_CHECK_CONCURRENCY = 8
+# PERF-4: bound the per-host buffered output, mirroring ssh_exec/ssh_fanout.
+# ssh_check is Tier 0 (permitted even in `readonly` mode) and its `hosts`
+# argument is caller-chosen, so a malicious or compromised remote sshd could
+# otherwise stream unbounded data back on the exec channel regardless of what
+# "echo ok" actually asked for; up to `_SSH_CHECK_CONCURRENCY` such streams run
+# concurrently. Only the "ok" substring is ever inspected, so a few KB is
+# generous for the probe's purpose.
+_SSH_CHECK_PER_HOST_OUTPUT_CAP = 4096
 
 # ssh_keyscan: validate host tokens at the boundary so the eventual
 # shell concatenation is safe. Hostnames (and bracketed IPv6 literals) only;
@@ -1206,7 +1214,11 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 async with sem:
                     try:
                         out, code = await app.ssh.run(
-                            name, "echo ok", timeout=tmo, connect_kwargs=ck
+                            name,
+                            "echo ok",
+                            timeout=tmo,
+                            connect_kwargs=ck,
+                            max_output_bytes=_SSH_CHECK_PER_HOST_OUTPUT_CAP,
                         )
                         ok = code == 0 and "ok" in out
                         return f"{name}: {'ok' if ok else 'UNREACHABLE'}"
@@ -1437,7 +1449,17 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             cmd = " ".join(cmd_parts)
             # ssh-keyscan writes the keys to stdout and progress/error
             # messages to stderr; merge so the operator sees both.
-            return await run_command(cmd, timeout=tmo, merge_stderr=True)
+            # PERF-4: bound the buffered output to the absolute ceiling
+            # (max_output_hard), matching shell_exec/shell_script - without
+            # it a malicious or misbehaving host could stream an unbounded
+            # banner before the handshake fails, growing relay memory
+            # without limit across the (up to 32) scanned hosts.
+            return await run_command(
+                cmd,
+                timeout=tmo,
+                merge_stderr=True,
+                output_cap=app.settings.max_output_hard,
+            )
 
         return await app.run(
             tool="ssh_keyscan",

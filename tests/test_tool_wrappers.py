@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from relay_shell.config import Settings
 from relay_shell.server import build_server
@@ -361,6 +362,30 @@ async def test_ssh_check_with_explicit_hosts_wrapper(settings: Settings) -> None
     ).content
     out = _text(content)
     assert "UNREACHABLE" in out or "no-such-host" in out
+
+
+async def test_ssh_check_bounds_per_host_output(settings: Settings) -> None:
+    # PERF-4: ssh_check is Tier 0 (permitted even in `readonly` mode) and its
+    # `hosts` are caller-chosen, so the probe's remote exec must bound the
+    # buffered output like every other SSH tool - otherwise a malicious or
+    # compromised sshd could stream unbounded data back regardless of what
+    # "echo ok" asked for. Regression test for a gap where this call omitted
+    # max_output_bytes entirely (unlike ssh_exec/ssh_fanout).
+    from relay_shell.server import _SSH_CHECK_PER_HOST_OUTPUT_CAP
+    from relay_shell.sshpool import SshPool
+
+    captured: dict[str, object] = {}
+    original = SshPool.run
+
+    async def spy_run(self: SshPool, target: str, command: str, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return await original(self, target, command, **kwargs)
+
+    mcp = build_server(settings)
+    with patch.object(SshPool, "run", spy_run):
+        await mcp.call_tool("ssh_check", {"hosts": "no-such-host-123.invalid", "timeout": 1})
+
+    assert captured.get("max_output_bytes") == _SSH_CHECK_PER_HOST_OUTPUT_CAP
 
 
 async def test_ssh_hosts_wrapper(settings: Settings) -> None:

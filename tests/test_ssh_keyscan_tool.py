@@ -146,6 +146,24 @@ async def test_ssh_keyscan_invokes_ssh_keyscan_with_validated_argv(
     assert "other.example" in cmd
 
 
+async def test_ssh_keyscan_passes_output_cap_to_run_command(settings: Settings) -> None:
+    # Regression test for the PERF-4 gap: ssh_keyscan's run_command call
+    # used to omit output_cap entirely (unlike shell_exec/shell_script),
+    # so a malicious/misbehaving host could stream unbounded stderr/stdout
+    # into relay memory before the per-call timeout fired.
+    captured: dict[str, object] = {}
+
+    async def fake_run_command(_cmd: str, **kwargs: object) -> tuple[str, int | None]:
+        captured.update(kwargs)
+        return ("", 0)
+
+    with patch("relay_shell.server.run_command", fake_run_command):
+        mcp = build_server(settings)
+        await mcp.call_tool("ssh_keyscan", {"hosts": "host.example"})
+
+    assert captured.get("output_cap") == settings.max_output_hard
+
+
 async def test_ssh_keyscan_rejects_oversize_host_list(settings: Settings) -> None:
     # The wrapper caps `len(host_list)` at 32 to bound the outbound
     # TCP burst. A larger list short-circuits before any subprocess

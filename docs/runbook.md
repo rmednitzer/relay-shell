@@ -878,7 +878,15 @@ closed three MEDIUM defence-in-depth / correctness gaps in the engagement PR
   buffering the whole child output before truncating — a memory DoS reachable by
   a Tier-1 command `guarded` mode permits. Returned output byte-identical; child
   runs to completion. 7 tests. (Raised from info to P2/MED on review — it crosses
-  the `guarded` boundary.)
+  the `guarded` boundary.) A later audit pass found the original PERF-4 fix
+  missed two other single-host exec call sites: `ssh_keyscan`'s `run_command()`
+  call and `ssh_check`'s `SshPool.run()` call both still passed no cap
+  (`output_cap`/`max_output_bytes` unset, `cap is None`). `ssh_check` is Tier 0
+  (permitted even in `readonly` mode) and both take a caller-chosen `hosts`
+  argument, so this was a wider gap than the original: a malicious or
+  compromised remote sshd could stream unbounded data back regardless of mode.
+  Both now bound to a cap (`max_output_hard` for `ssh_keyscan`, a 4 KiB
+  `_SSH_CHECK_PER_HOST_OUTPUT_CAP` for `ssh_check`'s substring-only probe).
 
 ### 7.3 Operations + observability
 
