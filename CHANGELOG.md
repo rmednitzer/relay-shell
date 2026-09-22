@@ -37,6 +37,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Attribute audit client identities only to the SDK-validated OAuth access token,
+  never caller-provided request metadata (#181). Preserve numeric request ID zero.
+  Add authenticated HTTP, concurrent-client isolation and metadata-spoofing tests.
+
 - `SshPool.run()`'s output cap is now a single budget **shared** across stdout
   and stderr, so the combined buffered bytes stay within `max_output_bytes`
   (CONN-2, 2026-08-04 audit pass). Previously each stream had its own counter,
