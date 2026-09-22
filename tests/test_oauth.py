@@ -277,6 +277,7 @@ async def test_exchange_authorization_code_consumes_code(tmp_path: Path) -> None
                 "code": code.code,
                 "client_id": code.client_id,
                 "scopes": list(code.scopes),
+                "resource": "https://localhost:8080",
                 "expires_at": int(code.expires_at),
                 "code_challenge": code.code_challenge,
                 "redirect_uri": str(code.redirect_uri),
@@ -308,15 +309,14 @@ async def test_authorization_code_forwards_resource(tmp_path: Path) -> None:
                 "code_challenge": "",
                 "redirect_uri": "https://x/cb",
                 "redirect_uri_provided_explicitly": True,
-                "resource": "https://api.example/mcp",
+                "resource": "https://localhost:8080",
             }
         }
     )
     loaded = await p.load_authorization_code(client, "code-r")
     assert loaded is not None
-    assert "api.example/mcp" in str(loaded.resource)
-    # Back-compat: a record written before SEC-7 (no `resource` key) still
-    # loads, with resource None.
+    assert loaded.resource == "https://localhost:8080"
+    # Legacy records without a bound resource must fail closed.
     p._codes.save(
         {
             "code-n": {
@@ -331,8 +331,7 @@ async def test_authorization_code_forwards_resource(tmp_path: Path) -> None:
         }
     )
     loaded_n = await p.load_authorization_code(client, "code-n")
-    assert loaded_n is not None
-    assert loaded_n.resource is None
+    assert loaded_n is None
 
 
 async def test_register_client_concurrent_no_lost_update(tmp_path: Path) -> None:
@@ -400,6 +399,7 @@ async def test_exchange_authorization_code_is_single_use_under_race(tmp_path: Pa
                 "code": code.code,
                 "client_id": code.client_id,
                 "scopes": list(code.scopes),
+                "resource": "https://localhost:8080",
                 "expires_at": int(code.expires_at),
                 "code_challenge": code.code_challenge,
                 "redirect_uri": str(code.redirect_uri),

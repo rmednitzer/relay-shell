@@ -34,6 +34,7 @@ from mcp.server.mcpserver import Context, MCPServer
 
 from . import __version__, seccomp
 from .audit import AuditLogger
+from .auth.resource import ResourceBoundMCPServer
 from .broker import ConfirmationBroker
 from .config import Settings, get_settings
 from .errors import RelayError, fmt_exc
@@ -659,10 +660,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
     if cfg.transport == "http" and cfg.auth_enabled:
         from .auth import build_auth_settings, make_oauth_provider
 
-        server_kwargs["auth"] = build_auth_settings(cfg.auth_issuer)
+        server_kwargs["auth"] = build_auth_settings(cfg.auth_issuer, cfg.auth_resource_url or None)
         server_kwargs["auth_server_provider"] = make_oauth_provider(cfg)
 
-    mcp = MCPServer("relay-shell", **server_kwargs)
+    mcp = ResourceBoundMCPServer("relay-shell", **server_kwargs)
 
     # ---- local shell -------------------------------------------------------
     @mcp.tool()

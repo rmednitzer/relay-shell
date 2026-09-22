@@ -1403,3 +1403,13 @@ RELAY_SHELL_EDGE_DOMAIN=example.test RELAY_SHELL_EDGE_ACME_EMAIL=x@x \
 RELAY_SHELL_EDGE_DOMAIN=example.test RELAY_SHELL_EDGE_ACME_EMAIL=x@x \
   RELAY_SHELL_EDGE_DRY_RUN=1 sudo -E deploy/install-edge.sh
 ```
+
+## OAuth resource binding migration
+
+Bearer/resource validation is enabled explicitly. New authorization codes, access tokens and refresh tokens preserve the configured resource; code/refresh exchange uses the stored grant, never caller-supplied scopes or audience. The token endpoint also rejects explicit foreign or duplicate resource parameters, because the SDK token handler does not pass that field to the provider. Missing request parameters select this server's sole configured resource; missing stored bindings fail closed.
+
+`RELAY_SHELL_AUTH_RESOURCE_URL` can name a separate public MCP resource. Empty preserves the existing issuer-based resource identifier so discovery identifiers do not silently change during upgrade. New deployments should set the exact public MCP endpoint. There is no automatic grandfathering or timed fail-open mode.
+
+Existing local opaque grants may be reauthorized, or an operator may explicitly rebind them offline using `scripts/bind-legacy-oauth.py`. This is a policy migration, not recovery of historical audience evidence. The script defaults to dry-run and exposes counts/hashes only. Apply requires root, a stopped service, an exact token-store preimage hash, private state and backup paths, known registered clients and the existing `mcp:tools` scope. It refuses foreign bindings, preserves expiry and scopes, and writes a private preimage before atomic replacement. Never upload token stores or backups to source control.
+
+Deploy from an independently supervised transaction with the previous complete runtime retained and an automatic rollback deadline. Synthetic registration/PKCE/refresh/wrong-resource tests precede cutover; verify an actual existing connector afterwards before cancelling rollback. A rollback selects the prior runtime but must not restore token-store snapshots over newer grants or audit records. Additive resource fields are ignored by the previous runtime. Do not change issuer/resource identifiers at the same time as this migration.

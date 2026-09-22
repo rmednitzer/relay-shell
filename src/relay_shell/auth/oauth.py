@@ -25,6 +25,7 @@ from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
     AuthorizationParams,
+    AuthorizeError,
     OAuthAuthorizationServerProvider,
     RefreshToken,
     TokenError,
@@ -37,6 +38,8 @@ from mcp.server.auth.settings import (
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
+
+from .resource import normalize_resource
 
 __all__ = ["FileOAuthProvider", "build_auth_settings", "make_oauth_provider"]
 
@@ -118,7 +121,9 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         access_ttl: int,
         refresh_ttl: int,
         code_ttl: int,
+        resource_url: str = "https://localhost:8080",
     ) -> None:
+        self._resource = normalize_resource(resource_url)
         base = Path(state_dir).expanduser()
         self._clients = _Store(base / "clients.json")
         self._codes = _Store(base / "codes.json")
@@ -169,6 +174,14 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
     async def authorize(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
+        try:
+            resource = self._checked_resource(
+                self._resource if params.resource is None else params.resource
+            )
+        except (ValueError, TokenError) as exc:
+            raise AuthorizeError(
+                error="invalid_target", error_description="Resource is not this server"
+            ) from exc
         code = secrets.token_urlsafe(48)
         async with self._lock:
             codes = self._codes.load()
@@ -182,7 +195,7 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                 "redirect_uri_provided_explicitly": bool(
                     getattr(params, "redirect_uri_provided_explicitly", True)
                 ),
-                "resource": getattr(params, "resource", None),
+                "resource": resource,
             }
             self._codes.save(codes)
         return construct_redirect_uri(
@@ -199,11 +212,8 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                 code_challenge=rec.get("code_challenge", ""),
                 redirect_uri=rec["redirect_uri"],
                 redirect_uri_provided_explicitly=rec.get("redirect_uri_provided_explicitly", True),
-                # Thread the RFC 8707 resource indicator back through so the SDK
-                # can bind the issued token to the requested resource. Stored at
-                # authorize() time; previously dropped here (SEC-7). `.get` keeps
-                # back-compat with code records written before this field.
-                resource=rec.get("resource"),
+                # Stored audience is authoritative; legacy unbound records fail closed.
+                resource=self._checked_resource(rec.get("resource")),
             )
         except Exception:  # noqa: BLE001
             return None
@@ -259,14 +269,28 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                     error_description="authorization code already used or expired",
                 )
             self._codes.save(codes)
-            scopes = list(authorization_code.scopes or _SCOPES)
+            scopes = list(record["scopes"])
+            resource = self._checked_resource(record.get("resource"))
             # _issue is sync and does its own load/save on tokens.json; the
             # caller's lock covers both stores atomically from a concurrent
             # coroutine's view.
-            return self._issue(client.client_id or "", scopes)
+            return self._issue(client.client_id or "", scopes, resource=resource)
 
     # --- tokens ---
-    def _issue(self, client_id: str, scopes: list[str]) -> OAuthToken:
+    def _checked_resource(self, resource: object) -> str:
+        try:
+            if not isinstance(resource, str) or normalize_resource(resource) != self._resource:
+                raise ValueError("resource mismatch")
+        except ValueError as exc:
+            raise TokenError(
+                error="invalid_grant", error_description="Grant is not bound to this server"
+            ) from exc
+        return self._resource
+
+    def _issue(
+        self, client_id: str, scopes: list[str], *, resource: str | None = None
+    ) -> OAuthToken:
+        resource = self._checked_resource(self._resource if resource is None else resource)
         access = secrets.token_urlsafe(48)
         refresh = secrets.token_urlsafe(48)
         tokens = self._tokens.load()
@@ -274,12 +298,14 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             "token": access,
             "client_id": client_id,
             "scopes": scopes,
+            "resource": resource,
             "expires_at": _now() + self._access_ttl,
         }
         tokens[_REFRESH_PREFIX + refresh] = {
             "token": refresh,
             "client_id": client_id,
             "scopes": scopes,
+            "resource": resource,
             "expires_at": _now() + self._refresh_ttl,
         }
         self._tokens.save(tokens)
@@ -314,6 +340,7 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                     client_id=rec["client_id"],
                     scopes=rec["scopes"],
                     expires_at=int(rec["expires_at"]),
+                    resource=self._checked_resource(rec.get("resource")),
                 )
             except Exception:  # noqa: BLE001
                 return None
@@ -339,6 +366,7 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                     client_id=rec["client_id"],
                     scopes=rec["scopes"],
                     expires_at=int(rec["expires_at"]),
+                    resource=self._checked_resource(rec.get("resource")),
                 )
             except Exception:  # noqa: BLE001
                 return None
@@ -381,8 +409,12 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                     error_description="refresh token already used or expired",
                 )
             self._tokens.save(tokens)
-            effective = list(scopes or refresh_token.scopes or _SCOPES)
-            return self._issue(client.client_id or "", effective)
+            resource = self._checked_resource(record.get("resource"))
+            granted = list(record["scopes"])
+            effective = list(scopes or granted)
+            if not set(effective).issubset(granted):
+                raise TokenError(error="invalid_scope", error_description="Scope exceeds grant")
+            return self._issue(client.client_id or "", effective, resource=resource)
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         async with self._lock:
@@ -393,11 +425,12 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             self._tokens.save(tokens)
 
 
-def build_auth_settings(issuer: str) -> AuthSettings:
+def build_auth_settings(issuer: str, resource_url: str | None = None) -> AuthSettings:
     url = AnyHttpUrl(issuer)
     return AuthSettings(
         issuer_url=url,
-        resource_server_url=url,
+        resource_server_url=AnyHttpUrl(normalize_resource(resource_url or issuer)),
+        validate_token_resource=True,
         client_registration_options=ClientRegistrationOptions(
             enabled=True, valid_scopes=_SCOPES, default_scopes=_SCOPES
         ),
@@ -413,4 +446,5 @@ def make_oauth_provider(settings: Any) -> FileOAuthProvider:
         access_ttl=settings.auth_access_ttl,
         refresh_ttl=settings.auth_refresh_ttl,
         code_ttl=settings.auth_code_ttl,
+        resource_url=getattr(settings, "auth_resource_url", "") or settings.auth_issuer,
     )
