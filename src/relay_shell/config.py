@@ -113,6 +113,7 @@ class Settings(BaseSettings):
     # OAuth 2.1 (HTTP transport only)
     auth_enabled: bool = False
     auth_issuer: str = "https://localhost:8080"
+    auth_resource_url: str = ""  # Empty preserves the established issuer-based identifier.
     auth_state_dir: str = "/var/lib/relay-shell/oauth"
     auth_single_client: bool = True
     auth_access_ttl: int = Field(default=3600, ge=60)

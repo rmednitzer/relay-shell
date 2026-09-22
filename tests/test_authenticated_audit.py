@@ -75,6 +75,7 @@ async def test_http_authentication_attribution_and_context_isolation(
         access_ttl=3600,
         refresh_ttl=3600,
         code_ttl=60,
+        resource_url=cfg.auth_issuer,
     )
     first = provider._issue("verified-first", ["mcp:tools"])
     second = provider._issue("verified-second", ["mcp:tools"])
