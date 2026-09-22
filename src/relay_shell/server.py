@@ -29,6 +29,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver import Context, MCPServer
 
 from . import __version__, seccomp
@@ -157,15 +158,19 @@ def _filter_audit_records(text: str, tool: str, tier: int, denied: bool | None) 
 
 
 def _ctx_ids(ctx: Context | None) -> tuple[str, str]:
-    if ctx is None:
-        return "", ""
+    """Keep request correlation separate from verified OAuth attribution.
+
+    Request metadata is caller-controlled. Only the SDK authentication
+    middleware's access token can supply an authenticated client identity.
+    """
     request_id = ""
-    client_id = ""
-    with contextlib.suppress(Exception):
-        request_id = str(getattr(ctx, "request_id", "") or "")
-    with contextlib.suppress(Exception):
-        client_id = str(getattr(ctx, "client_id", "") or "")
-    return request_id, client_id
+    if ctx is not None:
+        with contextlib.suppress(Exception):
+            value = getattr(ctx, "request_id", None)
+            if value is not None:
+                request_id = str(value)
+    token = get_access_token()
+    return request_id, token.client_id if token is not None else ""
 
 
 # --- policy_text builders (runbook R-002) ------------------------------------

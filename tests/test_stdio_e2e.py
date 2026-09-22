@@ -6,6 +6,7 @@ an actual tool call - no mocks.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -58,3 +59,7 @@ async def test_stdio_initialize_list_and_call(tmp_path: Path) -> None:
     assert '"output_sha256"' in audit
     # Output body must never be written - only the expanded result proves this.
     assert "body-42-only" not in audit
+
+    # Stdio has no authenticated OAuth principal to attribute.
+    records = [json.loads(line) for line in audit.splitlines()]
+    assert all(record.get("client_id", "") == "" for record in records)
