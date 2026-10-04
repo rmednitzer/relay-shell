@@ -461,6 +461,14 @@ class SshPool:
                     with contextlib.suppress(Exception):
                         await asyncio.wait_for(proc.wait_closed(), 2)
                 return (f"[TIMEOUT after {timeout}s]", None)
+            except asyncio.CancelledError:
+                # The caller went away mid-run: do not leave the remote command
+                # parked on the shared connection. Best-effort terminate, then
+                # propagate so the runner can audit the cancellation.
+                if proc is not None:
+                    with contextlib.suppress(Exception):
+                        proc.terminate()
+                raise
             out = b"".join(out_parts).decode("utf-8", "replace") + b"".join(err_parts).decode(
                 "utf-8", "replace"
             )

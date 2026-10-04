@@ -10,6 +10,15 @@ All notable changes to this project are documented here. The format follows
 
 - Bind opaque OAuth access and refresh grants to the configured resource, validate bearer audiences, and reject foreign or duplicate token-endpoint resource parameters. Existing unbound grants require an explicit offline migration or re-authorization.
 
+- **A cancelled or disconnected tool call is now audited and no longer leaves its
+  command running** (audit 2026-10-04, H1). `Relay.run` wrote the audit record only
+  after the work returned and did not catch cancellation, and the executors killed
+  their child only on timeout, so a client disconnect or MCP cancel produced an
+  executed command with no audit record and an orphaned process. A cancelled call
+  now writes an `action=cancelled` record (and `outcome="cancelled"` on `/metrics`),
+  the local command's process group is killed, and a remote command is sent a
+  terminate; the cancellation still propagates.
+
 ### Added
 
 - **`RELAY_SHELL_MAX_CONNS`** (default 256) — a hard ceiling on the live SSH
@@ -22,6 +31,11 @@ All notable changes to this project are documented here. The format follows
   (a connection in active use — a session, forward, or in-flight run — is never
   evicted, so the cap is transiently exceeded rather than dropping a live
   connection). Surfaced in `server_info.config.max_conns`.
+
+- **`RELAY_SHELL_AUDIT_INTENT`** (default off) — write-ahead audit: append an
+  `action=intent` record before a call's work starts, so a crash or SIGKILL of the
+  relay mid-command no longer leaves an executed command with no record. Default off
+  keeps one record per call. Surfaced in `server_info.audit.intent`.
 
 ### Changed
 
