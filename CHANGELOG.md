@@ -24,6 +24,19 @@ All notable changes to this project are documented here. The format follows
 
 - Bind opaque OAuth access and refresh grants to the configured resource, validate bearer audiences, and reject foreign or duplicate token-endpoint resource parameters. Existing unbound grants require an explicit offline migration or re-authorization.
 
+- **OAuth clients need operator approval before they can obtain tokens** (audit
+  2026-10-04, H4). Dynamic registration is open to whoever can reach `/register` and
+  `/authorize` issued a code to any registered client with no login step, so the
+  first party to register obtained a token (shell execution as the service user). A
+  newly registered client is now *pending*; `/authorize` answers `access_denied` until
+  the operator runs `relay-shell --auth-approve <client_id>` on the host
+  (`--auth-list`, `--auth-reject` manage the rest). A `clients.json` that exists but
+  cannot be parsed no longer reads as "no clients" (which reopened registration and let
+  a caller replace the real client): `/register` refuses and leaves the file untouched,
+  and an unreadable `approvals.json` approves nothing.
+  **Upgrade:** clients already registered are carried over as approved. **New
+  installs must approve their first client** or set
+  `RELAY_SHELL_AUTH_REQUIRE_APPROVAL=false` (only where the edge authenticates callers).
 - **Typed secrets no longer reach the audit log through `session_send`** (audit
   2026-10-04, H5). Input sent to a session at a secret prompt (`[sudo] password
   for bob:`, `passphrase`, a local terminal with echo off) is withheld from the
@@ -37,7 +50,6 @@ All notable changes to this project are documented here. The format follows
   pass:`, and URL passwords containing `@`. Over-scrub guards keep `docker exec -u
   1000:1000`, `ssh -p 22`, `--password-stdin`, `--no-password`, `--token-url` and
   `Get-Credential` unchanged.
-
 - **A cancelled or disconnected tool call is now audited and no longer leaves its
   command running** (audit 2026-10-04, H1). `Relay.run` wrote the audit record only
   after the work returned and did not catch cancellation, and the executors killed
@@ -60,10 +72,11 @@ All notable changes to this project are documented here. The format follows
   evicted, so the cap is transiently exceeded rather than dropping a live
   connection). Surfaced in `server_info.config.max_conns`.
 
+- **`RELAY_SHELL_AUTH_REQUIRE_APPROVAL`** (default `true`) and the `relay-shell
+  --auth-list` / `--auth-approve` / `--auth-reject` operator commands (see Security).
 - **`RELAY_SHELL_AUDIT_SESSION_INPUT`** (`redacted` default, or `hash`) — how
   `session_send` input is recorded (see Security). Surfaced in
   `server_info.audit.session_input`.
-
 - **`RELAY_SHELL_AUDIT_INTENT`** (default off) — write-ahead audit: append an
   `action=intent` record before a call's work starts, so a crash or SIGKILL of the
   relay mid-command no longer leaves an executed command with no record. Default off

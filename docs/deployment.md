@@ -234,10 +234,18 @@ RELAY_SHELL_AUTH_ENABLED=true             # default false — opt in explicitly
 RELAY_SHELL_AUTH_ISSUER=https://relay-shell.example.org
 RELAY_SHELL_AUTH_STATE_DIR=/var/lib/relay-shell/oauth
 RELAY_SHELL_AUTH_SINGLE_CLIENT=true       # lock DCR after the first client registers
+RELAY_SHELL_AUTH_REQUIRE_APPROVAL=true    # default: a new client stays pending until you approve it
 ```
 
+**Approve your client.** A client that registers is *pending*; `/authorize`
+refuses it until you approve it on the host
+(`relay-shell --auth-list`, then `relay-shell --auth-approve <client_id>`). This
+closes the window in which the first party to reach `/register` could obtain a
+token; see [`auth.md`](auth.md#operator-approval). Existing installs are carried
+over as approved on upgrade.
+
 Install the `[http]` extra. Tokens are file-backed under the state dir
-(`clients.json`, `codes.json`, `tokens.json`), access tokens are short-lived,
+(`clients.json`, `approvals.json`, `codes.json`, `tokens.json`), access tokens are short-lived,
 refresh tokens rotate on use, and expiry is enforced lazily on read. With
 single-client lockdown, dynamic registration is refused once one client
 exists. See [`auth.md`](auth.md) for the full authentication lifecycle — how a
