@@ -24,6 +24,20 @@ All notable changes to this project are documented here. The format follows
 
 - Bind opaque OAuth access and refresh grants to the configured resource, validate bearer audiences, and reject foreign or duplicate token-endpoint resource parameters. Existing unbound grants require an explicit offline migration or re-authorization.
 
+- **Typed secrets no longer reach the audit log through `session_send`** (audit
+  2026-10-04, H5). Input sent to a session at a secret prompt (`[sudo] password
+  for bob:`, `passphrase`, a local terminal with echo off) is withheld from the
+  record (`data` is replaced by a marker and `data_len`). New
+  `RELAY_SHELL_AUDIT_SESSION_INPUT=hash` records only length and SHA-256 for every
+  send. Ordinary input is recorded as before.
+- **Redaction closes reproduced gaps** (M1, `PATTERNS_VERSION` 11 to 12): quoted
+  multi-word values (`PASSWORD="a b c"`, JSON), hyphenated secret flags
+  (`--client-secret V`, `--access-token V`, `--passphrase V`, `--secret-access-key
+  V`), `curl -u user:pass`, `sshpass -p`, `docker login -p`, `openssl -pass
+  pass:`, and URL passwords containing `@`. Over-scrub guards keep `docker exec -u
+  1000:1000`, `ssh -p 22`, `--password-stdin`, `--no-password`, `--token-url` and
+  `Get-Credential` unchanged.
+
 - **A cancelled or disconnected tool call is now audited and no longer leaves its
   command running** (audit 2026-10-04, H1). `Relay.run` wrote the audit record only
   after the work returned and did not catch cancellation, and the executors killed
@@ -46,12 +60,23 @@ All notable changes to this project are documented here. The format follows
   evicted, so the cap is transiently exceeded rather than dropping a live
   connection). Surfaced in `server_info.config.max_conns`.
 
+- **`RELAY_SHELL_AUDIT_SESSION_INPUT`** (`redacted` default, or `hash`) — how
+  `session_send` input is recorded (see Security). Surfaced in
+  `server_info.audit.session_input`.
+
 - **`RELAY_SHELL_AUDIT_INTENT`** (default off) — write-ahead audit: append an
   `action=intent` record before a call's work starts, so a crash or SIGKILL of the
   relay mid-command no longer leaves an executed command with no record. Default off
   keeps one record per call. Surfaced in `server_info.audit.intent`.
 
 ### Changed
+
+- **Audit records for `ssh_upload`, `ssh_download`, `ssh_forward` and `ssh_spawn` now
+  carry the connection identity** (M6): `user`, `port`, `key_path`, `jump`, plus
+  `recursive` for transfers (`ssh_spawn` gained `jump`). Additive `args` fields; the
+  top-level record shape is unchanged. With the Tier-3 broker on, these fields are
+  part of the confirmed operation, so a token no longer covers a different user,
+  port, key or jump host.
 
 - Refreshed tested pins: `mcp` 2.2.0 to 2.3.0, `asyncssh` 2.24.0 to 2.24.1,
   `mypy` 2.3.1 to 2.4.0, `ruff` 0.16.9 to 0.16.10 (kept in lockstep across

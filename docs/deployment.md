@@ -280,6 +280,19 @@ follows. Default off keeps one record per call and every record byte-identical.
 `server_info.audit.intent` reports the live state. A log consumer that counts
 records per call must treat an `intent` record as the call's start, not a call.
 
+### 6a-ii. Input typed into sessions
+
+`session_send` is the one tool whose argument is often a secret with no keyword
+(a `sudo` password). Its audit record therefore omits `data` (keeping `data_len`)
+when the session is at a secret prompt: the last output line reads like one
+(`[sudo] password for bob:`, `Enter passphrase for key ...:`, `Verification
+code:`), or the local terminal has echo off. Anything else is recorded as before,
+after pattern redaction. Set `RELAY_SHELL_AUDIT_SESSION_INPUT=hash` to record
+only `data_len` and `data_sha256` for every send; the default is `redacted`.
+`server_info.audit.session_input` reports the live setting. A secret typed at a
+prompt the heuristic does not recognise is still recorded, so use `hash` where
+typed content must never reach the log.
+
 ### 6a. Tamper-evident chain (optional)
 
 `chattr +a` and off-host shipping protect the log, but neither makes a
