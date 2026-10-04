@@ -45,6 +45,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Low-severity audit items (2026-10-04, L1/L2/L3/L5/L6/L7/L9).**
+  A failed SSH connect with no concurrent waiter no longer logs asyncio's
+  "Future exception was never retrieved" traceback. `ssh_exec` no longer reports
+  `[TIMEOUT]` and discards the output when the command finished but the channel
+  lingered past the 5 s close wait (the output is kept; the exit status may be
+  unknown). An invalid `RELAY_SHELL_POLICY_DENY` / `_POLICY_ALLOW` regex is rejected
+  at configuration load, and a server-assembly failure at startup exits 2 with a
+  message instead of a raw traceback. `session_recv` no longer splits a multibyte
+  UTF-8 character at `max_bytes` (both halves used to become permanent replacement
+  characters). `ProxyJump none` in `ssh_config` or the inventory means no jump host
+  rather than a host called `none`. Startup logs a warning when settings are being
+  read from a `.env` in the working directory. The `AuditLogger._emit` docstring now
+  states what actually happens when a write fails (the hash chain still advances and
+  the gap shows as a `seq` break in `--verify-audit`) and that one relay process
+  owns one chained log.
+
 - Attribute audit client identities only to the SDK-validated OAuth access token,
   never caller-provided request metadata (#181). Preserve numeric request ID zero.
   Add authenticated HTTP, concurrent-client isolation and metadata-spoofing tests.

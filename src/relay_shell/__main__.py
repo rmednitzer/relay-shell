@@ -32,6 +32,23 @@ def _configure_logging() -> None:
     root.addHandler(stderr)
 
 
+def _note_env_file() -> None:
+    """Say so when settings are being read from a ``.env`` in the working directory.
+
+    pydantic-settings looks for ``.env`` relative to the process working directory,
+    and its values (policy mode, deny list, audit path ...) override the defaults. A
+    service started from a shared or attacker-writable directory would pick up
+    someone else's file, so make the source visible in the log.
+    """
+    env = Path(".env")
+    if env.is_file():
+        logging.getLogger("relay_shell").warning(
+            "reading settings from %s in the working directory; run from a directory "
+            "only the service account can write (systemd: WorkingDirectory=)",
+            env.resolve(),
+        )
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="relay-shell",
@@ -334,13 +351,18 @@ def main(argv: list[str] | None = None) -> int:
         return _check_config()
 
     log = logging.getLogger("relay_shell")
+    _note_env_file()
     try:
         settings = get_settings()
     except Exception as exc:  # noqa: BLE001
         print(f"relay_shell: invalid configuration: {exc}", file=sys.stderr)
         return 2
 
-    server = build_server(settings)
+    try:
+        server = build_server(settings)
+    except Exception as exc:  # noqa: BLE001
+        print(f"relay_shell: build_server failed: {exc}", file=sys.stderr)
+        return 2
     log.info(
         "relay_shell starting (transport=%s, policy=%s, audit=%s)",
         settings.transport,

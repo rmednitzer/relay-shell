@@ -272,7 +272,10 @@ Vector, Fluent Bit, and `journalctl` → `systemd-journal-remote`.
 add a per-record hash chain ([ADR 0007](adr/0007-audit-hash-chain.md)): each
 record carries `seq`, the previous record's `prev` hash, and its own `chain`
 hash. Default off keeps the record byte-identical; `server_info.audit.chain`
-reports the live state.
+reports the live state. **One relay process owns one chained log**: a second writer
+keeps its own `seq` / `prev` and forks the chain, which `--verify-audit` reports as
+a break. If the log cannot be written, the chain still advances in memory and the
+missing record shows up as a `seq` gap on verification.
 
 **What the chain proves, and what it does not.** From a single file the chain
 detects any **edit, insertion, reorder, or interior deletion** by recomputation

@@ -48,6 +48,21 @@ __all__ = ["LocalPtyTransport", "Session", "SessionRegistry", "Transport"]
 _READ_CHUNK = 65536
 
 
+def _utf8_cut(data: bytes | bytearray, limit: int) -> int:
+    """Largest ``n <= limit`` that does not split a UTF-8 character at ``data[n]``.
+
+    ``recv`` consumes what it returns, so cutting a multibyte character in half would
+    turn both halves into permanent replacement characters. Falls back to ``limit`` if
+    no boundary is found within one character's width (binary data).
+    """
+    if len(data) <= limit:
+        return len(data)
+    end = limit
+    while end > 0 and limit - end < 4 and (data[end] & 0xC0) == 0x80:
+        end -= 1
+    return end if end > 0 and (data[end] & 0xC0) != 0x80 else limit
+
+
 class Transport(Protocol):
     """The minimal contract a session backend must satisfy."""
 
@@ -340,7 +355,7 @@ class SessionRegistry:
             while True:
                 async with sess._lock:
                     if sess.buffer:
-                        take = bytes(sess.buffer[:max_bytes])
+                        take = bytes(sess.buffer[: _utf8_cut(sess.buffer, max_bytes)])
                         del sess.buffer[: len(take)]
                         text = take.decode("utf-8", "replace")
                         if not sess.buffer and not sess.closed:
