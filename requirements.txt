@@ -1,21 +1,21 @@
-# Validated against the current development matrix (Python 3.12, Ubuntu
-# 24.04). Versions here mirror the resolved set `pip install -e ".[dev]"`
-# produces against the lower bounds declared in pyproject.toml; the full
-# test suite + mypy + ruff are green at this combination (ADR 0005,
-# refreshed 2026-08-12 for the MCP SDK v2 migration). For library-style
-# installs, use pyproject.toml — the lower bounds there are the contract.
+# Direct dependency snapshot for deployment and the CI/security test matrix.
+# Install the tested development set with:
+#   pip install -c requirements.txt -e ".[dev,http]"
+# pyproject.toml remains the library compatibility contract. These direct
+# pins do not constitute a complete transitive lockfile. Renovate proposes
+# updates under the shared release-age and required-check policy.
 mcp==2.2.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
 asyncssh==2.24.0
-uvicorn==0.53.0
-starlette==1.6.0
+uvicorn==0.54.0
+starlette==1.7.0
 anyio==4.15.1
 httpx==0.28.1
-PyJWT==2.15.0
-cryptography==50.0.1
+PyJWT==2.15.1
+cryptography==50.0.2
 # dev / CI
 pytest==9.1.1
 pytest-asyncio==1.4.0
-ruff==0.16.8
+ruff==0.16.9
 mypy==2.3.1

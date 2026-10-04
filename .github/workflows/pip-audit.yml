@@ -38,7 +38,7 @@ jobs:
           # Audit against the resolved dev set so transitive deps
           # introduced via the optional [dev] / [http] extras are also
           # covered.
-          pip install -e ".[dev,http]"
+          pip install -c requirements.txt -e ".[dev,http]"
 
       - name: Run pip-audit
         # `--skip-editable` excludes the local editable `relay-shell` install:

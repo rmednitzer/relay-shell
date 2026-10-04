@@ -1,12 +1,26 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>rmednitzer/infra:renovate-preset"],
-  "pre-commit": { "enabled": true },
+  "extends": [
+    "github>rmednitzer/infra:renovate-preset"
+  ],
+  "pre-commit": {
+    "enabled": true
+  },
   "packageRules": [
     {
       "description": "Group pre-commit hook updates into one PR.",
-      "matchManagers": ["pre-commit"],
+      "matchManagers": [
+        "pre-commit"
+      ],
       "groupName": "pre-commit hooks"
+    },
+    {
+      "description": "Update the exact Ruff dependency, CI command, and pre-commit hook together to prevent formatter version drift.",
+      "matchPackageNames": [
+        "ruff",
+        "astral-sh/ruff-pre-commit"
+      ],
+      "groupName": "ruff toolchain"
     }
   ]
 }
