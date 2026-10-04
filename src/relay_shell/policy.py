@@ -38,7 +38,10 @@ class Tier(IntEnum):
     IRREVERSIBLE = 3
 
 
-# Tools that never mutate local/remote state.
+# Tools that never mutate local/remote state. `ssh_check` is here for inventory hosts
+# only: probing a host that is not in the inventory dials a caller-chosen address with
+# the relay's keys (the same reach that keeps `ssh_keyscan` out of this set), so the
+# `ssh_check` wrapper raises it to Tier 1 via `min_tier` in that case.
 # Note: ssh_keyscan is NOT here. It opens caller-chosen outbound TCP
 # connections (SSRF-shaped surface to whatever the relay can reach,
 # including private/cloud-metadata ranges) and leaves entries in
@@ -121,8 +124,12 @@ class Policy:
         self._deny = re.compile(deny) if deny else None
         self._allow = re.compile(allow) if allow else None
 
-    def check(self, tool: str, command: str = "") -> PolicyDecision:
-        tier = classify(tool, command)
+    def check(
+        self, tool: str, command: str = "", min_tier: Tier = Tier.READ_ONLY
+    ) -> PolicyDecision:
+        """Admit or refuse. ``min_tier`` raises the tier a caller knows is warranted
+        but the text cannot show (for example a probe of a host outside the inventory)."""
+        tier = max(classify(tool, command), min_tier)
         probe = f"{tool} {command}".strip()
 
         if self._deny is not None and self._deny.search(probe):
