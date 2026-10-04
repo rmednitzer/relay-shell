@@ -238,7 +238,7 @@ RELAY_SHELL_AUTH_SINGLE_CLIENT=true       # lock DCR after the first client regi
 
 Install the `[http]` extra. Tokens are file-backed under the state dir
 (`clients.json`, `codes.json`, `tokens.json`), access tokens are short-lived,
-refresh tokens rotate on use, and expiry is enforced lazily on read. With
+refresh tokens rotate on use, secrets are stored hashed rather than raw, and expiry is enforced lazily on read. With
 single-client lockdown, dynamic registration is refused once one client
 exists. See [`auth.md`](auth.md) for the full authentication lifecycle — how a
 client registers, obtains tokens, and stays authenticated via refresh

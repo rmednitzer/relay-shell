@@ -69,7 +69,18 @@ calls `load_access_token` to validate it. Two guards matter there:
 - a `refresh:`-prefixed string is **rejected** as an access token, so a refresh
   token cannot be replayed as an access token (token-type confusion, AUTH-1);
 - expiry is enforced **lazily on read** — an expired token is deleted and the
-  call gets `None` → 401. There is no background sweeper.
+  call gets `None` → 401. There is no background sweeper, so expired records that
+  are never presented are dropped whenever a new token or authorization code is
+  written, which bounds the files;
+- secrets are **stored as hashes**: `tokens.json` and `codes.json` are keyed by
+  `sha256:<hex>` (refresh tokens as `refresh:sha256:<hex>`) and hold no raw token or
+  code, so a copy of the state directory yields nothing usable as a bearer
+  credential. A presented secret that is not plain URL-safe base64 (for instance a
+  stored `sha256:...` key replayed as a token) is refused before any lookup. Files
+  from before this change are rewritten on the next start and credentials issued
+  under the old format keep working;
+- the whole-file read that backs each authenticated request runs on a worker
+  thread, so it does not block the event loop.
 
 ### 5. Staying authenticated past one hour — the rotation loop
 
