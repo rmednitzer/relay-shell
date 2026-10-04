@@ -135,8 +135,22 @@ __all__ = [
 #      (`ConvertTo-SecureString 'P@ss' -AsPlainText -Force`) while leaving a
 #      `$var` handle or a bare switch untouched. Keeps existing keyword behavior
 #      byte-identical (pure additions).
-# v12: 2026-10-04 audit pass, tier classification (M2; every case reproduced
-#      against v11). Over-classification: read-only commands that merely *named* a
+# v12: 2026-10-04 audit pass, redaction gaps (M1; every case reproduced against
+#      v11). (a) a quoted keyword value with spaces (`PASSWORD="a b c"`,
+#      `{"password": "a b c"}`) leaked every word after the first: a quote-aware
+#      rule now consumes to the matching closing quote. (b) the CLI-flag rule only
+#      matched a bare keyword, so `--client-secret V`, `--access-token V`,
+#      `--auth-token V`, `--passphrase V`, `--secret-access-key V` leaked when
+#      space-separated: the flag name may now carry a hyphenated prefix and ends in
+#      the keyword (`--token-url`, `--password-stdin` and `--no-password` are still
+#      not secrets). (c) new command-scoped rules for `curl -u user:pass`,
+#      `sshpass -p`, `docker login -p` and `openssl -pass pass:`. (d) a URL
+#      password containing `@` leaked its tail; the credential run now extends to
+#      the last `@` before the path. Pure additions or widenings of redaction;
+#      tier classification is unchanged. (e) SECRET_PROMPT_PATTERN lets the session
+#      layer withhold input typed at a password prompt from the audit record.
+# v13: 2026-10-04 audit pass, tier classification (M2; every case reproduced
+#      against v12). Over-classification: read-only commands that merely *named* a
 #      destructive word reached Tier 3 (`smartctl -a /dev/sda`, `lsblk /dev/sda`,
 #      `fdisk -l`, `git log --grep=reboot`, `journalctl -u shutdown.target`, `echo
 #      'reboot required'`, `ip link show | grep down`, `cat /etc/passwd | head`),
@@ -153,21 +167,7 @@ __all__ = [
 #      (Tier 3); `kill -9`, `pkill`, `killall`, `truncate`, `docker|podman system|
 #      volume|image|container|network prune|rm`, `terraform|tofu apply`, `git clean
 #      -f`, `setenforce` (Tier 2). Classification stays heuristic (ADR 0003).
-# v12: 2026-10-04 audit pass, redaction gaps (M1; every case reproduced against
-#      v11). (a) a quoted keyword value with spaces (`PASSWORD="a b c"`,
-#      `{"password": "a b c"}`) leaked every word after the first: a quote-aware
-#      rule now consumes to the matching closing quote. (b) the CLI-flag rule only
-#      matched a bare keyword, so `--client-secret V`, `--access-token V`,
-#      `--auth-token V`, `--passphrase V`, `--secret-access-key V` leaked when
-#      space-separated: the flag name may now carry a hyphenated prefix and ends in
-#      the keyword (`--token-url`, `--password-stdin` and `--no-password` are still
-#      not secrets). (c) new command-scoped rules for `curl -u user:pass`,
-#      `sshpass -p`, `docker login -p` and `openssl -pass pass:`. (d) a URL
-#      password containing `@` leaked its tail; the credential run now extends to
-#      the last `@` before the path. Pure additions or widenings of redaction;
-#      tier classification is unchanged. (e) SECRET_PROMPT_PATTERN lets the session
-#      layer withhold input typed at a password prompt from the audit record.
-PATTERNS_VERSION = "12"
+PATTERNS_VERSION = "13"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
