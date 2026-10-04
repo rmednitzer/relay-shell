@@ -21,7 +21,9 @@ Conventions:
 
 - `host` is an inventory / `ssh_config` alias or `user@host`.
 - `known_hosts` is `strict` | `accept-new` | `ignore` (default from
-  `RELAY_SHELL_SSH_KNOWN_HOSTS`).
+  `RELAY_SHELL_SSH_KNOWN_HOSTS`). `accept-new` is trust-on-first-use: an unknown
+  host is accepted and recorded, a host with an existing entry is verified and a
+  changed key is refused. `ignore` never verifies.
 - `jump` is an `ssh_config`-style `user@host[:port]` bastion (asyncssh
   `tunnel`); `ssh_config` `ProxyJump` is also honoured automatically.
 

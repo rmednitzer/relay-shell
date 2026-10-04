@@ -503,6 +503,20 @@ class Relay:
                 )
                 return body
 
+        if self.settings.audit_intent:
+            # Write-ahead record (opt-in): the executed-command trail survives a
+            # relay crash or SIGKILL between here and the completion record.
+            self.audit.record(
+                tool=tool,
+                args=red,
+                output="",
+                exit_code=None,
+                tier=int(decision.tier),
+                request_id=request_id,
+                client_id=client_id,
+                action="intent",
+            )
+
         errored = False
         # Activate the per-call seccomp-notify monitor (ADR 0006) for the
         # duration of work(). It is None unless the channel is enabled AND
@@ -516,6 +530,25 @@ class Relay:
         token = seccomp.set_active(monitor)
         try:
             body, exit_code = await work()
+        except asyncio.CancelledError:
+            # A client disconnect, an MCP cancellation or a transport timeout
+            # cancels the call mid-flight. The executors tear their child down
+            # on cancellation, but the call must still leave an audit record
+            # (the work may already have had effects), then propagate.
+            self.audit.record(
+                tool=tool,
+                args=red,
+                output="[CANCELLED]",
+                exit_code=None,
+                tier=int(decision.tier),
+                request_id=request_id,
+                client_id=client_id,
+                action="cancelled",
+            )
+            self.metrics.inc_tool_call(
+                tool=tool, tier=int(decision.tier), mode=mode, outcome="cancelled"
+            )
+            raise
         except RelayError as exc:
             body, exit_code = fmt_exc(exc), None
             errored = True
@@ -1564,6 +1597,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                     "degraded": app.audit.degraded,
                     "format": app.audit.format,
                     "chain": app.audit.chain,
+                    "intent": cfg.audit_intent,
                 },
                 "confirm": {
                     "tier3": cfg.confirm_tier3,

@@ -381,9 +381,11 @@ async def test_ssh_strict_mode_resolves_known_hosts_path(tmp_path: Path) -> None
         arg = pool._known_hosts_arg("strict")
         assert isinstance(arg, str)
         assert arg.endswith("known_hosts")
-        # ignore and accept-new both return None (no upfront verification).
+        # ignore never verifies; accept-new verifies only hosts it has seen
+        # before (known=True), so a first contact is the only unverified one.
         assert pool._known_hosts_arg("ignore") is None
         assert pool._known_hosts_arg("accept-new") is None
+        assert pool._known_hosts_arg("accept-new", known=True) == arg
     finally:
         await pool.close_all()
 
@@ -668,3 +670,136 @@ async def test_connection_cache_sweep_treats_is_closed_exception_as_closed(
         assert len(pool._conns) == 1
     finally:
         await pool.close_all()
+
+
+# --- host-key trust and connection-cache identity (audit H2 / H3) -------------
+
+
+async def _serve(port: int = 0) -> tuple[Any, int]:
+    """Start a no-auth SSH server with a *fresh* host key on ``port``."""
+    server = await asyncssh.create_server(
+        _NoAuthServer,
+        "127.0.0.1",
+        port,
+        server_host_keys=[asyncssh.generate_private_key("ssh-ed25519")],
+        process_factory=_handle,
+    )
+    return server, server.sockets[0].getsockname()[1]
+
+
+def _ck_mode(port: int, mode: str, **extra: str) -> dict[str, Any]:
+    return {
+        "user": "tester",
+        "port": port,
+        "key_path": extra.get("key_path", ""),
+        "known_hosts": mode,
+        "jump": extra.get("jump", ""),
+    }
+
+
+async def test_accept_new_refuses_a_changed_host_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """accept-new is TOFU: first contact is recorded, a different key is refused."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    kh = tmp_path / ".ssh" / "known_hosts"
+    first, port = await _serve()
+    pool = _pool(tmp_path)
+    try:
+        out, code = await pool.run(
+            "127.0.0.1", "echo ok", timeout=5, connect_kwargs=_ck_mode(port, "accept-new")
+        )
+        assert (code, out.strip()) == (0, "ok")
+    finally:
+        await pool.close_all()
+        first.close()
+        await first.wait_closed()
+    # Recorded in canonical OpenSSH form for a non-default port.
+    recorded = kh.read_text(encoding="utf-8")
+    assert recorded.startswith(f"[127.0.0.1]:{port} ssh-ed25519 ")
+
+    # Same address, different host key (re-keyed host or a MITM).
+    second, _ = await _serve(port)
+    pool2 = _pool(tmp_path)
+    try:
+        with pytest.raises(asyncssh.HostKeyNotVerifiable):
+            await pool2.run(
+                "127.0.0.1", "echo ok", timeout=5, connect_kwargs=_ck_mode(port, "accept-new")
+            )
+    finally:
+        await pool2.close_all()
+        second.close()
+        await second.wait_closed()
+    # The attacker key was not persisted.
+    assert kh.read_text(encoding="utf-8") == recorded
+
+
+async def test_accept_new_reconnects_to_a_known_host_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    kh = tmp_path / ".ssh" / "known_hosts"
+    server, port = await _serve()
+    try:
+        for _ in range(2):  # second pass verifies against the recorded key
+            pool = _pool(tmp_path)
+            try:
+                _, code = await pool.run(
+                    "127.0.0.1", "echo ok", timeout=5, connect_kwargs=_ck_mode(port, "accept-new")
+                )
+                assert code == 0
+            finally:
+                await pool.close_all()
+        assert len(kh.read_text(encoding="utf-8").splitlines()) == 1
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+def test_host_is_known_fails_closed_on_an_unparsable_file(tmp_path: Path) -> None:
+    from relay_shell.sshpool import _host_is_known
+
+    assert _host_is_known(str(tmp_path / "absent"), "h", 22) is False
+    other = tmp_path / "other"
+    other.write_text("another ssh-ed25519 !!!not-base64!!!\n", encoding="utf-8")
+    assert _host_is_known(str(other), "h", 22) is False  # a corrupt entry for a different host
+    # A corrupt entry for *this* host, an undecodable file, and a malformed line
+    # must all read as "known" so the strict path refuses rather than trusting.
+    corrupt = tmp_path / "corrupt"
+    corrupt.write_text("h ssh-ed25519 !!!not-base64!!!\n", encoding="utf-8")
+    assert _host_is_known(str(corrupt), "h", 22) is True
+    binary = tmp_path / "binary"
+    binary.write_bytes(b"\xff\xfe\x00garbage\n")
+    assert _host_is_known(str(binary), "h", 22) is True
+    short = tmp_path / "short"
+    short.write_text("h\n", encoding="utf-8")
+    assert _host_is_known(str(short), "h", 22) is True
+
+
+async def test_cache_does_not_reuse_a_connection_across_verification_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A strict call must not ride a connection opened with known_hosts=ignore."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".ssh").mkdir()
+    (tmp_path / ".ssh" / "known_hosts").write_text("", encoding="utf-8")  # strict must refuse
+    server, port = await _serve()
+    pool = _pool(tmp_path)
+    try:
+        await pool.connect("127.0.0.1", **_ck_mode(port, "ignore"))
+        with pytest.raises(asyncssh.HostKeyNotVerifiable):
+            await pool.connect("127.0.0.1", **_ck_mode(port, "strict"))
+    finally:
+        await pool.close_all()
+        server.close()
+        await server.wait_closed()
+
+
+def test_conn_key_separates_identity_inputs() -> None:
+    from relay_shell.sshpool import _conn_key
+
+    base = _conn_key("h", "u", 22, "strict", "/k1", "")
+    assert base == _conn_key("h", "u", 22, "strict", "/k1", "")
+    assert base != _conn_key("h", "u", 22, "ignore", "/k1", "")
+    assert base != _conn_key("h", "u", 22, "strict", "/k2", "")
+    assert base != _conn_key("h", "u", 22, "strict", "/k1", "bastion")

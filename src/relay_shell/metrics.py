@@ -90,10 +90,11 @@ class Metrics:
     def inc_tool_call(self, *, tool: str, tier: int, mode: str, outcome: str) -> None:
         """Bump the per-tool counter.
 
-        ``outcome`` is one of ``ok|denied|error|confirm_required`` - a fixed,
-        bounded label set (``confirm_required`` is the Tier-3 broker's
-        challenge phase, ADR 0009), never a user-controlled string, so the
-        counter's label cardinality stays bounded.
+        ``outcome`` is one of ``ok|denied|error|confirm_required|cancelled`` - a
+        fixed, bounded label set (``confirm_required`` is the Tier-3 broker's
+        challenge phase, ADR 0009; ``cancelled`` is a call whose caller went
+        away mid-flight), never a user-controlled string, so the counter's
+        label cardinality stays bounded.
         """
         labels: _LabelKey = (
             ("mode", mode),

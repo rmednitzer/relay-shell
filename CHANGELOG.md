@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **`known_hosts=accept-new` is now real trust-on-first-use** (audit 2026-10-04, H2).
+  It previously connected with host-key verification disabled on every call, so a
+  changed or substituted host key was accepted and then persisted. A host that
+  already has a `known_hosts` entry is now verified strictly (a changed key is
+  refused); only a first contact is accepted and recorded, in canonical OpenSSH
+  form (`[host]:port` off port 22). An unreadable `known_hosts`, or a corrupt entry
+  for the host itself, fails closed. Operators who relied on `accept-new` silently
+  tolerating a re-keyed host must now update `~/.ssh/known_hosts` (`ssh-keygen -R`).
+- **The SSH connection cache no longer crosses trust boundaries** (H3). The cache
+  key now includes the verification mode, identity key path and jump host, so a
+  `strict` call can no longer reuse a connection opened with `known_hosts=ignore`,
+  and an explicit `key_path` / `jump` is honoured instead of being ignored on a
+  cache hit.
+
 - Bind opaque OAuth access and refresh grants to the configured resource, validate bearer audiences, and reject foreign or duplicate token-endpoint resource parameters. Existing unbound grants require an explicit offline migration or re-authorization.
 
 - **Typed secrets no longer reach the audit log through `session_send`** (audit
@@ -23,6 +37,15 @@ All notable changes to this project are documented here. The format follows
   pass:`, and URL passwords containing `@`. Over-scrub guards keep `docker exec -u
   1000:1000`, `ssh -p 22`, `--password-stdin`, `--no-password`, `--token-url` and
   `Get-Credential` unchanged.
+
+- **A cancelled or disconnected tool call is now audited and no longer leaves its
+  command running** (audit 2026-10-04, H1). `Relay.run` wrote the audit record only
+  after the work returned and did not catch cancellation, and the executors killed
+  their child only on timeout, so a client disconnect or MCP cancel produced an
+  executed command with no audit record and an orphaned process. A cancelled call
+  now writes an `action=cancelled` record (and `outcome="cancelled"` on `/metrics`),
+  the local command's process group is killed, and a remote command is sent a
+  terminate; the cancellation still propagates.
 
 ### Added
 
@@ -40,6 +63,11 @@ All notable changes to this project are documented here. The format follows
 - **`RELAY_SHELL_AUDIT_SESSION_INPUT`** (`redacted` default, or `hash`) — how
   `session_send` input is recorded (see Security). Surfaced in
   `server_info.audit.session_input`.
+
+- **`RELAY_SHELL_AUDIT_INTENT`** (default off) — write-ahead audit: append an
+  `action=intent` record before a call's work starts, so a crash or SIGKILL of the
+  relay mid-command no longer leaves an executed command with no record. Default off
+  keeps one record per call. Surfaced in `server_info.audit.intent`.
 
 ### Changed
 
