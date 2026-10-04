@@ -3,7 +3,7 @@
 Modeled on a production MCP gateway's provider: dynamic client registration
 with optional single-client lockdown, PKCE (the SDK enforces the challenge),
 short-lived authorization codes, rotating refresh tokens, and lazy expiry on
-read. State is three JSON files under ``auth_state_dir``; no database.
+read. State is file-backed under ``auth_state_dir``; no database.
 
 This is optional and only constructed for the HTTP transport when
 ``RELAY_SHELL_AUTH_ENABLED=true``. Errors here must surface as auth failures, never
@@ -17,6 +17,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -40,6 +41,8 @@ from mcp.server.auth.settings import (
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
 
+from relay_shell.util import sha256_hex
+
 from .resource import normalize_resource
 
 __all__ = [
@@ -52,6 +55,35 @@ __all__ = [
 _log = logging.getLogger("relay_shell.auth")
 _SCOPES = ["mcp:tools"]
 _REFRESH_PREFIX = "refresh:"
+# Secrets (access / refresh tokens, authorization codes) are stored under the
+# SHA-256 of the secret, never the secret itself, so a copy of the state directory
+# (a backup, a stray file read) does not yield usable bearer credentials.
+_HASH_PREFIX = "sha256:"
+# What `secrets.token_urlsafe` can produce. A presented secret outside this set is
+# never looked up: it could otherwise be a *stored key* (`sha256:<hex>`,
+# `refresh:...`) replayed as if it were the secret.
+_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{1,512}$")
+
+
+def _hashed(secret: str) -> str:
+    return _HASH_PREFIX + sha256_hex(secret)
+
+
+def _is_hashed_key(key: str) -> bool:
+    return key.startswith((_HASH_PREFIX, _REFRESH_PREFIX + _HASH_PREFIX))
+
+
+def _purge_expired(records: dict[str, Any], now: int) -> dict[str, Any]:
+    """Drop records whose ``expires_at`` has passed (they are otherwise only
+    removed when presented, so unused ones would accumulate forever)."""
+
+    def _live(rec: Any) -> bool:
+        try:
+            return isinstance(rec, dict) and int(rec.get("expires_at", 0)) >= now
+        except (TypeError, ValueError):
+            return False
+
+    return {k: v for k, v in records.items() if _live(v)}
 
 
 def _now() -> int:
@@ -164,13 +196,39 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         self._access_ttl = access_ttl
         self._refresh_ttl = refresh_ttl
         self._code_ttl = code_ttl
+        self._migrate_secret_storage()
         self._migrate_legacy_approvals()
         # Single per-provider lock serializes every read-modify-write
-        # against the three JSON stores. The atomic `tmp.replace` inside
+        # against the JSON stores. The atomic `tmp.replace` inside
         # ``_Store.save`` guarantees disk consistency for one writer; this
         # lock guarantees cross-coroutine consistency under concurrent
         # HTTP-transport traffic (token rotation, register-client, revoke).
         self._lock = asyncio.Lock()
+
+    def _migrate_secret_storage(self) -> None:
+        """Rewrite pre-hashing records so no raw secret stays on disk (idempotent).
+
+        Records written before secrets were hashed are keyed by the raw token / code
+        (refresh tokens as ``refresh:<raw>``) and repeat it in a ``token`` / ``code``
+        field. Re-key them by hash and drop the field; entries already hashed are left
+        alone. Expired records are dropped on the way.
+        """
+        now = _now()
+        for store, field_name in ((self._tokens, "token"), (self._codes, "code")):
+            data = store.load()
+            legacy = [k for k in data if not _is_hashed_key(k)]
+            if not legacy:
+                continue
+            migrated: dict[str, Any] = {k: v for k, v in data.items() if _is_hashed_key(k)}
+            for key, rec in data.items():
+                if _is_hashed_key(key) or not isinstance(rec, dict):
+                    continue
+                rec = {k: v for k, v in rec.items() if k != field_name}
+                if key.startswith(_REFRESH_PREFIX):
+                    migrated[_REFRESH_PREFIX + _hashed(key[len(_REFRESH_PREFIX) :])] = rec
+                else:
+                    migrated[_hashed(key)] = rec
+            store.save(_purge_expired(migrated, now))
 
     # --- operator approval ---
     def _migrate_legacy_approvals(self) -> None:
@@ -271,9 +329,8 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             )
         code = secrets.token_urlsafe(48)
         async with self._lock:
-            codes = self._codes.load()
-            codes[code] = {
-                "code": code,
+            codes = _purge_expired(self._codes.load(), _now())
+            codes[_hashed(code)] = {
                 "client_id": client.client_id or "",
                 "scopes": list(getattr(params, "scopes", None) or _SCOPES),
                 "expires_at": _now() + self._code_ttl,
@@ -289,10 +346,10 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             str(params.redirect_uri), code=code, state=getattr(params, "state", None)
         )
 
-    def _build_auth_code(self, rec: dict[str, Any]) -> AuthorizationCode | None:
+    def _build_auth_code(self, code: str, rec: dict[str, Any]) -> AuthorizationCode | None:
         try:
             return AuthorizationCode(
-                code=rec["code"],
+                code=code,
                 scopes=rec["scopes"],
                 expires_at=float(rec["expires_at"]),
                 client_id=rec["client_id"],
@@ -308,23 +365,31 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
+        if not _SECRET_RE.match(authorization_code):
+            return None
         async with self._lock:
             codes = self._codes.load()
-            rec = codes.get(authorization_code)
+            key = _hashed(authorization_code)
+            if key not in codes:
+                key = authorization_code  # record written before secrets were hashed
+            rec = codes.get(key)
             if not rec or rec.get("client_id") != (client.client_id or ""):
                 return None
             if int(rec.get("expires_at", 0)) < _now():
-                codes.pop(authorization_code, None)
+                codes.pop(key, None)
                 self._codes.save(codes)
                 return None
-            return self._build_auth_code(rec)
+            return self._build_auth_code(authorization_code, rec)
 
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
         async with self._lock:
             codes = self._codes.load()
-            record = codes.pop(authorization_code.code, None)
+            raw = authorization_code.code
+            record = codes.pop(_hashed(raw), None)
+            if record is None and _SECRET_RE.match(raw):
+                record = codes.pop(raw, None)  # written before secrets were hashed
             if record is None:
                 # Race: two concurrent token requests both loaded the same
                 # code; the first removed it, the second finds it gone.
@@ -380,16 +445,14 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         resource = self._checked_resource(self._resource if resource is None else resource)
         access = secrets.token_urlsafe(48)
         refresh = secrets.token_urlsafe(48)
-        tokens = self._tokens.load()
-        tokens[access] = {
-            "token": access,
+        tokens = _purge_expired(self._tokens.load(), _now())
+        tokens[_hashed(access)] = {
             "client_id": client_id,
             "scopes": scopes,
             "resource": resource,
             "expires_at": _now() + self._access_ttl,
         }
-        tokens[_REFRESH_PREFIX + refresh] = {
-            "token": refresh,
+        tokens[_REFRESH_PREFIX + _hashed(refresh)] = {
             "client_id": client_id,
             "scopes": scopes,
             "resource": resource,
@@ -410,27 +473,36 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         # token (`Authorization: Bearer refresh:<tok>`) cannot authenticate via
         # this lookup — token-type confusion that would otherwise grant a
         # refresh token full access-token scope for the (long) refresh TTL.
-        if token.startswith(_REFRESH_PREFIX):
+        if token.startswith(_REFRESH_PREFIX) or not _SECRET_RE.match(token):
             return None
         async with self._lock:
-            tokens = self._tokens.load()
-            rec = tokens.get(token)
-            if not rec:
-                return None
-            if int(rec.get("expires_at", 0)) < _now():
-                tokens.pop(token, None)
-                self._tokens.save(tokens)
-                return None
-            try:
-                return AccessToken(
-                    token=rec["token"],
-                    client_id=rec["client_id"],
-                    scopes=rec["scopes"],
-                    expires_at=int(rec["expires_at"]),
-                    resource=self._checked_resource(rec.get("resource")),
-                )
-            except Exception:  # noqa: BLE001
-                return None
+            # Called for every authenticated request: the whole-file read (and, on
+            # expiry, write) runs off the event loop. The asyncio lock still
+            # serializes it against every other store access in this process.
+            return await asyncio.to_thread(self._load_access_token_sync, token)
+
+    def _load_access_token_sync(self, token: str) -> AccessToken | None:
+        tokens = self._tokens.load()
+        key = _hashed(token)
+        if key not in tokens:
+            key = token  # record written before secrets were hashed
+        rec = tokens.get(key)
+        if not rec:
+            return None
+        if int(rec.get("expires_at", 0)) < _now():
+            tokens.pop(key, None)
+            self._tokens.save(tokens)
+            return None
+        try:
+            return AccessToken(
+                token=token,
+                client_id=rec["client_id"],
+                scopes=rec["scopes"],
+                expires_at=int(rec["expires_at"]),
+                resource=self._checked_resource(rec.get("resource")),
+            )
+        except Exception:  # noqa: BLE001
+            return None
 
     async def load_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: str
@@ -441,15 +513,20 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         # invalid_grant to a legitimate refresh. asyncio.Lock is not reentrant,
         # but no lock-holding path calls this method, so there is no nested
         # acquire / deadlock.
+        if not _SECRET_RE.match(refresh_token):
+            return None
         async with self._lock:
-            rec = self._tokens.load().get(_REFRESH_PREFIX + refresh_token)
+            records = self._tokens.load()
+            rec = records.get(_REFRESH_PREFIX + _hashed(refresh_token))
+            if rec is None:
+                rec = records.get(_REFRESH_PREFIX + refresh_token)  # pre-hashing record
             if not rec or rec.get("client_id") != (client.client_id or ""):
                 return None
             if int(rec.get("expires_at", 0)) < _now():
                 return None
             try:
                 return RefreshToken(
-                    token=rec["token"],
+                    token=refresh_token,
                     client_id=rec["client_id"],
                     scopes=rec["scopes"],
                     expires_at=int(rec["expires_at"]),
@@ -466,8 +543,10 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
     ) -> OAuthToken:
         async with self._lock:
             tokens = self._tokens.load()
-            store_key = _REFRESH_PREFIX + refresh_token.token
-            record = tokens.pop(store_key, None)
+            raw = refresh_token.token
+            record = tokens.pop(_REFRESH_PREFIX + _hashed(raw), None)
+            if record is None and _SECRET_RE.match(raw):
+                record = tokens.pop(_REFRESH_PREFIX + raw, None)  # pre-hashing record
             if record is None:
                 # Race: two concurrent refresh requests both loaded the
                 # same token; the first rotated it, the second finds it
@@ -507,8 +586,13 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         async with self._lock:
             tokens = self._tokens.load()
             raw = getattr(token, "token", "")
-            tokens.pop(raw, None)
-            tokens.pop(_REFRESH_PREFIX + raw, None)
+            for key in (
+                _hashed(raw),
+                _REFRESH_PREFIX + _hashed(raw),
+                raw,  # records written before secrets were hashed
+                _REFRESH_PREFIX + raw,
+            ):
+                tokens.pop(key, None)
             self._tokens.save(tokens)
 
 

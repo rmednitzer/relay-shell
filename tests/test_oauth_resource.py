@@ -13,7 +13,12 @@ import pytest
 from mcp.server.auth.provider import TokenError
 from mcp.shared.auth import OAuthClientInformationFull
 
-from relay_shell.auth.oauth import FileOAuthProvider, build_auth_settings, make_oauth_provider
+from relay_shell.auth.oauth import (
+    FileOAuthProvider,
+    _hashed,
+    build_auth_settings,
+    make_oauth_provider,
+)
 from relay_shell.auth.resource import TokenResourceMiddleware, normalize_resource
 from relay_shell.config import Settings
 from relay_shell.server import build_server
@@ -224,7 +229,7 @@ async def test_real_http_pkce_binding_and_wrong_resource_rejection(
         assert renewed.status_code == 200
         assert (await c.post("/token", data=form)).status_code == 400
         records = p._tokens.load()
-        records[tokens["access_token"]]["resource"] = "https://wrong.example"
+        records[_hashed(tokens["access_token"])]["resource"] = "https://wrong.example"
         p._tokens.save(records)
         refused = await c.post(
             "/mcp", json=call, headers={"Authorization": "Bearer " + tokens["access_token"]}

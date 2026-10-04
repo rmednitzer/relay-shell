@@ -24,6 +24,17 @@ All notable changes to this project are documented here. The format follows
 
 - Bind opaque OAuth access and refresh grants to the configured resource, validate bearer audiences, and reject foreign or duplicate token-endpoint resource parameters. Existing unbound grants require an explicit offline migration or re-authorization.
 
+- **OAuth tokens and authorization codes are stored hashed** (audit 2026-10-04, M8).
+  `tokens.json` and `codes.json` were keyed by the raw secret (and repeated it in a
+  `token` / `code` field), so any copy of the state directory yielded usable bearer
+  credentials. They are now keyed by `sha256:<hex>` with no raw value, a presented
+  secret that is not plain URL-safe base64 is refused before any lookup (so a stored
+  key cannot be replayed as a token), and existing files are rewritten on the next
+  start without invalidating credentials already issued. Expired records that are
+  never presented are purged whenever a new one is written (the files were
+  previously unbounded), and the per-request token read runs off the event loop.
+  **Downgrade note:** a hashed store is not readable by an older release.
+
 - **OAuth clients need operator approval before they can obtain tokens** (audit
   2026-10-04, H4). Dynamic registration is open to whoever can reach `/register` and
   `/authorize` issued a code to any registered client with no login step, so the
@@ -37,6 +48,7 @@ All notable changes to this project are documented here. The format follows
   **Upgrade:** clients already registered are carried over as approved. **New
   installs must approve their first client** or set
   `RELAY_SHELL_AUTH_REQUIRE_APPROVAL=false` (only where the edge authenticates callers).
+
 - **Typed secrets no longer reach the audit log through `session_send`** (audit
   2026-10-04, H5). Input sent to a session at a secret prompt (`[sudo] password
   for bob:`, `passphrase`, a local terminal with echo off) is withheld from the
