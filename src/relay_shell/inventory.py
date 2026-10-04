@@ -43,6 +43,11 @@ def _expand(path: str) -> Path:
     return Path(path).expanduser()
 
 
+def _proxyjump(value: str | None) -> str | None:
+    """``ProxyJump none`` means "no jump host", not a host called ``none``."""
+    return None if value is None or value.strip().lower() == "none" else value
+
+
 def _parse_ssh_config(path: Path) -> dict[str, HostSpec]:
     """A deliberately small ssh_config reader for *listing/resolving*.
 
@@ -66,7 +71,7 @@ def _parse_ssh_config(path: Path) -> dict[str, HostSpec]:
                 user=cur.get("user"),
                 port=int(cur["port"]) if cur.get("port", "").isdigit() else None,
                 identity_file=cur.get("identityfile"),
-                jump=cur.get("proxyjump"),
+                jump=_proxyjump(cur.get("proxyjump")),
                 source="ssh_config",
             )
 
@@ -119,7 +124,7 @@ def _load_inventory_file(path: Path) -> dict[str, HostSpec]:
             if isinstance(port_val, (int, str)) and str(port_val).isdigit()
             else None,
             identity_file=spec.get("identity_file") or spec.get("identityfile"),
-            jump=spec.get("jump") or spec.get("proxyjump"),
+            jump=_proxyjump(spec.get("jump") or spec.get("proxyjump")),
             known_hosts=spec.get("known_hosts"),
             source="inventory",
         )

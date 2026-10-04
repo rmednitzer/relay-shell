@@ -7,9 +7,10 @@ All settings are read from ``RELAY_SHELL_*`` environment variables (and an optio
 from __future__ import annotations
 
 import ipaddress
+import re
 from functools import lru_cache
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = ["Settings", "get_settings"]
@@ -190,6 +191,17 @@ class Settings(BaseSettings):
         v = v.strip().lower()
         if v not in _KNOWN_HOSTS:
             raise ValueError(f"ssh_known_hosts must be one of {sorted(_KNOWN_HOSTS)}")
+        return v
+
+    @field_validator("policy_deny", "policy_allow")
+    @classmethod
+    def _v_policy_regex(cls, v: str, info: ValidationInfo) -> str:
+        # Compile at load so a bad pattern is a clean "invalid configuration"
+        # at startup instead of a raw traceback from deep inside server assembly.
+        try:
+            re.compile(v)
+        except re.error as exc:
+            raise ValueError(f"{info.field_name} is not a valid regular expression: {exc}") from exc
         return v
 
     @field_validator("audit_session_input")

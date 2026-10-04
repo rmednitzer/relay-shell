@@ -27,6 +27,8 @@ __all__ = ["ForwardHandle", "SshPool", "SshProcessTransport"]
 
 _SIG_NAMES = {2: "INT", 9: "KILL", 15: "TERM", 1: "HUP", 3: "QUIT"}
 _KNOWN_HOSTS_MODES = frozenset({"strict", "accept-new", "ignore"})
+# How long `run` waits for the channel to close after both output streams hit EOF.
+_WAIT_CLOSED_TIMEOUT = 5.0
 
 
 def _known_hosts_path() -> str:
@@ -346,6 +348,11 @@ class SshPool:
             other_future = self._pending.get(key)
             if other_future is None:
                 own_future = asyncio.get_running_loop().create_future()
+                # A failed connect stores its exception here. With no concurrent
+                # waiter nobody retrieves it, and asyncio then logs "Future exception
+                # was never retrieved" with a traceback when the future is collected.
+                # The owner re-raises the real error itself; mark this copy as seen.
+                own_future.add_done_callback(lambda f: f.cancelled() or f.exception())
                 self._pending[key] = own_future
         if own_future is None:
             assert other_future is not None
@@ -505,8 +512,11 @@ class SshPool:
                 assert proc is not None
                 # wait_closed needs its own bound: drains hitting EOF normally
                 # means the remote is exiting, but a misbehaving peer could
-                # still hold the channel open. 5s is generous for a clean reap.
-                await asyncio.wait_for(proc.wait_closed(), 5)
+                # still hold the channel open. The command has finished and its
+                # output is in hand, so a channel that lingers is not a command
+                # timeout: keep the output (the exit status may be unknown).
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(proc.wait_closed(), _WAIT_CLOSED_TIMEOUT)
             except TimeoutError:
                 # Terminate so the remote process doesn't park on the SSH
                 # connection until the connection itself dies, then bound the
