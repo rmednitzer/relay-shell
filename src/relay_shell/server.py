@@ -240,9 +240,14 @@ def _policy_text_ssh_check(hosts: str) -> str:
     return _with_canonical_ips(hosts, *tokens)
 
 
-def _policy_text_session_send(data: str) -> str:
-    """The bytes written to the session's PTY (before the optional newline)."""
-    return data
+def _policy_text_session_send(data: str, pending: str = "") -> str:
+    """What the PTY will have on its line once ``data`` is written.
+
+    ``pending`` is the partial line already typed (nothing since the last Enter), so
+    a command split across several sends (``r`` then ``m -rf /x``) is classified as
+    the whole line the shell will run, not as innocuous fragments.
+    """
+    return pending + data
 
 
 def _policy_text_ssh_upload(host: str, local_path: str, remote_path: str) -> str:
@@ -935,7 +940,9 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             tool="session_send",
             ctx=ctx,
             audit_args={"session_id": session_id, "data": data, "enter": enter},
-            policy_text=_policy_text_session_send(data),
+            policy_text=_policy_text_session_send(
+                data, await app.sessions.pending_input(session_id)
+            ),
             max_output=2048,
             work=_work,
         )

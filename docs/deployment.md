@@ -379,9 +379,13 @@ accumulate idle handles.
 Interactive PTY sessions are classified per input: each `session_send` payload
 is run through the same tier scan as a one-shot command (so a destructive
 keystroke payload like `rm -rf /` is Tier 3 and refused under `guarded`, not
-waved through at the Tier-1 keystroke default). But classification is per-call,
-so a payload **fragmented across several `session_send` calls** evades it the
-same way shell obfuscation evades the deny list. If a `guarded` deployment must
+waved through at the Tier-1 keystroke default). The scan covers the **line being
+typed**, not just the latest payload: text sent since the last Enter, Ctrl-C or
+Ctrl-U is carried forward, so `r` followed by `m -rf /x` is classified as
+`rm -rf /x` and refused. That closes plain fragmentation, but it is still text
+matching: a line built with shell obfuscation, a script written to disk and run, or
+an editor / REPL inside the session evades it the same way obfuscation evades the
+deny list. If a `guarded` deployment must
 prevent Tier-2+ actions inside an interactive shell, deny the spawn tools
 (`^shell_spawn` / `^ssh_spawn`) outright, run `readonly`, or rely on OS/network
 controls — do not treat the `guarded` ceiling as airtight against a live shell.
