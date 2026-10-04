@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     # keeps the record byte-identical to today. Only the `jsonl` format can
     # resume the chain across restarts, so chaining requires it.
     audit_chain: bool = False
+    # Write-ahead audit (opt-in, default off): append an `action="intent"` record
+    # *before* a call's work runs, in addition to the completion record. The
+    # completion record is only written once the work returns, so a crash or
+    # SIGKILL of the relay mid-command would otherwise leave an executed command
+    # with no audit trail. Default off keeps every record byte-identical and the
+    # one-record-per-call shape existing log consumers rely on.
+    audit_intent: bool = False
 
     # Syscall-level audit channel (ADR 0006; opt-in, default off). When on,
     # locally-spawned children get a seccomp-bpf USER_NOTIF filter and the
