@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **`known_hosts=accept-new` is now real trust-on-first-use** (audit 2026-10-04, H2).
+  It previously connected with host-key verification disabled on every call, so a
+  changed or substituted host key was accepted and then persisted. A host that
+  already has a `known_hosts` entry is now verified strictly (a changed key is
+  refused); only a first contact is accepted and recorded, in canonical OpenSSH
+  form (`[host]:port` off port 22). An unreadable `known_hosts`, or a corrupt entry
+  for the host itself, fails closed. Operators who relied on `accept-new` silently
+  tolerating a re-keyed host must now update `~/.ssh/known_hosts` (`ssh-keygen -R`).
+- **The SSH connection cache no longer crosses trust boundaries** (H3). The cache
+  key now includes the verification mode, identity key path and jump host, so a
+  `strict` call can no longer reuse a connection opened with `known_hosts=ignore`,
+  and an explicit `key_path` / `jump` is honoured instead of being ignored on a
+  cache hit.
+
 - Bind opaque OAuth access and refresh grants to the configured resource, validate bearer audiences, and reject foreign or duplicate token-endpoint resource parameters. Existing unbound grants require an explicit offline migration or re-authorization.
 
 ### Added
