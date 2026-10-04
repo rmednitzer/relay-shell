@@ -106,7 +106,9 @@ Every record must contain `ts, tool, tier, denied, args, output_sha256,
 output_len, exit_code` at minimum. `request_id`, `client_id`, and `action`
 are context-dependent and may be absent (`action` is `confirm_plan` /
 `confirm_execute` only under the Tier-3 confirmation broker,
-`RELAY_SHELL_CONFIRM_TIER3`; ADR 0009). Absence of any of the *required*
+`RELAY_SHELL_CONFIRM_TIER3`; ADR 0009; `cancelled` when the caller went away
+mid-call; `intent` only under the opt-in write-ahead record
+`RELAY_SHELL_AUDIT_INTENT`). Absence of any of the *required*
 fields above is an audit regression; the default-off broker keeps the
 record byte-identical (no `action` field).
 
@@ -251,8 +253,9 @@ print('default known_hosts mode:', s.ssh_known_hosts)
 "
 ```
 
-For production: `ssh_known_hosts` should be `strict`. `accept-new` is fine
-for dev. `ignore` outside tests is a finding.
+For production: `ssh_known_hosts` should be `strict`. `accept-new` is
+trust-on-first-use (a known host is verified, a changed key is refused) and is
+fine for dev. `ignore` outside tests is a finding.
 
 ### 2.8 Edge / OAuth (HTTP transport only)
 
@@ -324,6 +327,7 @@ Use this for every PR, your own or external.
 | `sessions.py`        | Lost-wakeup invariant: `recv` clears the event under the buffer lock before awaiting. PTY spawn adopts the active seccomp monitor; the transport stops it in `aclose()` — on the failure path too (B-026). |
 | `sshpool.py`         | `known_hosts` arg is validated. Connection cache keyed by `user@host:port`. Forwards leak-free.   |
 | `auth/oauth.py`      | File modes (0o700 dir / 0o600 files), atomic save, lazy expiry, single-client lockdown intact.    |
+| `auth/admin.py`      | Approve / reject only touch the named client's approval, codes and tokens; an unreadable store is an error, not empty. |
 | `shelltools.py`      | `start_new_session=True` preserved (so `killpg` works). Env overlay does not propagate JSON errors. |
 | `inventory.py`       | Wildcard `Host *` patterns are skipped in the flat listing. `resolve()` passthrough behavior holds. The raw ssh_config parse is retained so `ssh_config_aliases()` reports aliases that an inventory entry overrides. |
 | `metrics.py`         | Counter / gauge label cardinality stays bounded. The `tool` label on resource reads is the STABLE name, never a user-controlled string. Hand-rolled exposition stays compliant (HELP + TYPE per metric, label escaping). The `syscall` label on the seccomp counters comes from the fixed `NOTIFIED_SYSCALLS` set. |
@@ -828,6 +832,25 @@ commitment.
   command/path translation layer, no new transport/tool. Classification and
   redaction stay heuristic (ADR 0003) — a positional secret with no keyword is
   not redactable.
+
+### 7.1a 2026-10-04 audit pass (open register)
+
+Evidence and reproducers: the audit report of this pass (H = high, M = medium,
+L = low). Status moves to **Closed** with the PR that lands the fix.
+
+- **H1** cancelled / disconnected calls are not audited and the child keeps
+  running (`Relay.run`, `_drive`, `SshPool.run`). Open.
+- **H2** `accept-new` disabled host-key verification on every connect. **Closed**
+  (SSH host-trust PR: known hosts verified, changed key refused, canonical
+  `[host]:port` persistence, fail-closed on a corrupt entry).
+- **H3** SSH connection-cache key ignored `known_hosts` / `key_path` / `jump`.
+  **Closed** (same PR: all three are part of the key).
+- **H4** OAuth: no authentication step, first registrant wins, a corrupt
+  `clients.json` reopens registration. Open.
+- **H5** `session_send` input is audited verbatim (typed sudo passwords). Open.
+- **M1-M8**, **L1-L9**: redaction gaps, classifier FP/FN, split `session_send`,
+  admission cost, unauthenticated non-loopback HTTP, audit field completeness,
+  `ssh_check` tier, OAuth store hardening, and the low items. Open.
 
 ### 7.2 Quality + automation
 

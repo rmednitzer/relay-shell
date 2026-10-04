@@ -263,8 +263,12 @@ def test_ssh_keyscan_hosts_reach_classifier_documents_tradeoff() -> None:
     # reader is not surprised: it only bites `guarded` mode (open is advisory,
     # readonly already refuses Tier 1), with POLICY_ALLOW as the escape hatch.
     assert classify("ssh_keyscan", "web01.example.com") is Tier.REVERSIBLE
-    # "reboot" is a Tier 3 token; a host literally named so trips it.
-    assert classify("ssh_keyscan", "reboot.example.com") is Tier.IRREVERSIBLE
+    # `reboot` is only a Tier 3 token in command position (patterns v12), so a
+    # dotted hostname that merely starts with it no longer trips the classifier ...
+    assert classify("ssh_keyscan", "reboot.example.com") is Tier.REVERSIBLE
+    # ... but a host that is literally the bare word still does: the narrower, still
+    # documented tradeoff.
+    assert classify("ssh_keyscan", "reboot") is Tier.IRREVERSIBLE
 
 
 async def test_ssh_keyscan_audits_its_args(settings: Settings) -> None:

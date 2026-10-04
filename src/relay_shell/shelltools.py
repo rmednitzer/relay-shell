@@ -142,6 +142,12 @@ async def _drive(
         with contextlib.suppress(Exception):
             await asyncio.wait_for(proc.wait(), 3)
         return (f"[TIMEOUT after {timeout}s]", None)
+    except asyncio.CancelledError:
+        # The caller went away (client disconnect / MCP cancel). Do not leave the
+        # command running unsupervised: kill the whole process group, then let
+        # the cancellation propagate so the runner can audit it.
+        _kill_tree(proc)
+        raise
     text = b"".join(out_parts).decode("utf-8", "replace")
     if not merge_stderr and err_parts:
         text += b"".join(err_parts).decode("utf-8", "replace")
