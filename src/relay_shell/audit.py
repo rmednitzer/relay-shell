@@ -565,10 +565,15 @@ class AuditLogger:
 
         Shared by :meth:`record` and the syscall-event recorders. Audit must
         never break a caller, so all failure is swallowed. When chaining is on,
-        the in-memory anchor advances only after a successful emit so it stays
-        consistent with the bytes on disk; ``_chain_lock`` also serializes the
-        seccomp-notify supervisor thread against the tool-call path so seq/prev
-        stay monotonic across both writers.
+        the anchor advances once the line has been handed to the logging handler.
+        ``logging`` swallows I/O errors from the handler itself (it reports them to
+        stderr and returns), so a write that failed on disk still advances the anchor;
+        the missing record then shows up as a ``seq`` gap that ``--verify-audit``
+        reports, which is the intended tamper-evident outcome. One relay process
+        owns one chained log: two writers would each keep their own ``seq`` / ``prev``
+        and fork the chain. ``_chain_lock`` serializes the seccomp-notify supervisor
+        thread against the tool-call path so seq/prev stay monotonic across both
+        writers inside one process.
         """
         with contextlib.suppress(Exception):
             formatter = _FORMATTERS.get(self.format, _format_jsonl)
