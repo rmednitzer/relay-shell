@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 
 __all__ = [
+    "COMMAND_SCOPED_PREFIX_PATTERNS",
     "MYSQL_COMPACT_PASSWORD_PATTERN",
     "MYSQL_FAMILY_CLI_PATTERN",
     "PATTERNS_VERSION",
@@ -38,6 +39,7 @@ __all__ = [
     "REDACTION_PATTERNS",
     "REDACTION_PLACEHOLDER",
     "REDACTION_PREFIX_PATTERNS",
+    "SECRET_PROMPT_PATTERN",
     "TIER2_PATTERN",
     "TIER3_PATTERN",
     "URL_CREDS_PATTERN",
@@ -151,6 +153,20 @@ __all__ = [
 #      (Tier 3); `kill -9`, `pkill`, `killall`, `truncate`, `docker|podman system|
 #      volume|image|container|network prune|rm`, `terraform|tofu apply`, `git clean
 #      -f`, `setenforce` (Tier 2). Classification stays heuristic (ADR 0003).
+# v12: 2026-10-04 audit pass, redaction gaps (M1; every case reproduced against
+#      v11). (a) a quoted keyword value with spaces (`PASSWORD="a b c"`,
+#      `{"password": "a b c"}`) leaked every word after the first: a quote-aware
+#      rule now consumes to the matching closing quote. (b) the CLI-flag rule only
+#      matched a bare keyword, so `--client-secret V`, `--access-token V`,
+#      `--auth-token V`, `--passphrase V`, `--secret-access-key V` leaked when
+#      space-separated: the flag name may now carry a hyphenated prefix and ends in
+#      the keyword (`--token-url`, `--password-stdin` and `--no-password` are still
+#      not secrets). (c) new command-scoped rules for `curl -u user:pass`,
+#      `sshpass -p`, `docker login -p` and `openssl -pass pass:`. (d) a URL
+#      password containing `@` leaked its tail; the credential run now extends to
+#      the last `@` before the path. Pure additions or widenings of redaction;
+#      tier classification is unchanged. (e) SECRET_PROMPT_PATTERN lets the session
+#      layer withhold input typed at a password prompt from the audit record.
 PATTERNS_VERSION = "12"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
@@ -191,6 +207,24 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Bearer <token>
     (
         re.compile(r"(?i)\b(?P<prefix>bearer\s+)[A-Za-z0-9._\-]+"),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # Quoted keyword value (v12): `PASSWORD="two words"`, `{"password": "a b c"}`,
+    # `PGPASSWORD='a b'`. The generic rule below stops at whitespace, so a
+    # multi-word quoted secret leaked every word after the first. This rule runs
+    # first and consumes up to the matching closing quote (escape-aware; the
+    # closing quote is preserved). The body is deliberately NOT length-bounded: a
+    # bound would collapse an over-long value to the short placeholder and shift
+    # the unconsumed tail into the kept prefix of a truncated audit record (the
+    # hazard the redaction module's P1 note describes). Its two alternatives are
+    # disjoint, so it is linear, and an unterminated or window-truncated value
+    # collapses to end-of-line instead of leaking its tail.
+    (
+        re.compile(
+            r"(?i)(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd|credential)"
+            r"[\"']?\s*[:=]\s*(?P<q>[\"']))"
+            r"(?:\\.|(?!(?P=q))[^\\\r\n])*"
+        ),
         r"\g<prefix>[REDACTED]",
     ),
     # token=... / api[_-]?key=... / password: ...  (also the JSON-quoted-key
@@ -270,7 +304,10 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             r"""(?ix)
             (?P<prefix>
                 (?<![A-Za-z])
-                --?(?:password|passwd|pwd|secret|token|api[_-]?key|credential)
+                --?(?!(?:no|ask|prompt|skip|use|with|show|hide)[-_])
+                (?:[A-Za-z0-9]+[-_])*
+                (?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|credentials?
+                  |secret[_-]?key|secret[_-]?access[_-]?key)
                 [=\ \t]+
             )
             (?:
@@ -321,6 +358,49 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             )
             """,
         ),
+        r"\g<prefix>[REDACTED]",
+    ),
+)
+
+
+# Command-scoped credential flags (v12). Each is anchored on the command that
+# gives the flag its meaning, with a bounded gap, because the flags are
+# overloaded (`-u` is a uid in `docker exec`, `-p` a port in `ssh`/`nmap`) and an
+# unscoped rule would over-scrub. They keep the non-secret prefix and collapse
+# only the secret. Bounded gaps keep every rule linear on adversarial input.
+COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # curl / wget / httpie: `-u user:pass`, `--user user:pass`, `--proxy-user ...`.
+    # Only the password half is collapsed; the user name is kept.
+    (
+        re.compile(
+            r"(?i)(?P<prefix>(?<![\w-])(?:curl|wget|xh|httpie)\b[^|;&\n]{0,512}?"
+            r"(?<![A-Za-z0-9-])(?:-u|--user|--proxy-user)(?:=|\s+)[\"']?[^\s:\"']+:)"
+            r"[^\s\"']+"
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # sshpass: `sshpass -p SECRET ...` (also quoted, or glued as `-pSECRET`).
+    (
+        re.compile(
+            r"(?i)(?P<prefix>\bsshpass\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-p[=\s]*)"
+            r"(?:'[^']*'|\"[^\"]*\"|\S+)"
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # docker / podman / nerdctl / buildah / skopeo login: `-p SECRET`
+    # (`--password` is already covered by the generic flag rule).
+    (
+        re.compile(
+            r"(?i)(?P<prefix>\b(?:docker|podman|nerdctl|buildah|skopeo)\b[^|;&\n]{0,256}?"
+            r"\blogin\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-p[=\s]*)"
+            r"(?:'[^']*'|\"[^\"]*\"|\S+)"
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # openssl: `-pass pass:SECRET`, `-passin pass:...`, `-passout pass:...`
+    # (`env:` / `file:` / `stdin` forms carry no secret and are left alone).
+    (
+        re.compile(r"(?i)(?P<prefix>(?<![A-Za-z0-9])-pass(?:in|out)?\s+pass:)\S+"),
         r"\g<prefix>[REDACTED]",
     ),
 )
@@ -409,9 +489,25 @@ REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+# --- Redaction: interactive secret prompts (v12) ---
+
+# The last line of a session's output looks like a prompt for a secret
+# (`[sudo] password for bob:`, `Enter passphrase for key '...':`, `Password:`,
+# `Verification code:`). The next input typed into that session is a secret with no
+# keyword of its own, so key/value redaction cannot see it; the session layer uses
+# this to withhold it from the audit record (see `SessionRegistry.awaiting_secret`).
+SECRET_PROMPT_PATTERN = re.compile(
+    r"(?i)(?:pass(?:word|phrase|code)|\bpin\b|secret|token|api[ _-]?key"
+    r"|verification code|one-time|otp)[^\r\n]{0,80}[:?]\s*$"
+)
+
+
 # --- Redaction: URL-embedded credentials (structure-preserving) ---
 
-URL_CREDS_PATTERN = re.compile(r"://[^/\s:@]+:[^/\s:@]+@")
+# The password may itself contain `@` (unencoded, but common): consume up to the
+# LAST `@` before the path, so `https://u:p@ss@host/x` leaves nothing of `p@ss`.
+# The run stops at `/` and whitespace, so a later `@` in a path or query is untouched.
+URL_CREDS_PATTERN = re.compile(r"://[^/\s:@]+:[^\s/]+@")
 
 
 # --- Redaction: MySQL-family compact -p<value> (gated by family CLI) ---

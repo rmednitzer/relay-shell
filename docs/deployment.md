@@ -234,11 +234,20 @@ RELAY_SHELL_AUTH_ENABLED=true             # default false — opt in explicitly
 RELAY_SHELL_AUTH_ISSUER=https://relay-shell.example.org
 RELAY_SHELL_AUTH_STATE_DIR=/var/lib/relay-shell/oauth
 RELAY_SHELL_AUTH_SINGLE_CLIENT=true       # lock DCR after the first client registers
+RELAY_SHELL_AUTH_REQUIRE_APPROVAL=true    # default: a new client stays pending until you approve it
 ```
 
+**Approve your client.** A client that registers is *pending*; `/authorize`
+refuses it until you approve it on the host
+(`relay-shell --auth-list`, then `relay-shell --auth-approve <client_id>`). This
+closes the window in which the first party to reach `/register` could obtain a
+token; see [`auth.md`](auth.md#operator-approval). Existing installs are carried
+over as approved on upgrade.
+
 Install the `[http]` extra. Tokens are file-backed under the state dir
-(`clients.json`, `codes.json`, `tokens.json`), access tokens are short-lived,
-refresh tokens rotate on use, and expiry is enforced lazily on read. With
+(`clients.json`, `approvals.json`, `codes.json`, `tokens.json`), access tokens are short-lived,
+refresh tokens rotate on use, secrets are stored hashed rather than raw, and expiry
+is enforced lazily on read. With
 single-client lockdown, dynamic registration is refused once one client
 exists. See [`auth.md`](auth.md) for the full authentication lifecycle — how a
 client registers, obtains tokens, and stays authenticated via refresh
@@ -263,6 +272,35 @@ and restores it immediately. **Ship the log off-host** and alert on gaps; an
 on-host log is evidence only until the host is compromised. See
 [`docs/audit-shipper.md`](audit-shipper.md) for worked examples using
 Vector, Fluent Bit, and `journalctl` → `systemd-journal-remote`.
+
+### 6a-i. Cancelled calls and the write-ahead record
+
+A call whose caller goes away mid-flight (client disconnect, MCP cancellation,
+transport timeout) is audited with `action=cancelled` (output hash of the fixed
+marker `[CANCELLED]`, `exit_code` null) and counted on `/metrics` as
+`outcome="cancelled"`. The local command's process group is killed and a remote
+command is sent a terminate, so a cancelled call does not keep running.
+
+The completion record is written when the work returns, so a crash or SIGKILL of
+the relay itself mid-command leaves no record of a command that may have run. Set
+`RELAY_SHELL_AUDIT_INTENT=true` to also append an `action=intent` record (same
+`args`, `exit_code` null) *before* the work starts; the completion record
+follows. Default off keeps one record per call and every record byte-identical.
+`server_info.audit.intent` reports the live state. A log consumer that counts
+records per call must treat an `intent` record as the call's start, not a call.
+
+### 6a-ii. Input typed into sessions
+
+`session_send` is the one tool whose argument is often a secret with no keyword
+(a `sudo` password). Its audit record therefore omits `data` (keeping `data_len`)
+when the session is at a secret prompt: the last output line reads like one
+(`[sudo] password for bob:`, `Enter passphrase for key ...:`, `Verification
+code:`), or the local terminal has echo off. Anything else is recorded as before,
+after pattern redaction. Set `RELAY_SHELL_AUDIT_SESSION_INPUT=hash` to record
+only `data_len` and `data_sha256` for every send; the default is `redacted`.
+`server_info.audit.session_input` reports the live setting. A secret typed at a
+prompt the heuristic does not recognise is still recorded, so use `hash` where
+typed content must never reach the log.
 
 ### 6a. Tamper-evident chain (optional)
 

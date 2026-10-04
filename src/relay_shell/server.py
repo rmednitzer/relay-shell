@@ -508,6 +508,20 @@ class Relay:
                 )
                 return body
 
+        if self.settings.audit_intent:
+            # Write-ahead record (opt-in): the executed-command trail survives a
+            # relay crash or SIGKILL between here and the completion record.
+            self.audit.record(
+                tool=tool,
+                args=red,
+                output="",
+                exit_code=None,
+                tier=int(decision.tier),
+                request_id=request_id,
+                client_id=client_id,
+                action="intent",
+            )
+
         errored = False
         # Activate the per-call seccomp-notify monitor (ADR 0006) for the
         # duration of work(). It is None unless the channel is enabled AND
@@ -521,6 +535,25 @@ class Relay:
         token = seccomp.set_active(monitor)
         try:
             body, exit_code = await work()
+        except asyncio.CancelledError:
+            # A client disconnect, an MCP cancellation or a transport timeout
+            # cancels the call mid-flight. The executors tear their child down
+            # on cancellation, but the call must still leave an audit record
+            # (the work may already have had effects), then propagate.
+            self.audit.record(
+                tool=tool,
+                args=red,
+                output="[CANCELLED]",
+                exit_code=None,
+                tier=int(decision.tier),
+                request_id=request_id,
+                client_id=client_id,
+                action="cancelled",
+            )
+            self.metrics.inc_tool_call(
+                tool=tool, tier=int(decision.tier), mode=mode, outcome="cancelled"
+            )
+            raise
         except RelayError as exc:
             body, exit_code = fmt_exc(exc), None
             errored = True
@@ -917,6 +950,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "user": user,
                 "port": port,
                 "key_path": key_path,
+                "jump": jump,
                 "known_hosts": known_hosts or app.settings.ssh_known_hosts,
             },
             policy_text=_policy_text_ssh_spawn(host, command),
@@ -936,10 +970,22 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             await app.sessions.send(session_id, payload.encode("utf-8"))
             return (f"sent {len(payload)} bytes to {session_id}", None)
 
+        # What reaches the audit record is decided here, before the send clears the
+        # session's prompt tail. The executor and the policy still see the real text.
+        audit_args: dict[str, Any] = {"session_id": session_id, "enter": enter}
+        if cfg.audit_session_input == "hash":
+            audit_args["data_len"] = len(data)
+            audit_args["data_sha256"] = sha256_hex(data)
+        elif await app.sessions.awaiting_secret(session_id):
+            audit_args["data"] = "[REDACTED: secret prompt]"
+            audit_args["data_len"] = len(data)
+        else:
+            audit_args["data"] = data
+
         return await app.run(
             tool="session_send",
             ctx=ctx,
-            audit_args={"session_id": session_id, "data": data, "enter": enter},
+            audit_args=audit_args,
             policy_text=_policy_text_session_send(
                 data, await app.sessions.pending_input(session_id)
             ),
@@ -1076,7 +1122,12 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "host": host,
                 "local": local_path,
                 "remote": remote_path,
+                "recursive": recursive,
                 "timeout": t,
+                "user": user,
+                "port": port,
+                "key_path": key_path,
+                "jump": jump,
                 "known_hosts": known_hosts or app.settings.ssh_known_hosts,
             },
             policy_text=_policy_text_ssh_upload(host, local_path, remote_path),
@@ -1121,7 +1172,12 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "host": host,
                 "remote": remote_path,
                 "local": local_path,
+                "recursive": recursive,
                 "timeout": t,
+                "user": user,
+                "port": port,
+                "key_path": key_path,
+                "jump": jump,
                 "known_hosts": known_hosts or app.settings.ssh_known_hosts,
             },
             policy_text=_policy_text_ssh_download(host, remote_path, local_path),
@@ -1161,6 +1217,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             audit_args={
                 "host": host,
                 "spec": spec,
+                "user": user,
+                "port": port,
+                "key_path": key_path,
+                "jump": jump,
                 "known_hosts": known_hosts or app.settings.ssh_known_hosts,
             },
             policy_text=_policy_text_ssh_forward(spec),
@@ -1540,9 +1600,11 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 },
                 "audit": {
                     "path": app.audit.path,
+                    "session_input": cfg.audit_session_input,
                     "degraded": app.audit.degraded,
                     "format": app.audit.format,
                     "chain": app.audit.chain,
+                    "intent": cfg.audit_intent,
                 },
                 "confirm": {
                     "tier3": cfg.confirm_tier3,
