@@ -460,4 +460,5 @@ def test_v12_new_rules_are_linear_on_adversarial_input() -> None:
 
 
 def test_v12_patterns_version_bumped() -> None:
-    assert patterns.PATTERNS_VERSION == "12"
+    # Redaction moved the table to v12; later pattern work only moves it forward.
+    assert int(patterns.PATTERNS_VERSION) >= 12

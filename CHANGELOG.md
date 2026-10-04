@@ -43,7 +43,7 @@ All notable changes to this project are documented here. The format follows
   `RELAY_SHELL_MAX_INPUT` (default 2 MiB) is refused before any scan and audited as
   denied; it is not scanned partially, which would let padding hide a command.
 - **Tier classification is sharper in both directions** (audit 2026-10-04, M2,
-  `PATTERNS_VERSION` 11 to 12). Read-only commands that merely *named* a destructive
+  `PATTERNS_VERSION` 12 to 13). Read-only commands that merely *named* a destructive
   word no longer reach Tier 3: `smartctl -a /dev/sda`, `lsblk /dev/sda`, `fdisk -l`,
   `git log --grep=reboot`, `journalctl -u shutdown.target`, `echo 'reboot required'`,
   `ip link show | grep down` and `cat /etc/passwd | head` were refused under
