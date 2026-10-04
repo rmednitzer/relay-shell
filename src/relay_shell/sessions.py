@@ -47,6 +47,19 @@ from .util import gen_id
 __all__ = ["LocalPtyTransport", "Session", "SessionRegistry", "Transport"]
 
 _READ_CHUNK = 65536
+# Characters that end or discard the line being typed into a PTY: Enter (LF/CR),
+# Ctrl-C and Ctrl-U. Everything typed since the last of these is one pending line.
+_LINE_RESET = "\n\r\x03\x15"
+_PENDING_MAX = 4096
+
+
+def _advance_line(pending: str, typed: str) -> str:
+    """The partial line left on a PTY after ``typed`` is written after ``pending``."""
+    cut = max(typed.rfind(ch) for ch in _LINE_RESET)
+    line = typed[cut + 1 :] if cut >= 0 else pending + typed
+    return line[-_PENDING_MAX:]
+
+
 _TAIL_BYTES = 512
 # CSI and OSC escape sequences, stripped before looking at the prompt text.
 _ANSI_RE = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
@@ -272,6 +285,10 @@ class Session:
     # precisely because it is waiting). Mutated only on the event-loop thread
     # with no `await` between the read and write, so it needs no lock.
     _waiters: int = 0
+    # The line being typed (text sent since the last Enter / Ctrl-C / Ctrl-U). The
+    # policy classifies this plus the next send, so a destructive command split
+    # across several `session_send` calls is seen whole.
+    pending: str = ""
     # The last few hundred bytes the session produced, kept (independently of the
     # recv buffer, which `recv` drains) so the registry can tell whether the
     # session is sitting at a secret prompt. Cleared when input is sent.
@@ -344,6 +361,12 @@ class SessionRegistry:
             raise SessionError(f"unknown session: {sid}")
         return sess
 
+    async def pending_input(self, sid: str) -> str:
+        """The partial line already typed into the session (never raises)."""
+        async with self._lock:
+            sess = self._sessions.get(sid)
+        return sess.pending if sess is not None else ""
+
     async def awaiting_secret(self, sid: str) -> bool:
         """True if the session is at a prompt for a secret (never raises).
 
@@ -367,6 +390,7 @@ class SessionRegistry:
     async def send(self, sid: str, data: bytes) -> None:
         sess = await self._get(sid)
         sess.last_used = time.monotonic()
+        sess.pending = _advance_line(sess.pending, data.decode("utf-8", "replace"))
         sess.tail.clear()  # the prompt (if any) is being answered now
         await sess.transport.write(data)
 

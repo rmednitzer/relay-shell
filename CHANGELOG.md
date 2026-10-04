@@ -24,6 +24,29 @@ All notable changes to this project are documented here. The format follows
 
 - Bind opaque OAuth access and refresh grants to the configured resource, validate bearer audiences, and reject foreign or duplicate token-endpoint resource parameters. Existing unbound grants require an explicit offline migration or re-authorization.
 
+- **Tier classification is sharper in both directions** (audit 2026-10-04, M2,
+  `PATTERNS_VERSION` 11 to 12). Read-only commands that merely *named* a destructive
+  word no longer reach Tier 3: `smartctl -a /dev/sda`, `lsblk /dev/sda`, `fdisk -l`,
+  `git log --grep=reboot`, `journalctl -u shutdown.target`, `echo 'reboot required'`,
+  `ip link show | grep down` and `cat /etc/passwd | head` were refused under
+  `guarded`/`readonly` and forced a confirm round trip under the Tier-3 broker.
+  `reboot|shutdown|halt|poweroff`, `init 0|6` and `passwd <user>` now match only in
+  command position (after a separator, wrapper, `sudo`, `sh -c '` ...), and the
+  partitioners exempt their listing flags. Conversely, commands that stayed at Tier 1
+  are now classified: Tier 3 for `find -delete` / `-exec rm`, `zpool|zfs destroy`,
+  `lvremove|vgremove|pvremove`, `blkdiscard`, `parted`, `mdadm --stop`,
+  `cryptsetup luksFormat|erase`, `nvme format`, `terraform|tofu|pulumi destroy`,
+  `systemctl reboot|poweroff`, `git push -f`, a write to `/proc/sysrq-trigger` and
+  writes to nvme/vd/xvd/mmcblk devices; Tier 2 for `curl|wget ... | sh` (and
+  python/perl/ruby/node), `kill -9`, `pkill`, `killall`, `truncate`,
+  `docker|podman ... prune|rm`, `terraform|tofu apply`, `git clean -f`, `setenforce`.
+  A host literally named `reboot.example.com` no longer trips the classifier in
+  `ssh_keyscan` (a bare `reboot` still does).
+- **A command split across `session_send` calls is classified whole** (M3). The policy
+  now sees the line being typed (text since the last Enter / Ctrl-C / Ctrl-U) plus the
+  new payload, so `r` then `m -rf /x` is refused as `rm -rf /x` under `guarded`
+  instead of passing as two harmless fragments.
+
 - **OAuth tokens and authorization codes are stored hashed** (audit 2026-10-04, M8).
   `tokens.json` and `codes.json` were keyed by the raw secret (and repeated it in a
   `token` / `code` field), so any copy of the state directory yielded usable bearer
