@@ -67,7 +67,18 @@ that a persuaded model still cannot exceed the operator-defined envelope:
   `-p<value>` is intentionally redacted only for MySQL-family commands
   (`mysql`, `mariadb-dump`, `mycli`, ...) because `-p` is overloaded
   elsewhere (`ssh -p22`, `nmap -p1-1000`); operators putting passwords
-  inline should use `--password=...` or `~/.my.cnf` instead. See
+  inline should use `--password=...` or `~/.my.cnf` instead. Quoted
+  multi-word values (`PASSWORD="a b c"`, `{"password": "a b c"}`), hyphenated
+  secret flags (`--client-secret V`, `--access-token V`, `--passphrase V`),
+  `curl -u user:pass`, `sshpass -p`, `docker login -p`, `openssl -pass pass:`
+  and URL passwords containing `@` are covered. A password containing `/` in a
+  URL cannot be told from a path and is not redacted. **Input typed into a PTY
+  session** has no keyword for any of this to find, so `session_send` input is
+  withheld from the audit record when the session is at a secret prompt (the last
+  output line reads like one, or the terminal has echo off), and
+  `RELAY_SHELL_AUDIT_SESSION_INPUT=hash` records only its length and SHA-256 for
+  deployments that must never log typed content. A secret typed at a prompt this
+  heuristic does not recognise is still recorded. See
   `src/relay_shell/redaction.py` for the full pattern set.
 - **OAuth client approval.** Dynamic registration is open and the authorization
   endpoint has no login step, so a registered client could previously obtain tokens

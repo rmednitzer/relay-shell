@@ -17,6 +17,7 @@ _TRANSPORTS = {"stdio", "http"}
 _POLICY_MODES = {"open", "guarded", "readonly"}
 _KNOWN_HOSTS = {"strict", "accept-new", "ignore"}
 _AUDIT_FORMATS = {"jsonl", "cef", "leef"}
+_AUDIT_SESSION_INPUT = {"redacted", "hash"}
 
 
 class Settings(BaseSettings):
@@ -78,6 +79,11 @@ class Settings(BaseSettings):
     audit_path: str = "/var/log/relay-shell/audit.jsonl"
     audit_stderr: bool = False
     audit_format: str = "jsonl"
+    # How `session_send` input is recorded. `redacted` (default): the typed text
+    # with pattern redaction, withheld entirely when the session is at a secret
+    # prompt (sudo / ssh / passphrase). `hash`: only its length and SHA-256, for
+    # deployments that must never write typed content to the log.
+    audit_session_input: str = "redacted"
     # Tamper-evident audit: when true, each record carries a `seq`, the
     # previous record's chain hash (`prev`), and its own `chain` hash so a
     # verifier can detect any insertion / deletion / reordering / edit of
@@ -158,6 +164,14 @@ class Settings(BaseSettings):
         v = v.strip().lower()
         if v not in _KNOWN_HOSTS:
             raise ValueError(f"ssh_known_hosts must be one of {sorted(_KNOWN_HOSTS)}")
+        return v
+
+    @field_validator("audit_session_input")
+    @classmethod
+    def _v_audit_session_input(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in _AUDIT_SESSION_INPUT:
+            raise ValueError(f"audit_session_input must be one of {sorted(_AUDIT_SESSION_INPUT)}")
         return v
 
     @field_validator("audit_format")
