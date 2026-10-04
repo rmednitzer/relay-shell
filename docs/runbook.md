@@ -106,7 +106,9 @@ Every record must contain `ts, tool, tier, denied, args, output_sha256,
 output_len, exit_code` at minimum. `request_id`, `client_id`, and `action`
 are context-dependent and may be absent (`action` is `confirm_plan` /
 `confirm_execute` only under the Tier-3 confirmation broker,
-`RELAY_SHELL_CONFIRM_TIER3`; ADR 0009). Absence of any of the *required*
+`RELAY_SHELL_CONFIRM_TIER3`; ADR 0009; `cancelled` when the caller went away
+mid-call; `intent` only under the opt-in write-ahead record
+`RELAY_SHELL_AUDIT_INTENT`). Absence of any of the *required*
 fields above is an audit regression; the default-off broker keeps the
 record byte-identical (no `action` field).
 

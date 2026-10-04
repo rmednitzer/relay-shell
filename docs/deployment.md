@@ -264,6 +264,22 @@ on-host log is evidence only until the host is compromised. See
 [`docs/audit-shipper.md`](audit-shipper.md) for worked examples using
 Vector, Fluent Bit, and `journalctl` → `systemd-journal-remote`.
 
+### 6a-i. Cancelled calls and the write-ahead record
+
+A call whose caller goes away mid-flight (client disconnect, MCP cancellation,
+transport timeout) is audited with `action=cancelled` (output hash of the fixed
+marker `[CANCELLED]`, `exit_code` null) and counted on `/metrics` as
+`outcome="cancelled"`. The local command's process group is killed and a remote
+command is sent a terminate, so a cancelled call does not keep running.
+
+The completion record is written when the work returns, so a crash or SIGKILL of
+the relay itself mid-command leaves no record of a command that may have run. Set
+`RELAY_SHELL_AUDIT_INTENT=true` to also append an `action=intent` record (same
+`args`, `exit_code` null) *before* the work starts; the completion record
+follows. Default off keeps one record per call and every record byte-identical.
+`server_info.audit.intent` reports the live state. A log consumer that counts
+records per call must treat an `intent` record as the call's start, not a call.
+
 ### 6a. Tamper-evident chain (optional)
 
 `chattr +a` and off-host shipping protect the log, but neither makes a
