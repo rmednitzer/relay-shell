@@ -114,6 +114,9 @@ async def test_real_http_pkce_binding_and_wrong_resource_rejection(
         auth_state_dir=str(tmp_path / "oauth"),
         audit_path=str(tmp_path / "audit.jsonl"),
         ssh_config=str(tmp_path / "none"),
+        # This test exercises PKCE and resource binding, not the operator
+        # approval gate (covered in tests/test_oauth_approval.py).
+        auth_require_approval=False,
     )
     p = make_oauth_provider(cfg)
     monkeypatch.setattr("relay_shell.auth.make_oauth_provider", lambda _cfg: p)

@@ -116,6 +116,15 @@ class Settings(BaseSettings):
     auth_resource_url: str = ""  # Empty preserves the established issuer-based identifier.
     auth_state_dir: str = "/var/lib/relay-shell/oauth"
     auth_single_client: bool = True
+    # Operator approval gate. Dynamic client registration is open to whoever can
+    # reach /register, and /authorize issues a code to any registered client with
+    # no login step, so without this the first party to register obtains tokens
+    # (shell execution as the service user). When true, a newly registered client
+    # is *pending* and /authorize refuses it until the operator approves it on the
+    # host (`relay-shell --auth-approve CLIENT_ID`). Clients that already exist at
+    # upgrade are carried over as approved. Set false only where the edge itself
+    # authenticates the caller.
+    auth_require_approval: bool = True
     auth_access_ttl: int = Field(default=3600, ge=60)
     auth_refresh_ttl: int = Field(default=2_592_000, ge=300)
     auth_code_ttl: int = Field(default=300, ge=30)

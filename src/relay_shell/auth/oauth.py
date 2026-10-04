@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import secrets
 import time
@@ -41,8 +42,14 @@ from pydantic import AnyHttpUrl
 
 from .resource import normalize_resource
 
-__all__ = ["FileOAuthProvider", "build_auth_settings", "make_oauth_provider"]
+__all__ = [
+    "FileOAuthProvider",
+    "StoreUnreadableError",
+    "build_auth_settings",
+    "make_oauth_provider",
+]
 
+_log = logging.getLogger("relay_shell.auth")
 _SCOPES = ["mcp:tools"]
 _REFRESH_PREFIX = "refresh:"
 
@@ -53,6 +60,10 @@ def _now() -> int:
 
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
+
+
+class StoreUnreadableError(Exception):
+    """A state file exists but cannot be parsed (as opposed to being absent)."""
 
 
 class _Store:
@@ -92,12 +103,30 @@ class _Store:
                 "token store."
             )
 
-    def load(self) -> dict[str, Any]:
+    def exists(self) -> bool:
+        return self._path.exists()
+
+    def load(self, *, strict: bool = False) -> dict[str, Any]:
+        """Read the store; an absent file is empty.
+
+        Tolerant by default: an unreadable file also reads as empty. ``strict``
+        distinguishes the two - a file that exists but cannot be parsed raises
+        :class:`StoreUnreadableError` instead of masquerading as an empty store,
+        which matters wherever "empty" would *open* something (client registration).
+        """
         try:
             data: Any = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except FileNotFoundError:
             return {}
-        return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError) as exc:
+            if strict:
+                raise StoreUnreadableError(f"{self._path.name} exists but is unreadable") from exc
+            return {}
+        if isinstance(data, dict):
+            return data
+        if strict:
+            raise StoreUnreadableError(f"{self._path.name} does not hold a JSON object")
+        return {}
 
     def save(self, data: dict[str, Any]) -> None:
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
@@ -122,9 +151,12 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         refresh_ttl: int,
         code_ttl: int,
         resource_url: str = "https://localhost:8080",
+        require_approval: bool = False,
     ) -> None:
         self._resource = normalize_resource(resource_url)
         base = Path(state_dir).expanduser()
+        self._require_approval = require_approval
+        self._approvals = _Store(base / "approvals.json")
         self._clients = _Store(base / "clients.json")
         self._codes = _Store(base / "codes.json")
         self._tokens = _Store(base / "tokens.json")
@@ -132,12 +164,41 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         self._access_ttl = access_ttl
         self._refresh_ttl = refresh_ttl
         self._code_ttl = code_ttl
+        self._migrate_legacy_approvals()
         # Single per-provider lock serializes every read-modify-write
         # against the three JSON stores. The atomic `tmp.replace` inside
         # ``_Store.save`` guarantees disk consistency for one writer; this
         # lock guarantees cross-coroutine consistency under concurrent
         # HTTP-transport traffic (token rotation, register-client, revoke).
         self._lock = asyncio.Lock()
+
+    # --- operator approval ---
+    def _migrate_legacy_approvals(self) -> None:
+        """Clients registered before approvals existed stay approved.
+
+        With no ``approvals.json`` yet, every client already on disk predates the
+        approval gate and was accepted under the old rules; carry them over as
+        approved so an upgrade does not lock the operator's existing client out.
+        A fresh install (no clients) writes nothing: its first client registers as
+        pending.
+        """
+        if self._approvals.exists():
+            return
+        try:
+            legacy = self._clients.load(strict=True)
+        except StoreUnreadableError:
+            return  # fail closed: nothing is approved until the operator repairs it
+        if legacy:
+            self._approvals.save({cid: {"approved": True, "legacy": True} for cid in legacy})
+
+    def _is_approved(self, client_id: str) -> bool:
+        if not self._require_approval:
+            return True
+        try:
+            rec = self._approvals.load(strict=True).get(client_id)
+        except StoreUnreadableError:
+            return False  # fail closed
+        return isinstance(rec, dict) and rec.get("approved") is True
 
     # --- clients ---
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
@@ -154,7 +215,15 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         if not cid:
             raise ValueError("client_id is required")
         async with self._lock:
-            clients = self._clients.load()
+            try:
+                clients = self._clients.load(strict=True)
+            except StoreUnreadableError as exc:
+                # An unparsable clients.json must not read as "no clients": that
+                # would reopen registration and let a caller replace the real client.
+                raise ValueError(
+                    "OAuth client store is unreadable; refusing registration "
+                    "(repair or restore clients.json)"
+                ) from exc
             incoming = json.loads(client_info.model_dump_json())
             # Single-client lockdown freezes registration once the first client
             # is registered. The earlier guard only refused a *new* client_id
@@ -167,8 +236,15 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             # allowed so a client that re-runs DCR is not broken.
             if self._single_client and clients and clients.get(cid) != incoming:
                 raise ValueError("Dynamic client registration is closed (single-client lockdown).")
+            is_new = cid not in clients
             clients[cid] = incoming
             self._clients.save(clients)
+            if is_new:
+                # A new client is usable only after the operator approves it (when
+                # the gate is on); an identical re-registration keeps its status.
+                approvals = self._approvals.load()
+                approvals[cid] = {"approved": not self._require_approval}
+                self._approvals.save(approvals)
 
     # --- authorization codes ---
     async def authorize(
@@ -182,6 +258,17 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             raise AuthorizeError(
                 error="invalid_target", error_description="Resource is not this server"
             ) from exc
+        if not self._is_approved(client.client_id or ""):
+            _log.warning(
+                "authorization refused: client %s is awaiting operator approval "
+                "(run: relay-shell --auth-approve %s)",
+                client.client_id,
+                client.client_id,
+            )
+            raise AuthorizeError(
+                error="access_denied",
+                error_description="Client is awaiting operator approval",
+            )
         code = secrets.token_urlsafe(48)
         async with self._lock:
             codes = self._codes.load()
@@ -447,4 +534,5 @@ def make_oauth_provider(settings: Any) -> FileOAuthProvider:
         refresh_ttl=settings.auth_refresh_ttl,
         code_ttl=settings.auth_code_ttl,
         resource_url=getattr(settings, "auth_resource_url", "") or settings.auth_issuer,
+        require_approval=bool(getattr(settings, "auth_require_approval", False)),
     )

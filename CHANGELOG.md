@@ -10,6 +10,20 @@ All notable changes to this project are documented here. The format follows
 
 - Bind opaque OAuth access and refresh grants to the configured resource, validate bearer audiences, and reject foreign or duplicate token-endpoint resource parameters. Existing unbound grants require an explicit offline migration or re-authorization.
 
+- **OAuth clients need operator approval before they can obtain tokens** (audit
+  2026-10-04, H4). Dynamic registration is open to whoever can reach `/register` and
+  `/authorize` issued a code to any registered client with no login step, so the
+  first party to register obtained a token (shell execution as the service user). A
+  newly registered client is now *pending*; `/authorize` answers `access_denied` until
+  the operator runs `relay-shell --auth-approve <client_id>` on the host
+  (`--auth-list`, `--auth-reject` manage the rest). A `clients.json` that exists but
+  cannot be parsed no longer reads as "no clients" (which reopened registration and let
+  a caller replace the real client): `/register` refuses and leaves the file untouched,
+  and an unreadable `approvals.json` approves nothing.
+  **Upgrade:** clients already registered are carried over as approved. **New
+  installs must approve their first client** or set
+  `RELAY_SHELL_AUTH_REQUIRE_APPROVAL=false` (only where the edge authenticates callers).
+
 ### Added
 
 - **`RELAY_SHELL_MAX_CONNS`** (default 256) — a hard ceiling on the live SSH
@@ -22,6 +36,9 @@ All notable changes to this project are documented here. The format follows
   (a connection in active use — a session, forward, or in-flight run — is never
   evicted, so the cap is transiently exceeded rather than dropping a live
   connection). Surfaced in `server_info.config.max_conns`.
+
+- **`RELAY_SHELL_AUTH_REQUIRE_APPROVAL`** (default `true`) and the `relay-shell
+  --auth-list` / `--auth-approve` / `--auth-reject` operator commands (see Security).
 
 ### Changed
 
