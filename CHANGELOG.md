@@ -25,6 +25,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Refreshed tested pins: `mcp` 2.2.0 to 2.3.0, `asyncssh` 2.24.0 to 2.24.1,
+  `mypy` 2.3.1 to 2.4.0, `ruff` 0.16.9 to 0.16.10 (kept in lockstep across
+  `requirements.txt`, the `dev` extra, and the pre-commit hook). Lint, format,
+  mypy strict, the full suite, and `pip-audit` pass on Python 3.13.
 - **Migrated to the MCP Python SDK v2** and bound every dependency below its
   next major (PR #164, #165, 2026-08-12). `mcp.server.fastmcp.FastMCP` is now
   `mcp.server.mcpserver.MCPServer`; the `host`/`port`/`stateless_http`/
