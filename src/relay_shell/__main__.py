@@ -120,6 +120,30 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--auth-list",
+        action="store_true",
+        help=(
+            "List the registered OAuth clients and whether each is approved or "
+            "pending (RELAY_SHELL_AUTH_STATE_DIR). A newly registered client stays "
+            "pending until approved."
+        ),
+    )
+    parser.add_argument(
+        "--auth-approve",
+        metavar="CLIENT_ID",
+        default=None,
+        help="Approve a pending OAuth client so /authorize will issue it a code.",
+    )
+    parser.add_argument(
+        "--auth-reject",
+        metavar="CLIENT_ID",
+        default=None,
+        help=(
+            "Remove an OAuth client with its approval, codes and tokens. Under "
+            "single-client lockdown this reopens registration."
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         dest="json_out",
@@ -297,6 +321,57 @@ def _verify_audit(audit_path: str | None, json_out: bool, segment: bool = False)
     return 0 if passed else 2
 
 
+def _auth_admin(args: argparse.Namespace) -> int:
+    """``--auth-list`` / ``--auth-approve`` / ``--auth-reject``. 0 ok, 2 on any failure."""
+    from .auth.admin import approve_client, list_clients, reject_client
+    from .auth.oauth import StoreUnreadableError
+
+    try:
+        state_dir = get_settings().auth_state_dir
+    except Exception as exc:  # noqa: BLE001
+        print(f"relay_shell: invalid configuration: {exc}", file=sys.stderr)
+        return 2
+    try:
+        if args.auth_approve is not None:
+            if not approve_client(state_dir, args.auth_approve):
+                print(f"relay_shell: no such client: {args.auth_approve}", file=sys.stderr)
+                return 2
+            print(f"approved {args.auth_approve}")
+            return 0
+        if args.auth_reject is not None:
+            if not reject_client(state_dir, args.auth_reject):
+                print(f"relay_shell: no such client: {args.auth_reject}", file=sys.stderr)
+                return 2
+            print(f"rejected {args.auth_reject}")
+            return 0
+        rows = list_clients(state_dir)
+    except (FileNotFoundError, StoreUnreadableError, OSError) as exc:
+        print(f"relay_shell: {exc}", file=sys.stderr)
+        return 2
+    if args.json_out:
+        print(
+            json.dumps(
+                [
+                    {
+                        "client_id": r.client_id,
+                        "status": r.status,
+                        "redirect_uris": list(r.redirect_uris),
+                        "legacy": r.legacy,
+                    }
+                    for r in rows
+                ],
+                indent=2,
+            )
+        )
+    else:
+        for r in rows:
+            suffix = " (carried over)" if r.legacy else ""
+            print(f"{r.client_id}  {r.status}{suffix}  {' '.join(r.redirect_uris)}")
+        if not rows:
+            print("no clients registered")
+    return 0
+
+
 def _install_sigterm_handler() -> None:
     """Convert SIGTERM into a KeyboardInterrupt so the shutdown finally
     block in ``main`` runs.
@@ -329,6 +404,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.verify_audit:
         return _verify_audit(args.audit_path, args.json_out, args.segment)
+
+    if args.auth_list or args.auth_approve is not None or args.auth_reject is not None:
+        return _auth_admin(args)
 
     if args.check_config:
         return _check_config()

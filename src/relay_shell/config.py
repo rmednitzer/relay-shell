@@ -18,6 +18,7 @@ _TRANSPORTS = {"stdio", "http"}
 _POLICY_MODES = {"open", "guarded", "readonly"}
 _KNOWN_HOSTS = {"strict", "accept-new", "ignore"}
 _AUDIT_FORMATS = {"jsonl", "cef", "leef"}
+_AUDIT_SESSION_INPUT = {"redacted", "hash"}
 
 
 def _is_loopback(host: str) -> bool:
@@ -104,6 +105,11 @@ class Settings(BaseSettings):
     audit_path: str = "/var/log/relay-shell/audit.jsonl"
     audit_stderr: bool = False
     audit_format: str = "jsonl"
+    # How `session_send` input is recorded. `redacted` (default): the typed text
+    # with pattern redaction, withheld entirely when the session is at a secret
+    # prompt (sudo / ssh / passphrase). `hash`: only its length and SHA-256, for
+    # deployments that must never write typed content to the log.
+    audit_session_input: str = "redacted"
     # Tamper-evident audit: when true, each record carries a `seq`, the
     # previous record's chain hash (`prev`), and its own `chain` hash so a
     # verifier can detect any insertion / deletion / reordering / edit of
@@ -111,6 +117,13 @@ class Settings(BaseSettings):
     # keeps the record byte-identical to today. Only the `jsonl` format can
     # resume the chain across restarts, so chaining requires it.
     audit_chain: bool = False
+    # Write-ahead audit (opt-in, default off): append an `action="intent"` record
+    # *before* a call's work runs, in addition to the completion record. The
+    # completion record is only written once the work returns, so a crash or
+    # SIGKILL of the relay mid-command would otherwise leave an executed command
+    # with no audit trail. Default off keeps every record byte-identical and the
+    # one-record-per-call shape existing log consumers rely on.
+    audit_intent: bool = False
 
     # Syscall-level audit channel (ADR 0006; opt-in, default off). When on,
     # locally-spawned children get a seccomp-bpf USER_NOTIF filter and the
@@ -142,6 +155,15 @@ class Settings(BaseSettings):
     auth_resource_url: str = ""  # Empty preserves the established issuer-based identifier.
     auth_state_dir: str = "/var/lib/relay-shell/oauth"
     auth_single_client: bool = True
+    # Operator approval gate. Dynamic client registration is open to whoever can
+    # reach /register, and /authorize issues a code to any registered client with
+    # no login step, so without this the first party to register obtains tokens
+    # (shell execution as the service user). When true, a newly registered client
+    # is *pending* and /authorize refuses it until the operator approves it on the
+    # host (`relay-shell --auth-approve CLIENT_ID`). Clients that already exist at
+    # upgrade are carried over as approved. Set false only where the edge itself
+    # authenticates the caller.
+    auth_require_approval: bool = True
     auth_access_ttl: int = Field(default=3600, ge=60)
     auth_refresh_ttl: int = Field(default=2_592_000, ge=300)
     auth_code_ttl: int = Field(default=300, ge=30)
@@ -168,6 +190,14 @@ class Settings(BaseSettings):
         v = v.strip().lower()
         if v not in _KNOWN_HOSTS:
             raise ValueError(f"ssh_known_hosts must be one of {sorted(_KNOWN_HOSTS)}")
+        return v
+
+    @field_validator("audit_session_input")
+    @classmethod
+    def _v_audit_session_input(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in _AUDIT_SESSION_INPUT:
+            raise ValueError(f"audit_session_input must be one of {sorted(_AUDIT_SESSION_INPUT)}")
         return v
 
     @field_validator("audit_format")

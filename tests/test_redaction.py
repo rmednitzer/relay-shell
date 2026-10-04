@@ -367,3 +367,97 @@ def test_red5_dict_keys_are_scrubbed() -> None:
     assert "token=[REDACTED]" in keys
     assert "host" in keys  # ordinary keys untouched
     assert "abc123def456ghi" not in " ".join(keys)
+
+
+# --- v12 (audit 2026-10-04, M1): paired under-scrub / over-scrub tests --------
+
+import time  # noqa: E402
+
+import pytest  # noqa: E402
+
+from relay_shell import patterns  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("text", "secret"),
+    [
+        ('export DB_PASSWORD="correct horse battery staple"', "horse"),
+        ('{"password": "correct horse battery staple"}', "staple"),
+        ("PGPASSWORD='correct horse battery' psql -h x", "battery"),
+        ('{"token":"a b c d"}', "d"),
+        ('password="escaped \\" quote tail"', "tail"),
+        ("tool --client-secret S3cr3tV4lue123 --x 1", "S3cr3tV4lue123"),
+        ("tool --access-token S3cr3tV4lue123 run", "S3cr3tV4lue123"),
+        ("tool --auth-token=S3cr3tV4lue123 run", "S3cr3tV4lue123"),
+        ("aws configure set --secret-access-key wJalrXUtnFEMI", "wJalrXUtnFEMI"),
+        ("gpg --batch --passphrase S3cr3tV4lue123 -d f.gpg", "S3cr3tV4lue123"),
+        ("curl -u admin:S3cr3tV4lue123 https://example.org/api", "S3cr3tV4lue123"),
+        ("curl -sS --user admin:S3cr3tV4lue123 https://example.org", "S3cr3tV4lue123"),
+        ("wget --proxy-user=bob:S3cr3tV4lue123 http://x", "S3cr3tV4lue123"),
+        ("sshpass -p S3cr3tV4lue123 ssh root@host", "S3cr3tV4lue123"),
+        ("sshpass -p 'two words' ssh root@host", "words"),
+        ("docker login -u me -p S3cr3tV4lue123 registry.example", "S3cr3tV4lue123"),
+        ("openssl enc -aes-256-cbc -pass pass:S3cr3tV4lue123 -in f", "S3cr3tV4lue123"),
+        ("git clone https://user:p@ssW0rdTail@github.com/o/r.git", "ssW0rdTail"),
+    ],
+)
+def test_v12_secret_does_not_survive(text: str, secret: str) -> None:
+    out = redact(text)
+    assert secret not in out, out
+    assert "[REDACTED]" in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "docker exec -u 1000:1000 web ls",  # -u is a uid:gid, not credentials
+        "docker run --user root:root alpine true",
+        "ssh -p 22 host",
+        "nmap -p 1-1000 host",
+        "sshpass -e ssh -o BatchMode=yes host",  # env mode: no value to collapse
+        "psql --no-password -h db -U app",
+        "docker login --password-stdin registry.example",  # boolean switch
+        "curl --token-url https://idp.example/token https://api.example",
+        "curl -u admin https://example.org",  # no colon: nothing to redact
+        "curl --silent https://example.org/a@b",
+        "Get-Credential -Message 'sign in'",
+        "openssl enc -pass env:PW -in f",
+        "git clone git@github.com:org/repo.git",
+        "curl https://example.com:8080/a@b",
+        "echo --secret-agent mode on",  # keyword not at the end of the flag name
+    ],
+)
+def test_v12_no_over_scrub(text: str) -> None:
+    assert redact(text) == text
+
+
+def test_v12_quoted_rule_keeps_surrounding_json_intact() -> None:
+    out = redact('{"password": "a b c", "user": "bob", "note": "keep me"}')
+    assert out == '{"password": "[REDACTED]", "user": "bob", "note": "keep me"}'
+
+
+def test_v12_unterminated_quoted_value_cannot_leak_through_truncation() -> None:
+    args = {"c": 'password="' + "secret words " * 3000}
+    out = redact_args(args, max_len=500)["c"]
+    assert "secret" not in out
+    assert "[REDACTED]" in out
+
+
+def test_v12_new_rules_are_linear_on_adversarial_input() -> None:
+    budget = 1.0
+    for blob in (
+        "curl " * 4000,
+        "sshpass " * 3000,
+        "docker login " * 2000,
+        "--a-" * 6000,
+        "-" + "a-" * 8000,
+        'password="' + "x" * 50_000,
+        "://u:" + "@" * 20_000,
+    ):
+        t0 = time.perf_counter()
+        redact(blob[:20_000])
+        assert time.perf_counter() - t0 < budget, blob[:20]
+
+
+def test_v12_patterns_version_bumped() -> None:
+    assert patterns.PATTERNS_VERSION == "12"

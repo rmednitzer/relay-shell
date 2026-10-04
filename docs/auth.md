@@ -33,8 +33,8 @@ it.
 OAuth 2.1 **authorization server**: dynamic client registration (DCR) with
 optional single-client lockdown, PKCE (the SDK enforces the challenge),
 short-lived authorization codes, and **rotating** refresh tokens. State is
-three JSON files under `RELAY_SHELL_AUTH_STATE_DIR` — `clients.json`,
-`codes.json`, `tokens.json` — created `0o700` and written `0o600`, and the
+four JSON files under `RELAY_SHELL_AUTH_STATE_DIR` — `clients.json`,
+`approvals.json`, `codes.json`, `tokens.json` — created `0o700` and written `0o600`, and the
 provider **refuses to start** if the state dir is group/other-accessible
 (SEC-8). No database.
 
@@ -69,7 +69,18 @@ calls `load_access_token` to validate it. Two guards matter there:
 - a `refresh:`-prefixed string is **rejected** as an access token, so a refresh
   token cannot be replayed as an access token (token-type confusion, AUTH-1);
 - expiry is enforced **lazily on read** — an expired token is deleted and the
-  call gets `None` → 401. There is no background sweeper.
+  call gets `None` → 401. There is no background sweeper, so expired records that
+  are never presented are dropped whenever a new token or authorization code is
+  written, which bounds the files;
+- secrets are **stored as hashes**: `tokens.json` and `codes.json` are keyed by
+  `sha256:<hex>` (refresh tokens as `refresh:sha256:<hex>`) and hold no raw token or
+  code, so a copy of the state directory yields nothing usable as a bearer
+  credential. A presented secret that is not plain URL-safe base64 (for instance a
+  stored `sha256:...` key replayed as a token) is refused before any lookup. Files
+  from before this change are rewritten on the next start and credentials issued
+  under the old format keep working;
+- the whole-file read that backs each authenticated request runs on a worker
+  thread, so it does not block the event loop.
 
 ### 5. Staying authenticated past one hour — the rotation loop
 
@@ -121,6 +132,44 @@ unspecified and the provider opts out, in both directions — see the
 `test_revoke_*` cases). To fully cut a client off, revoke both, or let the
 short access TTL expire and revoke the refresh token.
 
+## Operator approval
+
+Dynamic client registration is open to whoever can reach `/register` (the Caddy
+template exposes it so a remote MCP client can onboard itself), and the
+authorization endpoint has no login step: it issues a code to any *registered*
+client that presents a valid PKCE challenge and its registered `redirect_uri`.
+Registration alone therefore used to be enough to obtain a token, which is shell
+execution as the service user. The first party to register won, and a client store
+that read as empty (a missing or corrupt `clients.json`) reopened the race.
+
+With `RELAY_SHELL_AUTH_REQUIRE_APPROVAL=true` (**the default**) a newly registered
+client is **pending**: `/register` still succeeds, but `/authorize` answers
+`access_denied` until the operator approves the client **on the host** that owns
+the state directory:
+
+```bash
+relay-shell --auth-list                    # client_id, approved|pending, redirect URIs
+relay-shell --auth-approve <client_id>     # takes effect on the next /authorize, no restart
+relay-shell --auth-reject  <client_id>     # remove it with its approval, codes and tokens
+```
+
+Onboarding a connector is therefore: add it in the MCP client (this registers it),
+read its `client_id` and redirect URI from `--auth-list`, check that they are the
+client you just added, then approve it. A pending client you do not recognise is
+the attack this gate exists to stop: reject it. Under single-client lockdown,
+rejecting the only client also reopens registration, so the intended client can
+register. The server logs each refused authorization with the command to run.
+
+- **Upgrading.** Clients already on disk when `approvals.json` does not yet exist
+  are carried over as approved (listed as "carried over"), so an upgrade does not
+  lock the existing client out. Only clients registered afterwards are pending.
+- **Fail closed.** A state file that exists but cannot be parsed is an error, not an
+  empty store: `/register` refuses (and leaves `clients.json` untouched) and
+  `--auth-list` reports it; an unreadable `approvals.json` approves nothing.
+- **Opting out.** `RELAY_SHELL_AUTH_REQUIRE_APPROVAL=false` restores the previous
+  behavior. Do that only where the edge itself authenticates the caller (a client
+  certificate or an identity-aware proxy in front of `/register` and `/authorize`).
+
 ## Single-client lockdown
 
 With `RELAY_SHELL_AUTH_SINGLE_CLIENT=true` (**the default**), DCR is frozen
@@ -143,6 +192,7 @@ metadata updates) applies.
 |---------|---------|---------|---------|
 | Enabled | `RELAY_SHELL_AUTH_ENABLED` | `false` | Master switch (HTTP transport only). |
 | Single client | `RELAY_SHELL_AUTH_SINGLE_CLIENT` | `true` | Freeze DCR after the first client. |
+| Require approval | `RELAY_SHELL_AUTH_REQUIRE_APPROVAL` | `true` | A new client is pending until `relay-shell --auth-approve`. |
 | Access TTL | `RELAY_SHELL_AUTH_ACCESS_TTL` | `3600` (1 h) | Bearer access-token lifetime. |
 | Refresh TTL | `RELAY_SHELL_AUTH_REFRESH_TTL` | `2592000` (30 d) | Refresh-token lifetime (resets on each rotation). |
 | Code TTL | `RELAY_SHELL_AUTH_CODE_TTL` | `300` (5 min) | Authorization-code lifetime (single-use). |

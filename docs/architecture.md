@@ -90,6 +90,7 @@ syscall and is default off, so the lifecycle above is otherwise unchanged.
 | `inventory` | `~/.ssh/config` + JSON inventory parsing and resolution. |
 | `sshpool` | asyncssh connection cache, exec, SFTP, forwarding, PTY adapter. |
 | `auth/oauth` | Optional file-backed OAuth 2.1 provider (HTTP only). |
+| `auth/admin` | Operator commands over the OAuth state: list, approve, reject clients (`--auth-*`). |
 | `verifier` | Drift-detection comparator powering `relay-shell --verify-deploy`. |
 | `server` | `MCPServer` assembly, the audited runner, all tool, resource + prompt definitions. |
 | `__main__` | Entrypoint; stderr-only logging; transport selection; `--check-config` / `--verify-deploy` CLI flags. |

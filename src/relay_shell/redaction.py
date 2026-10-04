@@ -88,6 +88,8 @@ def redact(text: str) -> str:
     out = patterns.URL_CREDS_PATTERN.sub(f"://{placeholder}@", text)
     for pat, repl in patterns.REDACTION_PREFIX_PATTERNS:
         out = pat.sub(repl, out)
+    for pat, repl in patterns.COMMAND_SCOPED_PREFIX_PATTERNS:
+        out = pat.sub(repl, out)
     if any(hint in out for hint in _WHOLE_MATCH_HINTS):
         for pat in patterns.REDACTION_PATTERNS:
             out = pat.sub(placeholder, out)

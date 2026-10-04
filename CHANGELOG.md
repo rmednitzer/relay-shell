@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **`known_hosts=accept-new` is now real trust-on-first-use** (audit 2026-10-04, H2).
+  It previously connected with host-key verification disabled on every call, so a
+  changed or substituted host key was accepted and then persisted. A host that
+  already has a `known_hosts` entry is now verified strictly (a changed key is
+  refused); only a first contact is accepted and recorded, in canonical OpenSSH
+  form (`[host]:port` off port 22). An unreadable `known_hosts`, or a corrupt entry
+  for the host itself, fails closed. Operators who relied on `accept-new` silently
+  tolerating a re-keyed host must now update `~/.ssh/known_hosts` (`ssh-keygen -R`).
+- **The SSH connection cache no longer crosses trust boundaries** (H3). The cache
+  key now includes the verification mode, identity key path and jump host, so a
+  `strict` call can no longer reuse a connection opened with `known_hosts=ignore`,
+  and an explicit `key_path` / `jump` is honoured instead of being ignored on a
+  cache hit.
+
 - Bind opaque OAuth access and refresh grants to the configured resource, validate bearer audiences, and reject foreign or duplicate token-endpoint resource parameters. Existing unbound grants require an explicit offline migration or re-authorization.
 
 - **Unauthenticated HTTP on a non-loopback address is refused at startup** (audit
@@ -28,6 +42,75 @@ All notable changes to this project are documented here. The format follows
   synchronously (about 0.5 s per MiB, 17 s at 32 MiB). A call over the new
   `RELAY_SHELL_MAX_INPUT` (default 2 MiB) is refused before any scan and audited as
   denied; it is not scanned partially, which would let padding hide a command.
+- **Tier classification is sharper in both directions** (audit 2026-10-04, M2,
+  `PATTERNS_VERSION` 11 to 12). Read-only commands that merely *named* a destructive
+  word no longer reach Tier 3: `smartctl -a /dev/sda`, `lsblk /dev/sda`, `fdisk -l`,
+  `git log --grep=reboot`, `journalctl -u shutdown.target`, `echo 'reboot required'`,
+  `ip link show | grep down` and `cat /etc/passwd | head` were refused under
+  `guarded`/`readonly` and forced a confirm round trip under the Tier-3 broker.
+  `reboot|shutdown|halt|poweroff`, `init 0|6` and `passwd <user>` now match only in
+  command position (after a separator, wrapper, `sudo`, `sh -c '` ...), and the
+  partitioners exempt their listing flags. Conversely, commands that stayed at Tier 1
+  are now classified: Tier 3 for `find -delete` / `-exec rm`, `zpool|zfs destroy`,
+  `lvremove|vgremove|pvremove`, `blkdiscard`, `parted`, `mdadm --stop`,
+  `cryptsetup luksFormat|erase`, `nvme format`, `terraform|tofu|pulumi destroy`,
+  `systemctl reboot|poweroff`, `git push -f`, a write to `/proc/sysrq-trigger` and
+  writes to nvme/vd/xvd/mmcblk devices; Tier 2 for `curl|wget ... | sh` (and
+  python/perl/ruby/node), `kill -9`, `pkill`, `killall`, `truncate`,
+  `docker|podman ... prune|rm`, `terraform|tofu apply`, `git clean -f`, `setenforce`.
+  A host literally named `reboot.example.com` no longer trips the classifier in
+  `ssh_keyscan` (a bare `reboot` still does).
+- **A command split across `session_send` calls is classified whole** (M3). The policy
+  now sees the line being typed (text since the last Enter / Ctrl-C / Ctrl-U) plus the
+  new payload, so `r` then `m -rf /x` is refused as `rm -rf /x` under `guarded`
+  instead of passing as two harmless fragments.
+
+- **OAuth tokens and authorization codes are stored hashed** (audit 2026-10-04, M8).
+  `tokens.json` and `codes.json` were keyed by the raw secret (and repeated it in a
+  `token` / `code` field), so any copy of the state directory yielded usable bearer
+  credentials. They are now keyed by `sha256:<hex>` with no raw value, a presented
+  secret that is not plain URL-safe base64 is refused before any lookup (so a stored
+  key cannot be replayed as a token), and existing files are rewritten on the next
+  start without invalidating credentials already issued. Expired records that are
+  never presented are purged whenever a new one is written (the files were
+  previously unbounded), and the per-request token read runs off the event loop.
+  **Downgrade note:** a hashed store is not readable by an older release.
+
+- **OAuth clients need operator approval before they can obtain tokens** (audit
+  2026-10-04, H4). Dynamic registration is open to whoever can reach `/register` and
+  `/authorize` issued a code to any registered client with no login step, so the
+  first party to register obtained a token (shell execution as the service user). A
+  newly registered client is now *pending*; `/authorize` answers `access_denied` until
+  the operator runs `relay-shell --auth-approve <client_id>` on the host
+  (`--auth-list`, `--auth-reject` manage the rest). A `clients.json` that exists but
+  cannot be parsed no longer reads as "no clients" (which reopened registration and let
+  a caller replace the real client): `/register` refuses and leaves the file untouched,
+  and an unreadable `approvals.json` approves nothing.
+  **Upgrade:** clients already registered are carried over as approved. **New
+  installs must approve their first client** or set
+  `RELAY_SHELL_AUTH_REQUIRE_APPROVAL=false` (only where the edge authenticates callers).
+
+- **Typed secrets no longer reach the audit log through `session_send`** (audit
+  2026-10-04, H5). Input sent to a session at a secret prompt (`[sudo] password
+  for bob:`, `passphrase`, a local terminal with echo off) is withheld from the
+  record (`data` is replaced by a marker and `data_len`). New
+  `RELAY_SHELL_AUDIT_SESSION_INPUT=hash` records only length and SHA-256 for every
+  send. Ordinary input is recorded as before.
+- **Redaction closes reproduced gaps** (M1, `PATTERNS_VERSION` 11 to 12): quoted
+  multi-word values (`PASSWORD="a b c"`, JSON), hyphenated secret flags
+  (`--client-secret V`, `--access-token V`, `--passphrase V`, `--secret-access-key
+  V`), `curl -u user:pass`, `sshpass -p`, `docker login -p`, `openssl -pass
+  pass:`, and URL passwords containing `@`. Over-scrub guards keep `docker exec -u
+  1000:1000`, `ssh -p 22`, `--password-stdin`, `--no-password`, `--token-url` and
+  `Get-Credential` unchanged.
+- **A cancelled or disconnected tool call is now audited and no longer leaves its
+  command running** (audit 2026-10-04, H1). `Relay.run` wrote the audit record only
+  after the work returned and did not catch cancellation, and the executors killed
+  their child only on timeout, so a client disconnect or MCP cancel produced an
+  executed command with no audit record and an orphaned process. A cancelled call
+  now writes an `action=cancelled` record (and `outcome="cancelled"` on `/metrics`),
+  the local command's process group is killed, and a remote command is sent a
+  terminate; the cancellation still propagates.
 
 ### Added
 
@@ -44,8 +127,24 @@ All notable changes to this project are documented here. The format follows
 
 - **`RELAY_SHELL_MAX_INPUT`** (default 2097152 characters) and
   **`RELAY_SHELL_ALLOW_UNAUTH_NETWORK`** (default `false`); `server_info.limits.max_input`.
+- **`RELAY_SHELL_AUTH_REQUIRE_APPROVAL`** (default `true`) and the `relay-shell
+  --auth-list` / `--auth-approve` / `--auth-reject` operator commands (see Security).
+- **`RELAY_SHELL_AUDIT_SESSION_INPUT`** (`redacted` default, or `hash`) — how
+  `session_send` input is recorded (see Security). Surfaced in
+  `server_info.audit.session_input`.
+- **`RELAY_SHELL_AUDIT_INTENT`** (default off) — write-ahead audit: append an
+  `action=intent` record before a call's work starts, so a crash or SIGKILL of the
+  relay mid-command no longer leaves an executed command with no record. Default off
+  keeps one record per call. Surfaced in `server_info.audit.intent`.
 
 ### Changed
+
+- **Audit records for `ssh_upload`, `ssh_download`, `ssh_forward` and `ssh_spawn` now
+  carry the connection identity** (M6): `user`, `port`, `key_path`, `jump`, plus
+  `recursive` for transfers (`ssh_spawn` gained `jump`). Additive `args` fields; the
+  top-level record shape is unchanged. With the Tier-3 broker on, these fields are
+  part of the confirmed operation, so a token no longer covers a different user,
+  port, key or jump host.
 
 - Refreshed tested pins: `mcp` 2.2.0 to 2.3.0, `asyncssh` 2.24.0 to 2.24.1,
   `mypy` 2.3.1 to 2.4.0, `ruff` 0.16.9 to 0.16.10 (kept in lockstep across

@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 
 __all__ = [
+    "COMMAND_SCOPED_PREFIX_PATTERNS",
     "MYSQL_COMPACT_PASSWORD_PATTERN",
     "MYSQL_FAMILY_CLI_PATTERN",
     "PATTERNS_VERSION",
@@ -38,6 +39,7 @@ __all__ = [
     "REDACTION_PATTERNS",
     "REDACTION_PLACEHOLDER",
     "REDACTION_PREFIX_PATTERNS",
+    "SECRET_PROMPT_PATTERN",
     "TIER2_PATTERN",
     "TIER3_PATTERN",
     "URL_CREDS_PATTERN",
@@ -133,7 +135,39 @@ __all__ = [
 #      (`ConvertTo-SecureString 'P@ss' -AsPlainText -Force`) while leaving a
 #      `$var` handle or a bare switch untouched. Keeps existing keyword behavior
 #      byte-identical (pure additions).
-PATTERNS_VERSION = "11"
+# v12: 2026-10-04 audit pass, tier classification (M2; every case reproduced
+#      against v11). Over-classification: read-only commands that merely *named* a
+#      destructive word reached Tier 3 (`smartctl -a /dev/sda`, `lsblk /dev/sda`,
+#      `fdisk -l`, `git log --grep=reboot`, `journalctl -u shutdown.target`, `echo
+#      'reboot required'`, `ip link show | grep down`, `cat /etc/passwd | head`),
+#      which refused them in guarded/readonly and forced a confirm round trip under
+#      the Tier-3 broker. The bare `/dev/sd[a-z]` rule is gone (writes to a block
+#      device are still caught via `of=`, `>` and `tee`, now for nvme/vd/xvd/mmcblk
+#      too); `reboot|shutdown|halt|poweroff`, `init 0|6` and `passwd <arg>` match
+#      only in command position (`_CMD`); `ip link` needs `set ... down`; the
+#      partitioners exempt their listing flags. Under-classification: `curl|wget ...
+#      | sh` and friends (Tier 2); `find -delete` / `-exec rm`, `zpool|zfs destroy`,
+#      `lvremove|vgremove|pvremove`, `blkdiscard`, `parted`, `mdadm --stop`,
+#      `cryptsetup luksFormat|erase`, `nvme format`, `terraform|tofu|pulumi destroy`,
+#      `systemctl reboot|poweroff`, `git push -f`, a write to /proc/sysrq-trigger
+#      (Tier 3); `kill -9`, `pkill`, `killall`, `truncate`, `docker|podman system|
+#      volume|image|container|network prune|rm`, `terraform|tofu apply`, `git clean
+#      -f`, `setenforce` (Tier 2). Classification stays heuristic (ADR 0003).
+# v12: 2026-10-04 audit pass, redaction gaps (M1; every case reproduced against
+#      v11). (a) a quoted keyword value with spaces (`PASSWORD="a b c"`,
+#      `{"password": "a b c"}`) leaked every word after the first: a quote-aware
+#      rule now consumes to the matching closing quote. (b) the CLI-flag rule only
+#      matched a bare keyword, so `--client-secret V`, `--access-token V`,
+#      `--auth-token V`, `--passphrase V`, `--secret-access-key V` leaked when
+#      space-separated: the flag name may now carry a hyphenated prefix and ends in
+#      the keyword (`--token-url`, `--password-stdin` and `--no-password` are still
+#      not secrets). (c) new command-scoped rules for `curl -u user:pass`,
+#      `sshpass -p`, `docker login -p` and `openssl -pass pass:`. (d) a URL
+#      password containing `@` leaked its tail; the credential run now extends to
+#      the last `@` before the path. Pure additions or widenings of redaction;
+#      tier classification is unchanged. (e) SECRET_PROMPT_PATTERN lets the session
+#      layer withhold input typed at a password prompt from the audit record.
+PATTERNS_VERSION = "12"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -173,6 +207,24 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Bearer <token>
     (
         re.compile(r"(?i)\b(?P<prefix>bearer\s+)[A-Za-z0-9._\-]+"),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # Quoted keyword value (v12): `PASSWORD="two words"`, `{"password": "a b c"}`,
+    # `PGPASSWORD='a b'`. The generic rule below stops at whitespace, so a
+    # multi-word quoted secret leaked every word after the first. This rule runs
+    # first and consumes up to the matching closing quote (escape-aware; the
+    # closing quote is preserved). The body is deliberately NOT length-bounded: a
+    # bound would collapse an over-long value to the short placeholder and shift
+    # the unconsumed tail into the kept prefix of a truncated audit record (the
+    # hazard the redaction module's P1 note describes). Its two alternatives are
+    # disjoint, so it is linear, and an unterminated or window-truncated value
+    # collapses to end-of-line instead of leaking its tail.
+    (
+        re.compile(
+            r"(?i)(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd|credential)"
+            r"[\"']?\s*[:=]\s*(?P<q>[\"']))"
+            r"(?:\\.|(?!(?P=q))[^\\\r\n])*"
+        ),
         r"\g<prefix>[REDACTED]",
     ),
     # token=... / api[_-]?key=... / password: ...  (also the JSON-quoted-key
@@ -252,7 +304,10 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             r"""(?ix)
             (?P<prefix>
                 (?<![A-Za-z])
-                --?(?:password|passwd|pwd|secret|token|api[_-]?key|credential)
+                --?(?!(?:no|ask|prompt|skip|use|with|show|hide)[-_])
+                (?:[A-Za-z0-9]+[-_])*
+                (?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|credentials?
+                  |secret[_-]?key|secret[_-]?access[_-]?key)
                 [=\ \t]+
             )
             (?:
@@ -303,6 +358,49 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             )
             """,
         ),
+        r"\g<prefix>[REDACTED]",
+    ),
+)
+
+
+# Command-scoped credential flags (v12). Each is anchored on the command that
+# gives the flag its meaning, with a bounded gap, because the flags are
+# overloaded (`-u` is a uid in `docker exec`, `-p` a port in `ssh`/`nmap`) and an
+# unscoped rule would over-scrub. They keep the non-secret prefix and collapse
+# only the secret. Bounded gaps keep every rule linear on adversarial input.
+COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # curl / wget / httpie: `-u user:pass`, `--user user:pass`, `--proxy-user ...`.
+    # Only the password half is collapsed; the user name is kept.
+    (
+        re.compile(
+            r"(?i)(?P<prefix>(?<![\w-])(?:curl|wget|xh|httpie)\b[^|;&\n]{0,512}?"
+            r"(?<![A-Za-z0-9-])(?:-u|--user|--proxy-user)(?:=|\s+)[\"']?[^\s:\"']+:)"
+            r"[^\s\"']+"
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # sshpass: `sshpass -p SECRET ...` (also quoted, or glued as `-pSECRET`).
+    (
+        re.compile(
+            r"(?i)(?P<prefix>\bsshpass\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-p[=\s]*)"
+            r"(?:'[^']*'|\"[^\"]*\"|\S+)"
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # docker / podman / nerdctl / buildah / skopeo login: `-p SECRET`
+    # (`--password` is already covered by the generic flag rule).
+    (
+        re.compile(
+            r"(?i)(?P<prefix>\b(?:docker|podman|nerdctl|buildah|skopeo)\b[^|;&\n]{0,256}?"
+            r"\blogin\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-p[=\s]*)"
+            r"(?:'[^']*'|\"[^\"]*\"|\S+)"
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    # openssl: `-pass pass:SECRET`, `-passin pass:...`, `-passout pass:...`
+    # (`env:` / `file:` / `stdin` forms carry no secret and are left alone).
+    (
+        re.compile(r"(?i)(?P<prefix>(?<![A-Za-z0-9])-pass(?:in|out)?\s+pass:)\S+"),
         r"\g<prefix>[REDACTED]",
     ),
 )
@@ -391,9 +489,25 @@ REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+# --- Redaction: interactive secret prompts (v12) ---
+
+# The last line of a session's output looks like a prompt for a secret
+# (`[sudo] password for bob:`, `Enter passphrase for key '...':`, `Password:`,
+# `Verification code:`). The next input typed into that session is a secret with no
+# keyword of its own, so key/value redaction cannot see it; the session layer uses
+# this to withhold it from the audit record (see `SessionRegistry.awaiting_secret`).
+SECRET_PROMPT_PATTERN = re.compile(
+    r"(?i)(?:pass(?:word|phrase|code)|\bpin\b|secret|token|api[ _-]?key"
+    r"|verification code|one-time|otp)[^\r\n]{0,80}[:?]\s*$"
+)
+
+
 # --- Redaction: URL-embedded credentials (structure-preserving) ---
 
-URL_CREDS_PATTERN = re.compile(r"://[^/\s:@]+:[^/\s:@]+@")
+# The password may itself contain `@` (unencoded, but common): consume up to the
+# LAST `@` before the path, so `https://u:p@ss@host/x` leaves nothing of `p@ss`.
+# The run stops at `/` and whitespace, so a later `@` in a path or query is untouched.
+URL_CREDS_PATTERN = re.compile(r"://[^/\s:@]+:[^\s/]+@")
 
 
 # --- Redaction: MySQL-family compact -p<value> (gated by family CLI) ---
@@ -404,9 +518,25 @@ MYSQL_COMPACT_PASSWORD_PATTERN = re.compile(r"(?<![A-Za-z0-9-])(-p)[^\s=-]\S*")
 
 # --- Policy: tier classification heuristics ---
 
-# Substrings that strongly imply an irreversible / high-blast action.
+# Command position (v12): where a shell would start running a program. A word that
+# only *names* a command (`man reboot`, `git log --grep=reboot`, `echo 'reboot
+# required'`, `journalctl -u shutdown.target`) is not in this position and must not
+# classify as running it. Matches at the start of a line, after a separator or
+# subshell opener, after a privilege / wrapper command with its flags and VAR=val
+# words, or at the start of a `sh -c '...'` string; an absolute path to the binary
+# is allowed. The gaps are bounded or character-class limited, so it stays linear.
+_CMD = (
+    r"(?:(?:^|[;&|(`\n]|\$\()\s*(?:\w+=\S*\s+){0,6}"
+    r"|\b(?:sudo|doas|exec|xargs|nohup|time|command|env)\s+(?:-\S+\s+|\w+=\S*\s+){0,6}"
+    r"|\b(?:sh|bash|zsh|dash|ksh)\s+-\w*c\s+[\"']"
+    r")\s*(?:/[\w./-]*/)?"
+)
+
+# Substrings that strongly imply an irreversible / high-blast action. Two groups:
+# distinctive tokens matched anywhere, and command names matched only in command
+# position (`_CMD`) because the same word is common as an argument or in text.
 TIER3_PATTERN = re.compile(
-    r"(?ix)(?<![\w])("
+    r"(?imx)(?:(?<![\w])("
     r"rm\s+-[rf]|rm\s+-[a-z]*f|"
     # Long-option `rm` (RED-7): `rm --recursive`, `rm --force`,
     # `rm --no-preserve-root`, and mixed forms (`rm -r --force`, `rm file
@@ -418,14 +548,31 @@ TIER3_PATTERN = re.compile(
     # be O(n^2) on `rm rm rm …` (classify retries every `rm ` position) — a
     # ReDoS on the synchronous admission path.
     r"rm\s+(?:\S+\s+){0,16}?--(?:recursive|force|no-preserve-root)\b|"
-    r"shred|mkfs|fdisk|sgdisk|wipefs|"
-    r"dd\s+[^|]*of=/dev/|>\s*/dev/[sh]d|"
-    r"shutdown|reboot|halt|poweroff|init\s+0|init\s+6|"
+    # Disk / filesystem destruction. The partitioners are destructive except when
+    # listing (`fdisk -l`, `sgdisk -p`, `parted ... print`), which v11 over-classified.
+    r"shred|mkfs|wipefs|blkdiscard|"
+    r"[sc]?fdisk\b(?!\s+(?:-l|--list|-s)\b)|"
+    r"sgdisk\b(?!\s+(?:-p|--print|-i|--info)\b)|"
+    r"parted\b(?!\s+(?:-l|--list)\b)(?![^|;&\n]{0,64}\b(?:print|unit)\b)|"
+    r"dd\s+[^|]*of=/dev/|"
+    r">>?\s*/dev/(?:[sh]d|nvme|vd|xvd|mmcblk)|"
+    r"tee\s+(?:-\w+\s+)*/dev/(?:[sh]d|nvme|vd|xvd|mmcblk)|"
+    r"zpool\s+(?:destroy|labelclear)|zfs\s+destroy|lvremove|vgremove|pvremove|"
+    r"mdadm\s+[^|;&\n]{0,64}--(?:stop|zero-superblock)|"
+    r"cryptsetup\s+(?:luks)?(?:format|erase)|nvme\s+format|"
+    r"hdparm\s+[^|;&\n]{0,64}--security-erase|"
+    # Recursive delete by another name, and IaC teardown. Bounded gaps (linear).
+    r"find\b[^|;&\n]{0,256}?\s-delete\b|find\b[^|;&\n]{0,256}?-exec\s+rm\b|"
+    r"(?:terraform|tofu|pulumi)\s+destroy|"
+    # Power / run level via systemctl, and a sysrq write.
+    r"systemctl\s+(?:reboot|poweroff|halt|kexec)\b|>\s*/proc/sysrq-trigger|"
     r"drop\s+database|drop\s+table|truncate\s+table|"
-    r"git\s+push\s+.*--force|git\s+reset\s+--hard|"
-    r"userdel|deluser|gpasswd|passwd\s+|"
-    r"iptables\s+-F|nft\s+flush|ip\s+link\s+.*down|"
-    r":\s*\(\s*\)\s*\{|/dev/sd[a-z]\b|"
+    r"git\s+push\s+(?:\S+\s+){0,8}?(?:--force\b|-f\b|\+\S)|git\s+reset\s+--hard|"
+    r"userdel|deluser|gpasswd|"
+    r"iptables\s+-F|nft\s+flush|"
+    # `ip link ... down` only as a state change: `ip link show | grep down` is a read.
+    r"ip\s+link\s+set\s+\S+(?:\s+\S+){0,4}?\s+down\b|ip\s+link\s+del(?:ete)?\b|ifdown\b|"
+    r":\s*\(\s*\)\s*\{|"
     # --- Windows / PowerShell 7 (ADR 0011, WIN-1) ---
     # Destructive pwsh cmdlets are distinctive CapCase-hyphenated tokens (low
     # false-positive risk). `Remove-Item` is Tier 3 only WITH a -Recurse/-Force
@@ -444,16 +591,28 @@ TIER3_PATTERN = re.compile(
     r"(?:del|erase|rd|rmdir)\b(?:\s+\S+){0,8}?\s+/[sq]\b|"
     r"format(?:\s+/\S+){0,4}\s+[a-z]:|diskpart|vssadmin\s+delete\s+shadows|"
     r"bcdedit|cipher\s+/w|(?:reg|sc)(?:\.exe)?\s+delete|wevtutil\s+cl"
+    r"))"
+    # Command-position group (v12): the same words as arguments or text no longer match.
+    r"|" + _CMD + r"(?:"
+    r"(?:reboot|shutdown|halt|poweroff)(?![\w.-])|"
+    r"(?:init|telinit)\s+[06]\b|"
+    r"passwd\s+\S"
     r")"
 )
 
 # Substrings that imply a stateful, visible change.
 TIER2_PATTERN = re.compile(
-    r"(?ix)(?<![\w])("
+    r"(?imx)(?:(?<![\w])("
     r"systemctl\s+(stop|restart|disable|mask|kill)|service\s+\S+\s+(stop|restart)|"
     r"apt(-get)?\s+(install|remove|purge|upgrade|dist-upgrade)|"
     r"yum\s+(install|remove)|dnf\s+(install|remove)|pip\s+install|npm\s+(install|i)\b|"
     r"docker\s+(run|rm|stop|kill|compose|build)|kubectl\s+(apply|delete|scale|rollout)|"
+    r"(?:docker|podman)\s+(?:system|volume|image|container|network)\s+(?:prune|rm)\b|"
+    r"(?:terraform|tofu)\s+apply|pulumi\s+up|git\s+clean\s+-\w*f|setenforce\b|"
+    # Remote content piped into an interpreter: unknowable, stateful at best.
+    r"(?:curl|wget)\b[^|\n]{0,512}\|\s*(?:sudo\s+(?:-\S+\s+)*)?"
+    r"(?:(?:ba|z|da|k)?sh|python[\d.]*|perl|ruby|node)\b|"
+    r"(?:ba|z)?sh\s+<\(\s*(?:curl|wget)\b|"
     r"chown|chmod\s+-R|chmod\s+[0-7]{3,4}\s+/|"
     r"crontab|ln\s+-s|mv\s+/|cp\s+-[a-z]*\s+/|sed\s+-i|tee\s+/etc/|"
     r"git\s+(push|commit|merge|rebase)|"
@@ -473,7 +632,8 @@ TIER2_PATTERN = re.compile(
     r"(?:reg|sc)(?:\.exe)?\s+(?:add|config)|new-localuser|"
     r"register-scheduledtask|unregister-scheduledtask|schtasks\s+/create|"
     r"set-executionpolicy"
-    r")"
+    r"))"
+    r"|" + _CMD + r"(?:kill\s+-(?:9|KILL|SIGKILL)\b|pkill\b|killall\b|truncate\s)"
 )
 
 # Privilege escalation wrappers should not be treated as low-risk commands.
