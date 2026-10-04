@@ -33,18 +33,65 @@ def _known_hosts_path() -> str:
     return str(Path("~/.ssh/known_hosts").expanduser())
 
 
-def _conn_key(host: str, user: str | None, port: int | None) -> str:
-    return f"{user or ''}@{host}:{port or 22}"
+def _conn_key(
+    host: str,
+    user: str | None,
+    port: int | None,
+    mode: str = "",
+    key_path: str = "",
+    jump: str = "",
+) -> str:
+    """Cache identity of a connection.
+
+    Everything that decides *who we are talking to* or *who we are*
+    must be part of the key, otherwise a later call asking for stricter
+    verification, another identity key or another jump host silently reuses a
+    connection that was established under weaker or different terms. The
+    connect timeout is deliberately excluded: it does not change the peer.
+    """
+    return f"{user or ''}@{host}:{port or 22}|{mode}|{key_path}|{jump}"
 
 
-def _append_known_host(hostname: str, algo: str, b64: str) -> None:
+def _known_host_pattern(hostname: str, port: int | None) -> str:
+    """OpenSSH known_hosts host field: ``host`` on port 22, else ``[host]:port``."""
+    return hostname if not port or port == 22 else f"[{hostname}]:{port}"
+
+
+def _host_is_known(path: str, hostname: str, port: int | None) -> bool:
+    """True if ``path`` already holds a key (or CA) entry for ``hostname:port``.
+
+    Fails closed: a known_hosts file that exists but cannot be read or parsed is
+    reported as "known", so the caller verifies strictly against it and the
+    connection is refused instead of silently trusting a new key.
+    """
+    kh = Path(path)
+    if not kh.is_file():
+        return False
+    try:
+        matched = asyncssh.read_known_hosts(str(kh)).match(hostname, "", port or 22)
+        if matched[0] or matched[1]:
+            return True
+        # asyncssh silently skips an entry whose key field is corrupt, which
+        # would make a damaged entry for this very host look "unknown". Also
+        # treat a textual host-field match as known so the strict path fails.
+        pattern = _known_host_pattern(hostname, port)
+        for line in kh.read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if fields and not fields[0].startswith("#") and pattern in fields[0].split(","):
+                return True
+    except Exception:  # noqa: BLE001 - unreadable file: fail closed
+        return True
+    return False
+
+
+def _append_known_host(hostname: str, algo: str, b64: str, port: int | None = None) -> None:
     """Synchronous known_hosts append (run off the event loop)."""
     kh = Path(_known_hosts_path())
     kh.parent.mkdir(parents=True, exist_ok=True)
     existing = kh.read_text(encoding="utf-8") if kh.is_file() else ""
     if b64 not in existing:
         with kh.open("a", encoding="utf-8") as fh:
-            fh.write(f"{hostname} {algo} {b64}\n")
+            fh.write(f"{_known_host_pattern(hostname, port)} {algo} {b64}\n")
 
 
 @dataclass
@@ -238,17 +285,21 @@ class SshPool:
         finally:
             await self._unpin(entry)
 
-    def _known_hosts_arg(self, mode: str) -> object:
+    def _known_hosts_arg(self, mode: str, known: bool = False) -> object:
+        """asyncssh ``known_hosts`` argument for ``mode``.
+
+        ``accept-new`` is trust-on-first-use: a host with no entry connects
+        unverified and is then recorded, but a host that already has an entry
+        (``known=True``) is verified strictly, so a changed key is refused.
+        """
         if mode not in _KNOWN_HOSTS_MODES:
             allowed = ", ".join(repr(v) for v in sorted(_KNOWN_HOSTS_MODES))
             raise ValueError(f"known_hosts must be one of {allowed}")
-        if mode == "strict":
+        if mode == "strict" or (mode == "accept-new" and known):
             return _known_hosts_path()
-        # "ignore" and "accept-new" both connect without up-front verification;
-        # "accept-new" additionally persists the key for future strict use.
         return None
 
-    async def _persist_host_key(self, conn: Any, hostname: str) -> None:
+    async def _persist_host_key(self, conn: Any, hostname: str, port: int | None = None) -> None:
         try:
             key = conn.get_server_host_key()
             blob = key.export_public_key("openssh")
@@ -256,7 +307,7 @@ class SshPool:
             parts = text.split()
             if len(parts) < 2:
                 return
-            await asyncio.to_thread(_append_known_host, hostname, parts[0], parts[1])
+            await asyncio.to_thread(_append_known_host, hostname, parts[0], parts[1], port)
         except Exception:  # noqa: BLE001 - host-key persistence is best-effort
             return
 
@@ -277,7 +328,7 @@ class SshPool:
         eff_key = key_path or spec.identity_file or ""
         eff_jump = jump or spec.jump or ""
         mode = (known_hosts or spec.known_hosts or self.settings.ssh_known_hosts).lower()
-        key = _conn_key(spec.hostname, eff_user or None, eff_port or None)
+        key = _conn_key(spec.hostname, eff_user or None, eff_port or None, mode, eff_key, eff_jump)
 
         await self._sweep_conns()
         # Cache lookup + single-flight claim happen together under the lock.
@@ -305,8 +356,15 @@ class SshPool:
             # would cancel the shared future.
             return await asyncio.shield(other_future)
 
+        # accept-new verifies hosts it has seen before; only a first contact is
+        # accepted unverified (and recorded below).
+        known = (
+            await asyncio.to_thread(_host_is_known, _known_hosts_path(), spec.hostname, eff_port)
+            if mode == "accept-new"
+            else False
+        )
         opts: dict[str, Any] = {
-            "known_hosts": self._known_hosts_arg(mode),
+            "known_hosts": self._known_hosts_arg(mode, known),
             "connect_timeout": connect_timeout or self.settings.ssh_connect_timeout,
         }
         if self.settings.ssh_keepalive:
@@ -325,8 +383,8 @@ class SshPool:
 
         try:
             conn = await asyncssh.connect(spec.hostname, **opts)
-            if mode == "accept-new":
-                await self._persist_host_key(conn, spec.hostname)
+            if mode == "accept-new" and not known:
+                await self._persist_host_key(conn, spec.hostname, eff_port or None)
         except BaseException as exc:
             # Including CancelledError: clear the in-flight slot so a
             # subsequent caller can retry, and propagate to any waiter.
