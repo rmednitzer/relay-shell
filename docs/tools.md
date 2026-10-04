@@ -128,7 +128,10 @@ Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 
 ### `ssh_check`
 Probe connectivity. `hosts` is a comma/space list, or empty for the whole
-inventory. Returns `host: ok | UNREACHABLE` per host. Tier 0.
+inventory. Returns `host: ok | UNREACHABLE` per host. Tier 0 for the inventory
+(an alias or the `hostname` of an entry); Tier 1 when any requested host is not in
+the inventory, because that dials a caller-chosen address with the relay's keys, so
+`readonly` mode refuses it (as it does `ssh_keyscan`).
 
 Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 

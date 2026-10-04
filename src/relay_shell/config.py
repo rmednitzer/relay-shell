@@ -6,6 +6,7 @@ All settings are read from ``RELAY_SHELL_*`` environment variables (and an optio
 
 from __future__ import annotations
 
+import ipaddress
 from functools import lru_cache
 
 from pydantic import Field, field_validator, model_validator
@@ -17,6 +18,18 @@ _TRANSPORTS = {"stdio", "http"}
 _POLICY_MODES = {"open", "guarded", "readonly"}
 _KNOWN_HOSTS = {"strict", "accept-new", "ignore"}
 _AUDIT_FORMATS = {"jsonl", "cef", "leef"}
+
+
+def _is_loopback(host: str) -> bool:
+    """True for ``localhost`` and loopback IP literals. Any other name is not
+    assumed to be loopback: a resolver can point it anywhere."""
+    h = host.strip().strip("[]").lower()
+    if h == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
 
 
 class Settings(BaseSettings):
@@ -34,6 +47,11 @@ class Settings(BaseSettings):
     transport: str = "stdio"
     http_host: str = "127.0.0.1"
     http_port: int = Field(default=8080, ge=1, le=65535)
+    # Serving HTTP on anything but loopback with no authentication hands shell and SSH
+    # access to every host that can reach the port, and /metrics is outside OAuth by
+    # design. That combination is refused at startup unless the operator says it is
+    # intended (for example an authenticating proxy is the only way to the port).
+    allow_unauth_network: bool = False
 
     # Limits. Every bound carries an explicit `le=` upper cap (CFG-1): without
     # one, an operator who env-sets an absurd value (e.g. a 1 TB output cap)
@@ -42,6 +60,14 @@ class Settings(BaseSettings):
     # reject only nonsense, never a legitimate large deployment.
     max_output: int = Field(default=65536, ge=1024, le=16_777_216)
     max_output_hard: int = Field(default=1_048_576, ge=4096, le=134_217_728)
+    # Ceiling on the text a single call may put in front of the policy layer (the
+    # command, stdin, script body and env overlay together), in characters. The tier
+    # classifier and the deny regex run synchronously on the event loop at about
+    # 0.5 s per MiB, so an unbounded input would stall every other session; a call
+    # over the ceiling is refused (audited as denied) rather than scanned partially,
+    # which would let padding hide a command. Raise it for deployments that really
+    # pipe multi-MiB payloads through stdin or a script.
+    max_input: int = Field(default=2_097_152, ge=1024, le=134_217_728)
     default_timeout: int = Field(default=60, ge=1, le=86_400)
     max_timeout: int = Field(default=900, ge=1, le=86_400)
     max_sessions: int = Field(default=64, ge=1, le=1024)
@@ -151,6 +177,22 @@ class Settings(BaseSettings):
         if v not in _AUDIT_FORMATS:
             raise ValueError(f"audit_format must be one of {sorted(_AUDIT_FORMATS)}")
         return v
+
+    @model_validator(mode="after")
+    def _v_http_exposure(self) -> Settings:
+        if (
+            self.transport == "http"
+            and not self.auth_enabled
+            and not self.allow_unauth_network
+            and not _is_loopback(self.http_host)
+        ):
+            raise ValueError(
+                f"refusing to serve HTTP on {self.http_host!r} without authentication: "
+                "set RELAY_SHELL_AUTH_ENABLED=true, bind a loopback address, or set "
+                "RELAY_SHELL_ALLOW_UNAUTH_NETWORK=true if an authenticating proxy is the "
+                "only way to reach the port"
+            )
+        return self
 
     @model_validator(mode="after")
     def _v_chain_requires_jsonl(self) -> Settings:

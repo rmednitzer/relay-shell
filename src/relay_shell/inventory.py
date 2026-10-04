@@ -179,5 +179,9 @@ class Inventory:
             return HostSpec(name=alias, hostname=host, user=user or None)
         return HostSpec(name=alias, hostname=alias)
 
+    def knows(self, target: str) -> bool:
+        """True if ``target`` is an inventory alias or the hostname of an entry."""
+        return target in self._hosts or any(h.hostname == target for h in self._hosts.values())
+
     def hosts(self) -> list[HostSpec]:
         return sorted(self._hosts.values(), key=lambda h: h.name)

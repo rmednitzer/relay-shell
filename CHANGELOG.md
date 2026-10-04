@@ -10,6 +10,25 @@ All notable changes to this project are documented here. The format follows
 
 - Bind opaque OAuth access and refresh grants to the configured resource, validate bearer audiences, and reject foreign or duplicate token-endpoint resource parameters. Existing unbound grants require an explicit offline migration or re-authorization.
 
+- **Unauthenticated HTTP on a non-loopback address is refused at startup** (audit
+  2026-10-04, M5). `RELAY_SHELL_TRANSPORT=http` with `RELAY_SHELL_HTTP_HOST=0.0.0.0` (or
+  any host that is not `localhost` / a loopback address) and no OAuth handed shell and
+  SSH access to every host that could reach the port, and `/metrics` is outside OAuth
+  by design. Startup now fails with a clear message unless
+  `RELAY_SHELL_AUTH_ENABLED=true` or the explicit `RELAY_SHELL_ALLOW_UNAUTH_NETWORK=true`
+  is set. **Upgrade:** a deployment that binds a network address behind an
+  authenticating proxy must now set `RELAY_SHELL_ALLOW_UNAUTH_NETWORK=true`.
+- **`ssh_check` is no longer a free probe of arbitrary hosts in `readonly` mode** (M7).
+  It stays Tier 0 for inventory hosts (and for the whole-inventory default) but is
+  Tier 1 when any requested host is not in the inventory, since that dials a
+  caller-chosen address with the relay's keys (the reach that already keeps
+  `ssh_keyscan` out of `readonly`). `open` and `guarded` behave as before.
+- **A single call can no longer stall the event loop with an enormous input** (M4). The
+  tier classifier and deny regex scan the command, stdin, script and env text
+  synchronously (about 0.5 s per MiB, 17 s at 32 MiB). A call over the new
+  `RELAY_SHELL_MAX_INPUT` (default 2 MiB) is refused before any scan and audited as
+  denied; it is not scanned partially, which would let padding hide a command.
+
 ### Added
 
 - **`RELAY_SHELL_MAX_CONNS`** (default 256) — a hard ceiling on the live SSH
@@ -22,6 +41,9 @@ All notable changes to this project are documented here. The format follows
   (a connection in active use — a session, forward, or in-flight run — is never
   evicted, so the cap is transiently exceeded rather than dropping a live
   connection). Surfaced in `server_info.config.max_conns`.
+
+- **`RELAY_SHELL_MAX_INPUT`** (default 2097152 characters) and
+  **`RELAY_SHELL_ALLOW_UNAUTH_NETWORK`** (default `false`); `server_info.limits.max_input`.
 
 ### Changed
 
