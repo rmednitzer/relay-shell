@@ -833,24 +833,35 @@ commitment.
   redaction stay heuristic (ADR 0003) — a positional secret with no keyword is
   not redactable.
 
-### 7.1a 2026-10-04 audit pass (open register)
+### 7.1a 2026-10-04 audit pass (register)
 
 Evidence and reproducers: the audit report of this pass (H = high, M = medium,
-L = low). Status moves to **Closed** with the PR that lands the fix.
+L = low). Every finding below was reproduced by running code before it was fixed;
+each fix landed with paired tests that fail against the old code.
 
-- **H1** cancelled / disconnected calls are not audited and the child keeps
-  running (`Relay.run`, `_drive`, `SshPool.run`). Open.
-- **H2** `accept-new` disabled host-key verification on every connect. **Closed**
-  (SSH host-trust PR: known hosts verified, changed key refused, canonical
-  `[host]:port` persistence, fail-closed on a corrupt entry).
-- **H3** SSH connection-cache key ignored `known_hosts` / `key_path` / `jump`.
-  **Closed** (same PR: all three are part of the key).
-- **H4** OAuth: no authentication step, first registrant wins, a corrupt
-  `clients.json` reopens registration. Open.
-- **H5** `session_send` input is audited verbatim (typed sudo passwords). Open.
-- **M1-M8**, **L1-L9**: redaction gaps, classifier FP/FN, split `session_send`,
-  admission cost, unauthenticated non-loopback HTTP, audit field completeness,
-  `ssh_check` tier, OAuth store hardening, and the low items. Open.
+| ID | Finding | Status |
+|----|---------|--------|
+| H1 | Cancelled / disconnected calls were not audited and the command kept running | **Closed** (#190): `action=cancelled` record, process group killed, remote terminated; opt-in `RELAY_SHELL_AUDIT_INTENT` write-ahead record covers a relay crash |
+| H2 | `accept-new` disabled host-key verification on every connect | **Closed** (#189): known hosts verified, a changed key refused, canonical `[host]:port` persistence, fail closed on a corrupt entry |
+| H3 | SSH connection-cache key ignored `known_hosts` / `key_path` / `jump` | **Closed** (#189) |
+| H4 | OAuth: no authentication step, first registrant won, corrupt `clients.json` reopened registration | **Closed** (#192): operator approval (`--auth-list` / `--auth-approve` / `--auth-reject`), fail closed on an unreadable store |
+| H5 | `session_send` input audited verbatim (typed sudo passwords) | **Closed** (#191): withheld at a secret prompt; `RELAY_SHELL_AUDIT_SESSION_INPUT=hash` |
+| M1 | Redaction missed quoted multi-word values, hyphenated secret flags, `curl -u`, `sshpass -p`, `docker login -p`, `openssl -pass`, URL passwords with `@` | **Closed** (#191, `PATTERNS_VERSION` 12). A URL password containing `/` is not distinguishable from a path and stays unredacted |
+| M2 | Tier classifier false positives (read-only commands at Tier 3) and false negatives | **Closed** (#194, version bump to 13 in #197) |
+| M3 | A command split across `session_send` calls bypassed classification | **Closed** (#194): the line being typed is classified |
+| M4 | Admission scans unbounded input synchronously | **Closed** (#195): `RELAY_SHELL_MAX_INPUT` |
+| M5 | Unauthenticated HTTP accepted on a non-loopback address | **Closed** (#195): refused unless `RELAY_SHELL_ALLOW_UNAUTH_NETWORK=true` |
+| M6 | Transfer / forward / spawn audit records omitted the connection identity | **Closed** (#191) |
+| M7 | `ssh_check` was Tier 0 for any host | **Closed** (#195): Tier 1 for hosts outside the inventory |
+| M8 | OAuth tokens stored raw, files unbounded, per-request read on the event loop | **Closed** (#193): hashed at rest, purged on write, read off the loop. No in-memory cache (it would need cross-process invalidation) |
+| L1, L2, L3, L5, L6, L7, L9 | Unretrieved future, lingering channel reported as timeout, raw traceback on a bad deny regex, audit docstring, UTF-8 split in `session_recv`, `.env` from the working directory, `ProxyJump none` | **Closed** (#196) |
+| L4 | Seccomp (opt-in): `preexec_fn` in a multithreaded process, `openat2` / `creat` not notified, `monitor.stop()` joins on the event loop | **Deferred**: cannot be verified without `CAP_SYS_ADMIN`; needs a privileged host and its own PR |
+| L8 | No transitive dependency lock with hashes; Renovate extends an external preset | **Deferred**: a CI and release-process decision, not a code fix |
+
+Residual by design: classification and redaction stay heuristic (ADR 0003); the
+OAuth CLI and the server share no lock (a lost update is fail-safe); a secret typed
+at a prompt the heuristic does not recognise is still recorded unless the `hash`
+mode is on.
 
 ### 7.2 Quality + automation
 
