@@ -4,10 +4,10 @@
 # pyproject.toml remains the library compatibility contract. These direct
 # pins do not constitute a complete transitive lockfile. Renovate proposes
 # updates under the shared release-age and required-check policy.
-mcp==2.2.0
+mcp==2.3.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
-asyncssh==2.24.0
+asyncssh==2.24.1
 uvicorn==0.54.0
 starlette==1.7.0
 anyio==4.15.1
@@ -17,5 +17,5 @@ cryptography==50.0.2
 # dev / CI
 pytest==9.1.1
 pytest-asyncio==1.4.0
-ruff==0.16.9
-mypy==2.3.1
+ruff==0.16.10
+mypy==2.4.0

@@ -150,7 +150,7 @@ Configuration is environment-driven; see [`.env.example`](.env.example) and
 | Host OS (other)   | Windows                                                    | Out of scope — no PTY contract, no systemd integration.                                |
 | Transports        | `stdio`, `streamable-http`                                 | Stdio is the default. HTTP binds loopback and requires a TLS edge (see `deployment.md`). |
 | SDK               | `mcp>=2,<3` (validated set: `2.0.0`)                        | Range-pinned since the v2 migration (ADR 0001); bumps trigger a fresh validation pass. |
-| SSH library       | `asyncssh>=2.23.0` (tested at 2.24.0)                      | Native async; no shell-out to system `ssh`.                                            |
+| SSH library       | `asyncssh>=2.23.0` (tested at 2.24.1)                      | Native async; no shell-out to system `ssh`.                                            |
 
 ## Security posture
 
