@@ -32,6 +32,7 @@ import contextlib
 import fcntl
 import os
 import pty
+import re
 import signal
 import struct
 import termios
@@ -39,13 +40,22 @@ import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from . import seccomp
+from . import patterns, seccomp
 from .errors import SessionError
 from .util import gen_id
 
 __all__ = ["LocalPtyTransport", "Session", "SessionRegistry", "Transport"]
 
 _READ_CHUNK = 65536
+_TAIL_BYTES = 512
+# CSI and OSC escape sequences, stripped before looking at the prompt text.
+_ANSI_RE = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+def _looks_like_secret_prompt(tail: bytes) -> bool:
+    text = _ANSI_RE.sub(b"", tail).decode("utf-8", "replace").rstrip(" \t")
+    last = re.split(r"[\r\n]", text)[-1]
+    return bool(patterns.SECRET_PROMPT_PATTERN.search(last))
 
 
 class Transport(Protocol):
@@ -156,6 +166,13 @@ class LocalPtyTransport:
     def resize(self, cols: int, rows: int) -> None:
         _set_winsize(self._fd, cols, rows)
 
+    def echo_off(self) -> bool:
+        """True while the terminal has ECHO cleared (a password is being read)."""
+        try:
+            return not termios.tcgetattr(self._fd)[3] & termios.ECHO
+        except (termios.error, OSError, ValueError):
+            return False
+
     def signal(self, sig: int) -> None:
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             os.killpg(os.getpgid(self._proc.pid), sig)
@@ -255,6 +272,10 @@ class Session:
     # precisely because it is waiting). Mutated only on the event-loop thread
     # with no `await` between the read and write, so it needs no lock.
     _waiters: int = 0
+    # The last few hundred bytes the session produced, kept (independently of the
+    # recv buffer, which `recv` drains) so the registry can tell whether the
+    # session is sitting at a secret prompt. Cleared when input is sent.
+    tail: bytearray = field(default_factory=bytearray)
 
 
 class SessionRegistry:
@@ -291,6 +312,9 @@ class SessionRegistry:
         def _sink(data: bytes) -> None:
             sess.produced += len(data)
             sess.buffer += data
+            sess.tail += data
+            if len(sess.tail) > _TAIL_BYTES:
+                del sess.tail[:-_TAIL_BYTES]
             overflow = len(sess.buffer) - self._cap
             if overflow > 0:
                 del sess.buffer[:overflow]
@@ -320,9 +344,30 @@ class SessionRegistry:
             raise SessionError(f"unknown session: {sid}")
         return sess
 
+    async def awaiting_secret(self, sid: str) -> bool:
+        """True if the session is at a prompt for a secret (never raises).
+
+        Two independent signals: the last output line reads like a password
+        prompt (works for local and SSH sessions), or the local PTY has echo
+        switched off (what ``sudo``/``ssh``/``passwd`` do while reading one).
+        Used so the audit trail can withhold the next input, which has no
+        keyword for pattern redaction to find.
+        """
+        async with self._lock:
+            sess = self._sessions.get(sid)
+        if sess is None:
+            return False
+        echo_off = getattr(sess.transport, "echo_off", None)
+        if callable(echo_off):
+            with contextlib.suppress(Exception):
+                if echo_off():
+                    return True
+        return _looks_like_secret_prompt(bytes(sess.tail))
+
     async def send(self, sid: str, data: bytes) -> None:
         sess = await self._get(sid)
         sess.last_used = time.monotonic()
+        sess.tail.clear()  # the prompt (if any) is being answered now
         await sess.transport.write(data)
 
     async def recv(self, sid: str, timeout: float, max_bytes: int) -> str:

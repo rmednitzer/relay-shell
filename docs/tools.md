@@ -21,7 +21,9 @@ Conventions:
 
 - `host` is an inventory / `ssh_config` alias or `user@host`.
 - `known_hosts` is `strict` | `accept-new` | `ignore` (default from
-  `RELAY_SHELL_SSH_KNOWN_HOSTS`).
+  `RELAY_SHELL_SSH_KNOWN_HOSTS`). `accept-new` is trust-on-first-use: an unknown
+  host is accepted and recorded, a host with an existing entry is verified and a
+  changed key is refused. `ignore` never verifies.
 - `jump` is an `ssh_config`-style `user@host[:port]` bastion (asyncssh
   `tunnel`); `ssh_config` `ProxyJump` is also honoured automatically.
 
@@ -176,7 +178,7 @@ A session id from `shell_spawn` or `ssh_spawn` works with all of these.
 
 | tool | params | notes |
 |------|--------|-------|
-| `session_send` | `session_id`, `data`, `enter=true` | `enter` appends `\n` |
+| `session_send` | `session_id`, `data`, `enter=true` | `enter` appends `\n`. The audit record omits `data` (keeping its length) when the session is at a secret prompt such as `sudo`'s; see `RELAY_SHELL_AUDIT_SESSION_INPUT` |
 | `session_recv` | `session_id`, `timeout=2.0`, `max_bytes=65536` | returns buffered/new output; waits up to `timeout`; returns `""` if nothing yet; reports `[session ... ended, exit=N]` when closed |
 | `session_resize` | `session_id`, `cols`, `rows` | resize the PTY |
 | `session_kill` | `session_id`, `signal_name="TERM"`, `close=true` | signal and (default) reap |
