@@ -40,7 +40,7 @@ from .config import Settings, get_settings
 from .errors import RelayError, fmt_exc
 from .inventory import Inventory
 from .metrics import ACTIVE_FORWARDS, ACTIVE_SESSIONS, AUDIT_DEGRADED, Metrics
-from .policy import Policy, Tier
+from .policy import Policy, Tier, classify
 from .redaction import redact_args
 from .sessions import LocalPtyTransport, Session, SessionRegistry, Transport
 from .shelltools import build_env, run_command, run_script, spawn_argv
@@ -448,11 +448,32 @@ class Relay:
         policy_text: str,
         max_output: int,
         work: Work,
+        min_tier: Tier = Tier.READ_ONLY,
     ) -> str:
         request_id, client_id = _ctx_ids(ctx)
-        decision = self.policy.check(tool, policy_text)
         red = redact_args(audit_args)
         mode = self.settings.policy_mode
+        if len(policy_text) > self.settings.max_input:
+            # Refuse before any regex runs over it: the scan is synchronous (about
+            # 0.5 s per MiB) and a partial scan would let padding hide a command.
+            tier = classify(tool, "")
+            body = (
+                f"[DENIED tier {int(tier)} ({tier.name}): input is {len(policy_text)} "
+                f"characters, over RELAY_SHELL_MAX_INPUT ({self.settings.max_input})]"
+            )
+            self.audit.record(
+                tool=tool,
+                args=red,
+                output=body,
+                exit_code=None,
+                tier=int(tier),
+                request_id=request_id,
+                client_id=client_id,
+                denied=True,
+            )
+            self.metrics.inc_tool_call(tool=tool, tier=int(tier), mode=mode, outcome="denied")
+            return body
+        decision = self.policy.check(tool, policy_text, min_tier)
         if not decision.allowed:
             body = f"[DENIED tier {int(decision.tier)} ({decision.tier.name}): {decision.reason}]"
             self.audit.record(
@@ -1303,6 +1324,11 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             lines = await asyncio.gather(*(_probe(n) for n in names))
             return ("\n".join(lines), None)
 
+        # Probing the inventory is an observation; probing an address the operator
+        # never configured dials a caller-chosen host with the relay's keys, so that
+        # case is at least Tier 1 (refused in `readonly`).
+        requested = [h for h in hosts.replace(",", " ").split() if h]
+        outside_inventory = any(not app.inventory.knows(h) for h in requested)
         return await app.run(
             tool="ssh_check",
             ctx=ctx,
@@ -1310,6 +1336,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             policy_text=_policy_text_ssh_check(hosts),
             max_output=8192,
             work=_work,
+            min_tier=Tier.REVERSIBLE if outside_inventory else Tier.READ_ONLY,
         )
 
     @mcp.tool()
@@ -1597,6 +1624,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                     "max_sessions": cfg.max_sessions,
                     "max_forwards": cfg.max_forwards,
                     "max_conns": cfg.max_conns,
+                    "max_input": cfg.max_input,
                 },
                 "audit": {
                     "path": app.audit.path,

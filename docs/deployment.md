@@ -523,7 +523,19 @@ covered above:
   (concurrency caps — sessions, port forwards, and the SSH connection cache;
   `_MAX_CONNS` defaults to 256 and evicts the least-recently-used idle
   connection when full), `RELAY_SHELL_SESSION_IDLE_TIMEOUT` /
-  `_SESSION_BUFFER_BYTES` (PTY session reaping + per-session buffer).
+  `_SESSION_BUFFER_BYTES` (PTY session reaping + per-session buffer),
+  `RELAY_SHELL_MAX_INPUT` (default 2097152 characters: the command, stdin, script
+  body and env overlay of one call, together). The tier classifier and the deny
+  regex scan that text synchronously at about 0.5 s per MiB, so a call over the cap
+  is refused, audited as denied, rather than stalling every other session or being
+  scanned only in part (padding could then hide a command). Raise it only where
+  multi-MiB payloads are really piped through stdin or a script.
+- **Unauthenticated HTTP:** the server refuses to start with
+  `RELAY_SHELL_TRANSPORT=http` on a non-loopback `RELAY_SHELL_HTTP_HOST` (anything
+  other than `localhost` or a loopback address) unless `RELAY_SHELL_AUTH_ENABLED=true`
+  or `RELAY_SHELL_ALLOW_UNAUTH_NETWORK=true`. The override is for deployments where an
+  authenticating proxy is the only route to the port; `/metrics` is outside OAuth by
+  design, so it is exposed to whoever can reach the port.
 - **SSH connect tuning:** `RELAY_SHELL_SSH_CONNECT_TIMEOUT` / `_SSH_KEEPALIVE`
   (dial timeout + keepalive; `_SSH_IDLE_TIMEOUT` for the pool reaper is in §7).
 - **Audit sink:** `RELAY_SHELL_AUDIT_STDERR` (also mirror audit lines to stderr).
