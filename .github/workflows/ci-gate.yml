@@ -20,6 +20,9 @@ jobs:
         check (py3.13)
         check (py3.14)
         gitleaks (secret scan)
+        pip-audit (CVE scan)
+        dependency-review
+        Analyze (python) (python)
       # Empty by design. Add an exact check name here only when a skipped
       # result is an explicitly valid outcome for that protected dependency.
       ALLOWED_SKIPPED_CHECKS: ""
