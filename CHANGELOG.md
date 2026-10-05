@@ -166,6 +166,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- The HTTP liveness script now fails on curl transport errors, including connection
+  refusal and timeout. Its fallback previously turned curl's `000` into `000000`,
+  falsely reporting an unreachable listener as healthy. HTTP error responses still
+  count as live; regression tests distinguish liveness from application readiness.
+
 - **Low-severity audit items (2026-10-04, L1/L2/L3/L5/L6/L7/L9).**
   A failed SSH connect with no concurrent waiter no longer logs asyncio's
   "Future exception was never retrieved" traceback. `ssh_exec` no longer reports
