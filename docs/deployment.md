@@ -50,14 +50,18 @@ sudo useradd --system --create-home --home-dir /var/lib/relay-shell \
      --shell /usr/sbin/nologin relay-shell
 ```
 
-Grant only the privileges the workload genuinely needs. If `sudo` is required
-for the intended tasks, prefer **command-scoped** sudoers entries over
-`NOPASSWD: ALL`. A single-owner lab host may accept a broader grant; a
-multi-tenant or sensitive host must not. State the choice in an ADR.
+A full-root administrator deployment requires an explicitly provisioned,
+noninteractive sudo grant for arbitrary commands, normally
+`relay-shell ALL=(ALL:ALL) NOPASSWD: ALL`. Keep that declaration root-owned,
+mode 0440, and validate it with `visudo` and an effective sudo probe. The generic
+package installer does not silently grant new host privileges: deployment
+configuration owns the authorization, including grants on remote hosts.
 
-If your explicit goal is maximum model capability (full root/sudo behavior),
-run the service in **privileged posture** on an isolated admin host and treat
-that host as a high-trust control plane.
+Run the daemon under its dedicated identity and elevate individual commands.
+Treat an administrator relay and its authenticated clients as a host-control
+plane, not as an application sandbox. Command-scoped deployments remain possible
+but must not be described or validated as full-root administrators. Separate
+job-specific SSH keys and application identities may retain their own boundaries.
 
 ## 2. Install
 
@@ -89,13 +93,14 @@ image-bake step of your CI pipeline.
 ## 3. systemd
 
 `deploy/systemd/relay-shell.service` plus the `relay-shell.service.d/hardening.conf`
-drop-in. The hardening is intentionally **partial**: filesystem, capability,
-and syscall confinement (`ProtectSystem=strict`, `NoNewPrivileges`,
-`SystemCallFilter`) would break the very shell/SSH capability this service
-exists to provide (see `docs/adr/0002`). What is applied: resource caps
-(`MemoryMax`, `CPUQuota`, `TasksMax`), `PrivateTmp`, restart limits, and the
-non-execution-breaking `Protect*` directives. Encrypted credentials are
-delivered via `LoadCredentialEncrypted=`.
+drop-in. This is a resource envelope, not a containment boundary. Resource
+caps (`MemoryMax`, `CPUQuota`, `TasksMax`), restart limits and umask 0077 remain.
+The host capability set and filesystem view are preserved explicitly. In
+particular, `ProtectClock`, `ProtectKernelLogs` and `ProtectKernelModules` remove
+capabilities even from later sudo processes; `PrivateTmp` creates a separate
+mount namespace. They are disabled for the administrator execution contract.
+Authentication, auditing and tool admission policy remain unchanged. Optional
+systemd credentials are independent of these settings.
 
 ```bash
 sudo cp deploy/systemd/relay-shell.service /etc/systemd/system/
