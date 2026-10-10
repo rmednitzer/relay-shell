@@ -14,7 +14,7 @@ set -euo pipefail
 #
 # Recommended:
 #   RELAY_SHELL_EDGE_CLIENT_CIDRS  space-separated source allowlist for
-#                                  tool traffic and /token (defaults to
+#                                  tool traffic (defaults to
 #                                  loopback only, which blocks remote clients)
 #
 # Optional:

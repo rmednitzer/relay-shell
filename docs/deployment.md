@@ -168,8 +168,12 @@ environment variables and provides:
 - `reverse_proxy` to the loopback MCP port.
 
 Set the allowlist to the CIDRs of your MCP client only. The OAuth browser
-endpoints (`/authorize`, `/.well-known/*`) are reachable for the redirect
-flow; tool traffic and `/token` are CIDR-restricted.
+endpoints (`/authorize`, `/.well-known/*`, `/register`, `/token`, `/revoke`)
+are publicly reachable for the OAuth flow. MCP tool traffic is CIDR-restricted,
+including when upstream OAuth is disabled. The default loopback-only allowlist
+denies remote MCP clients with 403. Enabling OAuth does not bypass this gate;
+allowlist the client's source CIDRs. Do not use an all-address allowlist while
+upstream authentication is disabled.
 
 Defense in depth: a host firewall (only 80/443 inbound), the proxy CIDR
 matcher, OAuth 2.1, then the policy/audit layer.
