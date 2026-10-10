@@ -17,7 +17,7 @@
 #                                  (must have a DNS A/AAAA record pointing here)
 #   RELAY_SHELL_EDGE_ACME_EMAIL    Contact email for ACME registration
 #   RELAY_SHELL_EDGE_CLIENT_CIDRS  Space-separated allowlist for tool traffic
-#                                  and /token (defaults to loopback only)
+#                                  (defaults to loopback only)
 #   RELAY_SHELL_EDGE_UPSTREAM      Loopback upstream (default 127.0.0.1:8080)
 #   RELAY_SHELL_EDGE_ACME_CA       Optional ACME directory override
 #                                  (e.g. Let's Encrypt staging for dry runs)
@@ -31,10 +31,9 @@
 
 {$RELAY_SHELL_EDGE_DOMAIN} {
 	# EDGE-1: OAuth browser/redirect, discovery, dynamic client registration,
-	# token exchange, protected-resource metadata, and MCP transport are handled
-	# before the CIDR block so ChatGPT can reach the complete OAuth/MCP flow.
-	# Public network reachability is intentional; protocol validation, PKCE,
-	# grant checks, and bearer-token authorization still gate sensitive actions.
+	# token exchange, and protected-resource metadata are handled before the
+	# CIDR block so remote clients can reach the OAuth flow. MCP transport
+	# remains CIDR-restricted even when upstream OAuth is disabled.
 	handle /authorize {
 		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
 			header_up Host {upstream_hostport}
@@ -73,13 +72,7 @@
 			header_up Host {upstream_hostport}
 		}
 	}
-	handle /mcp {
-		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
-			header_up Host {upstream_hostport}
-		}
-	}
-
-	# Everything else is CIDR-restricted. Override
+	# MCP and all other operational paths are CIDR-restricted. Override
 	# RELAY_SHELL_EDGE_CLIENT_CIDRS for any extra operational paths you expose.
 	@blocked not remote_ip {$RELAY_SHELL_EDGE_CLIENT_CIDRS:127.0.0.1/8 ::1}
 	handle @blocked {
