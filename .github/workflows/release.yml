@@ -103,12 +103,24 @@ jobs:
             echo "ERROR: $TAG is a lightweight tag; release tags MUST be annotated and signed" >&2
             exit 1
           fi
-          # Configure the trusted release-signing key for SSH signature verification.
-          # deploy/release-signing.pub holds the authorized signer(s) in OpenSSH
-          # allowed_signers format (principal SP keytype SP base64-key).
-          git config gpg.ssh.allowedSignersFile "$(pwd)/deploy/release-signing.pub"
-          # Verify the tag signature against the trusted key set
-          if ! git tag -v "$TAG"; then
+          release_commit=$(git rev-list -n1 "${TAG}^{}")
+          test -n "$release_commit"
+          # A tag is not an authority for its own signer trust anchor.
+          # Fetch the protected default branch independently and require the
+          # tagged commit to have passed the main-branch merge gate.
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          if ! git merge-base --is-ancestor "$release_commit" refs/remotes/origin/main; then
+            echo "ERROR: tagged release commit is not reachable from protected main" >&2
+            exit 1
+          fi
+          # Load authorized signers from protected main, NOT from the tag's
+          # checkout (which could otherwise supply an attacker-owned key).
+          signers="$(mktemp)"
+          trap 'rm -f "$signers"' EXIT
+          git show refs/remotes/origin/main:deploy/release-signing.pub > "$signers"
+          test -s "$signers"
+          # Verify the tag signature against the protected-main trust anchor.
+          if ! git -c "gpg.ssh.allowedSignersFile=$signers" tag -v "$TAG"; then
             echo "ERROR: $TAG signature verification failed" >&2
             exit 1
           fi
