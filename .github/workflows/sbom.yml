@@ -34,6 +34,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7
@@ -57,6 +61,26 @@ jobs:
           else
             echo "name=$REF_NAME" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Verify signed release tag against protected main
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || exit 1
+          test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = tag
+          release_commit="$(git rev-list -n1 "refs/tags/$RELEASE_TAG^{}")"
+          test "$(git rev-parse HEAD)" = "$release_commit"
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git merge-base --is-ancestor "$release_commit" refs/remotes/origin/main || {
+            echo "ERROR: release tag points outside protected main" >&2
+            exit 1
+          }
+          signers="$(mktemp)"
+          trap 'rm -f "$signers"' EXIT
+          git show refs/remotes/origin/main:deploy/release-signing.pub > "$signers"
+          test -s "$signers"
+          git -c "gpg.ssh.allowedSignersFile=$signers" tag -v "$RELEASE_TAG"
 
       - name: Install runtime + SBOM tool into a clean venv
         run: |
@@ -133,7 +157,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Attach SBOM to release
+      - name: Publish immutable release with SBOM assets atomically
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ steps.tag.outputs.name }}
@@ -141,17 +165,17 @@ jobs:
         run: |
           set -euo pipefail
           TAG="$TAG_NAME"
-          # If the release does not exist yet (e.g. the tag was just
-          # pushed and no release workflow has run), create one with
-          # generated notes so the upload has a home.
-          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            gh release create "$TAG" \
-              --repo "$REPO" \
-              --title "$TAG" \
-              --generate-notes
+          # Published releases cannot accept late or replaced assets when
+          # immutability is enabled. Publish the SBOM assets in the initial
+          # creation request; attested workflow artifacts remain available
+          # even when this job is re-run for an existing release.
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "::notice::Release $TAG already exists; not mutating release assets"
+            exit 0
           fi
-          gh release upload "$TAG" \
-            --repo "$REPO" \
-            --clobber \
+          gh release create "$TAG" \
             "relay-shell-${TAG}.cdx.json" \
-            "relay-shell-${TAG}.cdx.xml"
+            "relay-shell-${TAG}.cdx.xml" \
+            --repo "$REPO" \
+            --title "$TAG" \
+            --generate-notes
