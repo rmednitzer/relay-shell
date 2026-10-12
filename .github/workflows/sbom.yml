@@ -177,5 +177,6 @@ jobs:
             "relay-shell-${TAG}.cdx.json" \
             "relay-shell-${TAG}.cdx.xml" \
             --repo "$REPO" \
+            --verify-tag \
             --title "$TAG" \
             --generate-notes
