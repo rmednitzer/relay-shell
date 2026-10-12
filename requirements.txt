@@ -5,7 +5,7 @@
 # pins do not constitute a complete transitive lockfile. Renovate proposes
 # updates under the shared release-age and required-check policy.
 mcp==2.3.0
-pydantic==2.13.5
+pydantic==2.14.0
 pydantic-settings==2.15.0
 asyncssh==2.24.1
 uvicorn==0.54.0
