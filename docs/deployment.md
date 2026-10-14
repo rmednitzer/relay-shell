@@ -580,7 +580,7 @@ for what happened; metrics are for dashboards only and reset on restart.
 | `relay_shell_audit_degraded`                 | gauge   | 1 if the audit sink is degraded, 0 otherwise. Should always be 0.   |
 
 `outcome` is one of `ok` (work returned), `denied` (policy refused),
-`error` (work raised), or `confirm_required` (a Tier-3 call returned a
+`error` (work raised), `cancelled` (the call was cancelled or the client disconnected), or `confirm_required` (a Tier-3 call returned a
 confirmation token instead of running — only emitted when the Tier-3
 confirmation broker is on, §8a). Combine `mode + tier + outcome` for the
 classic "denied tier-3 calls per minute" panel, or alert on a rising
@@ -624,7 +624,7 @@ Back them up together; the relay itself is stateless beyond these:
 
 | What                                                            | Where                                                                                         | Why it matters                                                                              |
 |-----------------------------------------------------------------|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
-| OAuth state                                                     | `${RELAY_SHELL_AUTH_STATE_DIR}/{clients.json, codes.json, tokens.json}` (default `/var/lib/relay-shell/oauth/`) | Losing it logs every client out and re-runs single-client lockdown from scratch (a new client can register, the old one cannot). |
+| OAuth state                                                     | `${RELAY_SHELL_AUTH_STATE_DIR}/{clients.json, approvals.json, codes.json, tokens.json}` (default `/var/lib/relay-shell/oauth/`) | Losing it logs every client out and re-runs single-client lockdown from scratch (a new client can register, the old one cannot). |
 | systemd EnvironmentFile                                         | `/etc/relay-shell/relay-shell.env` (plus `/etc/relay-shell/relay-shell-edge.env` for the edge) | Source of truth for every `RELAY_SHELL_*` knob; recreating it from scratch is error-prone.  |
 | Audit log                                                       | `${RELAY_SHELL_AUDIT_PATH}` (default `/var/log/relay-shell/audit.jsonl`) plus `audit.jsonl.{1..N}.gz` rotations | The on-host copy is the local fallback when the off-host shipper has fallen behind.        |
 

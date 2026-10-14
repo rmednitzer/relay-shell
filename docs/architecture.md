@@ -33,7 +33,7 @@ MCP client (Claude / Inspector / SDK)
 Every tool body is identical in shape (`Relay.run`):
 
 1. **Identify** - best-effort `request_id` / `client_id` from the MCP context.
-2. **Classify + admit** - `policy.check(tool, text)`. The deny list is applied
+2. **Classify + admit** - `policy.check(tool, text, min_tier)`. The deny list is applied
    first in every mode. `readonly` permits only Tier 0; `guarded` refuses
    Tier 2+ unless an allow pattern matches; `open` permits all but still
    classifies. A refusal is audited and returned as a `[DENIED ...]` string.
@@ -90,10 +90,11 @@ syscall and is default off, so the lifecycle above is otherwise unchanged.
 | `inventory` | `~/.ssh/config` + JSON inventory parsing and resolution. |
 | `sshpool` | asyncssh connection cache, exec, SFTP, forwarding, PTY adapter. |
 | `auth/oauth` | Optional file-backed OAuth 2.1 provider (HTTP only). |
+| `auth/resource` | Exact RFC 8707 resource binding and bounded validation of the OAuth token `resource` parameter (HTTP only). |
 | `auth/admin` | Operator commands over the OAuth state: list, approve, reject clients (`--auth-*`). |
 | `verifier` | Drift-detection comparator powering `relay-shell --verify-deploy`. |
 | `server` | `MCPServer` assembly, the audited runner, all tool, resource + prompt definitions. |
-| `__main__` | Entrypoint; stderr-only logging; transport selection; `--check-config` / `--verify-deploy` CLI flags. |
+| `__main__` | Entrypoint; stderr-only logging; transport selection; `--check-config`, `--verify-deploy`, `--verify-audit` (`--audit-path`, `--segment`, `--json`) and `--auth-list` / `--auth-approve` / `--auth-reject` CLI flags. |
 
 The canonical list of registered tools lives in
 `tests/test_server.py::_EXPECTED`; the MCP resources are registered in

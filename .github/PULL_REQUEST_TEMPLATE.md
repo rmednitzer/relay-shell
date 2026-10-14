@@ -16,7 +16,7 @@ Reference: docs/runbook.md
 ## Summary
 
 <!-- One or two sentences explaining what changes and why. Link the
-backlog item if applicable: "Closes B-007 from docs/runbook.md". -->
+backlog item if applicable: "Closes F-6 from docs/runbook.md". -->
 
 ## Type of change
 

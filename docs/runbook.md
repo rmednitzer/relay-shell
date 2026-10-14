@@ -1202,8 +1202,8 @@ by the same checklist.
     writable + append-only-capable filesystem, DNS A/AAAA resolves
     for the edge domain, ports 80/443 reachable, SSH service account
     keypair, off-host audit shipper ready).
-  - §11 "Backup and restore" (`clients.json` / `codes.json` /
-    `tokens.json` under the OAuth state dir, the
+  - §11 "Backup and restore" (`clients.json` / `approvals.json` /
+    `codes.json` / `tokens.json` under the OAuth state dir, the
     `/etc/relay-shell/` EnvironmentFile, the audit log + rotations).
   - Link to `docs/runbook.md` §4.6 for the manual HTTP smoke in §9.
 - Remove: nothing.

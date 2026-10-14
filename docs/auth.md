@@ -196,7 +196,7 @@ metadata updates) applies.
 | Access TTL | `RELAY_SHELL_AUTH_ACCESS_TTL` | `3600` (1 h) | Bearer access-token lifetime. |
 | Refresh TTL | `RELAY_SHELL_AUTH_REFRESH_TTL` | `2592000` (30 d) | Refresh-token lifetime (resets on each rotation). |
 | Code TTL | `RELAY_SHELL_AUTH_CODE_TTL` | `300` (5 min) | Authorization-code lifetime (single-use). |
-| State dir | `RELAY_SHELL_AUTH_STATE_DIR` | `/var/lib/relay-shell/oauth` | `clients.json` / `codes.json` / `tokens.json` (`0o700`/`0o600`). |
+| State dir | `RELAY_SHELL_AUTH_STATE_DIR` | `/var/lib/relay-shell/oauth` | `clients.json` / `approvals.json` / `codes.json` / `tokens.json` (`0o700`/`0o600`). |
 | Issuer | `RELAY_SHELL_AUTH_ISSUER` | `https://localhost:8080` | Advertised issuer URL. |
 
 ## Security model — why opt-in

@@ -6,8 +6,8 @@ name: release
 #   1. verify     - the tag is annotated, SSH-signed against the trusted key
 #                   in deploy/release-signing.pub, and matches the version
 #                   declared in pyproject.toml
-#   2. build      - dev install, full test suite on the package floor
-#                   (Python 3.12; per-PR CI already exercises 3.13/3.14),
+#   2. build      - dev install, full test suite on Python 3.14
+#                   (per-PR CI exercises the 3.12-3.14 matrix),
 #                   then `python -m build` to produce wheel + sdist
 #   3. publish    - downloads the dist artifact and uploads to PyPI via
 #                   OIDC, gated on the `pypi` environment so a human can
