@@ -14,6 +14,7 @@ Two layers:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
@@ -21,7 +22,9 @@ import re
 import socket
 import struct
 import sys
+import time
 from array import array
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -782,3 +785,141 @@ async def test_syscall_events_extend_the_audit_chain(tmp_path: Path) -> None:
     # Both record kinds are present and every line carries chain fields.
     assert {"shell_exec", "syscall_notify"} <= {r["tool"] for r in records}
     assert all("seq" in r and "prev" in r and "chain" in r for r in records)
+
+
+@pytest.mark.seccomp
+@requires_seccomp
+async def test_background_process_keeps_working_after_the_call_ends(tmp_path: Path) -> None:
+    # A14-R4: stop() used to close the notify listener when the call returned; every
+    # process still carrying the filter (a backgrounded job) then got ENOSYS for each
+    # notified syscall (here: the write open of the redirection), contradicting
+    # ADR 0006 "never blocks / falls back to ALLOW".
+    target = tmp_path / "survived"
+    events: list[seccomp.SyscallEvent] = []
+    monitor = seccomp.SeccompMonitor(
+        cap=512, arch=_SUPPORT.arch, on_event=events.append, on_overflow=lambda p: None
+    )
+    token = seccomp.set_active(monitor)
+    try:
+        out, code = await run_command(
+            f"( /bin/sleep 1.5; /bin/echo ok > {target} ) >/dev/null 2>&1 &",
+            timeout=15,
+            use_shell=True,
+        )
+    finally:
+        seccomp.clear_active(token)
+    assert code == 0, out
+    assert monitor._stopped  # the call is over and the monitor was stopped
+    assert await asyncio.to_thread(_poll_until, target.exists, 8)
+    assert target.read_text() == "ok\n"
+    # Once the last process carrying the filter has exited the kernel reports hang-up
+    # and the detached server releases the listener (no fd/entry is kept for ever).
+    assert await asyncio.to_thread(_poll_until, lambda: seccomp._DETACHED.count() == 0, 8)
+
+
+# --- detached listener server (portable: plain pipes stand in for notify fds) ---
+
+
+def _poll_until(predicate: Callable[[], bool], seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return predicate()
+
+
+def _closed(fd: int) -> bool:
+    try:
+        os.fstat(fd)
+    except OSError:
+        return True
+    return False
+
+
+def _wait_closed(fd: int, seconds: float = 5.0) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if _closed(fd):
+            return True
+        time.sleep(0.05)
+    return _closed(fd)
+
+
+def test_hung_up_reports_whether_the_filter_holders_are_gone() -> None:
+    lr, lw = os.pipe()
+    try:
+        assert seccomp.SeccompMonitor._hung_up(lr) is False  # a writer still exists
+        os.close(lw)
+        assert seccomp.SeccompMonitor._hung_up(lr) is True
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(lr)
+    assert seccomp.SeccompMonitor._hung_up(987654) is True  # invalid fd: nothing to serve
+
+
+def test_detached_server_keeps_a_live_listener_and_closes_it_on_hangup() -> None:
+    server = seccomp._DetachedServer()
+    lr, lw = os.pipe()
+    assert server.adopt(lr, 0, 0, 80, seccomp._RESP_PACK)
+    try:
+        time.sleep(0.3)
+        assert not _closed(lr)  # the filter holder (write end) is still alive
+        assert server.count() == 1
+        os.close(lw)
+        assert _wait_closed(lr)  # hang-up -> listener released
+        deadline = time.monotonic() + 3
+        while server.count() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.count() == 0
+    finally:
+        for fd in (lr, lw):
+            with contextlib.suppress(OSError):
+                os.close(fd)
+
+
+def test_detached_server_closes_the_oldest_beyond_its_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(seccomp, "_DETACHED_MAX", 1)
+    server = seccomp._DetachedServer()
+    first_r, first_w = os.pipe()
+    second_r, second_w = os.pipe()
+    try:
+        assert server.adopt(first_r, 0, 0, 80, seccomp._RESP_PACK)
+        time.sleep(0.2)
+        assert server.adopt(second_r, 0, 0, 80, seccomp._RESP_PACK)
+        assert _wait_closed(first_r)  # evicted (with a logged warning)
+        assert not _closed(second_r)
+    finally:
+        for fd in (first_r, first_w, second_r, second_w):
+            with contextlib.suppress(OSError):
+                os.close(fd)
+
+
+def test_stop_hands_a_live_listener_to_the_detached_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handed: list[int] = []
+    monkeypatch.setattr(seccomp._DETACHED, "adopt", lambda fd, *a: handed.append(fd) or True)  # type: ignore[arg-type]
+    m = _monitor()
+    _wire(m)
+    lr, lw = os.pipe()  # a listener whose writer (a surviving process) is alive
+    m._listener_fd = lr
+    try:
+        m.stop()
+        assert handed == [lr]
+        assert m._listener_fd is None
+        assert not _closed(lr)  # ownership moved: stop() must not close it
+        # A hung-up listener has no holders left: closed directly, not handed over.
+        hr, hw = os.pipe()
+        os.close(hw)
+        m2 = _monitor()
+        _wire(m2)
+        m2._listener_fd = hr
+        m2.stop()
+        assert handed == [lr] and _closed(hr)
+    finally:
+        for fd in (lr, lw):
+            with contextlib.suppress(OSError):
+                os.close(fd)

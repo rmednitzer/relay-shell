@@ -36,6 +36,13 @@ _KNOWN_HOSTS_WEAKNESS = {"strict": 0, "accept-new": 1, "ignore": 2}
 _WAIT_CLOSED_TIMEOUT = 5.0
 # ssh_spawn stdin back-pressure: bound the local write buffer and the wait for it to drain.
 _MAX_PENDING_WRITE = 1 << 20
+# Appended to every SSH timeout string. A timeout is not a result: the client side gave
+# up, but the remote side may have finished, be finishing, or have done part of the work,
+# so a mutation must be reconciled against the remote state before it is retried.
+_TIMEOUT_OUTCOME_UNKNOWN = (
+    "outcome unknown: the remote side may still be running, may have completed, or may "
+    "have applied part of the change; verify the remote state before retrying a mutation"
+)
 _DRAIN_TIMEOUT = 5.0
 
 
@@ -597,7 +604,7 @@ class SshPool:
                         proc.close()
                     with contextlib.suppress(Exception):
                         await asyncio.wait_for(proc.wait_closed(), 2)
-                return (f"[TIMEOUT after {timeout}s]", None)
+                return (f"[TIMEOUT after {timeout}s] {_TIMEOUT_OUTCOME_UNKNOWN}", None)
             except asyncio.CancelledError:
                 # The caller went away mid-run: do not leave the remote command
                 # parked on the shared connection. Best-effort terminate, then
@@ -663,7 +670,7 @@ class SshPool:
                     except TimeoutError:
                         return (
                             f"[TIMEOUT after {timeout}s] partial upload "
-                            f"{local} -> {target}:{remote}"
+                            f"{local} -> {target}:{remote}; {_TIMEOUT_OUTCOME_UNKNOWN}"
                         )
                 else:
                     await transfer
@@ -689,7 +696,7 @@ class SshPool:
                     except TimeoutError:
                         return (
                             f"[TIMEOUT after {timeout}s] partial download "
-                            f"{target}:{remote} -> {local}"
+                            f"{target}:{remote} -> {local}; {_TIMEOUT_OUTCOME_UNKNOWN}"
                         )
                 else:
                     await transfer

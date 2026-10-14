@@ -195,7 +195,8 @@ async def test_sftp_put_timeout_fires(tmp_path: Path, monkeypatch: pytest.Monkey
     msg = await pool.sftp_put(
         "h1.example", "/local/x", "/remote/x", recurse=False, connect_kwargs=_CK, timeout=1
     )
-    assert msg.startswith("[TIMEOUT after 1s]")
+    assert msg.startswith("[TIMEOUT after 1s] partial upload")
+    assert "outcome unknown" in msg and "before retrying a mutation" in msg
     assert conn.sftp.exited  # the sftp client was closed on the way out
 
 
@@ -210,7 +211,8 @@ async def test_sftp_get_timeout_fires(tmp_path: Path, monkeypatch: pytest.Monkey
     msg = await pool.sftp_get(
         "h1.example", "/remote/x", "/local/x", recurse=False, connect_kwargs=_CK, timeout=1
     )
-    assert msg.startswith("[TIMEOUT after 1s]")
+    assert msg.startswith("[TIMEOUT after 1s] partial download")
+    assert "outcome unknown" in msg and "before retrying a mutation" in msg
 
 
 async def test_sftp_put_no_cap_completes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

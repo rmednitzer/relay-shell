@@ -399,7 +399,10 @@ commands under one filter, so size the cap for the session, not the
 command): beyond it, one `syscall_notify_overflow` line is written
 and emission stops while the child still runs to completion. Watch
 `relay_shell_seccomp_notify_overflow_total` (§9a) and raise the cap if a
-legitimate workload trips it. The events ride the same off-host shipper as the
+legitimate workload trips it. A process that outlives its call (a backgrounded job or daemon) keeps running
+normally: its listener is kept open and answered, but its syscalls are no longer audited once the
+call has ended, and each such listener holds one file descriptor until that process exits (ADR 0006,
+2026-10-14 correction). The events ride the same off-host shipper as the
 rest of the log (`docs/audit-shipper.md`); shippers route on the `tool` field.
 
 ## 7. SSH credential scoping
