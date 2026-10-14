@@ -306,7 +306,8 @@ when the session is at a secret prompt: the last output line reads like one
 (`[sudo] password for bob:`, `Enter passphrase for key ...:`, `Verification
 code:`), or the local terminal has echo off. Anything else is recorded as before,
 after pattern redaction. Set `RELAY_SHELL_AUDIT_SESSION_INPUT=hash` to record
-only `data_len` and `data_sha256` for every send; the default is `redacted`.
+only `data_len` and `data_sha256` for every send (at a recognised secret prompt the
+digest is withheld too, leaving only `data_len`); the default is `redacted`.
 `server_info.audit.session_input` reports the live setting. A secret typed at a
 prompt the heuristic does not recognise is still recorded, so use `hash` where
 typed content must never reach the log.

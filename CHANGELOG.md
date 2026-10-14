@@ -51,6 +51,9 @@ All notable changes to this project are documented here. The format follows
   via a unique same-directory temp file, fsynced and renamed; and a root-run
   `--auth-approve` / `--auth-reject` keeps the state directory's ownership instead of
   leaving a root-owned file the service user cannot read.
+- **`RELAY_SHELL_AUDIT_SESSION_INPUT=hash` no longer records a digest of a typed secret**
+  (audit 2026-10-14): at a recognised secret prompt only `data_len` is written; an unsalted
+  SHA-256 of a typed password is brute-forceable offline.
 - **`ssh_spawn` input is back-pressured** (audit 2026-10-14): `session_send` to a remote
   that stops reading now fails with a bounded error once 1 MiB is pending instead of
   buffering without limit.

@@ -2,17 +2,16 @@
 
 This file is the running deferral register for the project's full and
 adversarial audit passes, beginning with the 2026-06-12 full audit pass and
-extended by each subsequent pass (through 2026-08-04). Each item is a finding
+extended by each subsequent pass (through 2026-10-14). Each item is a finding
 that was **not** fixed in its pass — the initial entries come from
 `audit/02-security-findings.md`, later ones from the dated `audit/*.md`
 engagement records — recorded with the schema the audit charter requires.
 
 The project's **canonical, living backlog** is [`docs/runbook.md`](docs/runbook.md)
-§7 (and the §8 per-file docs plan). This file does not replace it; it records
+§7 (and the §8 documentation conventions). This file does not replace it; it records
 the audit-pass-specific deferrals and points into §7 where an item belongs in
 the ongoing queue. When an item here is actioned, close it in the same place
-its kind is tracked (runbook §7 for capability/quality/ops/security-hardening,
-§8 for docs).
+its kind is tracked (runbook §7 for capability/quality/ops/security-hardening).
 
 Severity order within each section: low before info; smaller effort first.
 
@@ -129,7 +128,7 @@ Open deferrals (severity order; smaller effort first):
 
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
-| DOC-5 | `CHANGELOG.md` lacks Keep-a-Changelog version-compare links | info | XS | Deferred until a second release is tagged ("omit rather than fake"). | maintainer |
+| DOC-5 | `CHANGELOG.md` lacks Keep-a-Changelog version-compare links | info | XS | **Closed** (verified 2026-10-14): the compare links for `[Unreleased]`, 0.3.0, 0.2.0 and 0.1.0 are at the foot of `CHANGELOG.md`. | maintainer |
 
 Accepted as-designed / operator discretion (no action): **SEC-5** (`/metrics`
 OAuth bypass) — operator decision (2026-06-21): keep the documented design
@@ -210,35 +209,11 @@ expose only Tier-0 host metadata); no injection in the non-shell tools
 (formatters escape `\n`/`\r`/`|`/`=`/`\t`; constant keys); empty `client_id` /
 PKCE / code-replay / refresh single-use / lazy expiry (PoC-confirmed safe).
 
-## Security
-
-(Empty — SEC-1 and SEC-2 closed in the follow-up work above.)
-
-## Reliability
-
-(Empty — REL-1 closed in the follow-up work above.)
-
-## Quality
-
-(Empty — QUAL-1 closed in the follow-up work above.)
-
-## Documentation
-
-(Closed in this pass — D-001/D-002/D-003 are reconciled. No open docs
-deferrals. The frozen ADR 0008 incidental `mcp==1.27.1` mention is
-deliberately left as-authored per the project's no-retro-edit-of-decision-
-records convention; see `audit/03-final-report.md`.)
-
-## Tooling
-
-(Empty — TOOL-1/TOOL-3 closed by the follow-up work and TOOL-2 closed as
-accepted-as-designed with Renovate evidence; see the Closed table above.)
-
 ## Carried forward from prior engagement packs (operator action)
 
 | ID | Item | Severity | Effort | Rationale | Owner role |
 |---|---|---|---|---|---|
-| F-G2 | Branch protection on `main` — **fully resolved** (rules enumerated and hardened) | high (governance), now closed | S (done) | Prior packs (`audit/2026-06-01-engagement.md` §7.1) carried this as an open HIGH item ("`main` accepts direct pushes"). Resolved in two steps. 2026-06-12 (audit pass): the branches API reports `protected: true` [V]. 2026-06-12 (follow-up, via the Vertex-held `gh` credential): protection comes from ruleset `main-protection` (id 17307996; classic protection is unset), which enforced pull_request (0 approvals), non_fast_forward, deletion, and required_linear_history [V]. With operator confirmation (a T3 change per the operator's `github-vertex.md` contract), the ruleset gained `required_status_checks` — `check (py3.12)` / `check (py3.13)` / `check (py3.14)` / `gitleaks (secret scan)`, all bound to GitHub Actions, strict=false — and `required_signatures` (closing the prior pack's deferred **P2-3**). Verified effective post-change via `GET /repos/rmednitzer/relay-shell/rules/branches/main` [V]. pip-audit / dependency-review / CodeQL stay advisory by operator choice. | repo owner (executed with operator confirmation) |
+| F-G2 | Branch protection on `main` — **fully resolved** (rules enumerated and hardened) | high (governance), now closed | S (done) | Prior packs (`audit/2026-06-01-engagement.md` §7.1) carried this as an open HIGH item ("`main` accepts direct pushes"). Resolved in two steps. 2026-06-12 (audit pass): the branches API reports `protected: true` [V]. 2026-06-12 (follow-up, via the Vertex-held `gh` credential): protection comes from ruleset `main-protection` (id 17307996; classic protection is unset), which enforced pull_request (0 approvals), non_fast_forward, deletion, and required_linear_history [V]. With operator confirmation (a T3 change per the operator's `github-vertex.md` contract), the ruleset gained `required_status_checks` — `check (py3.12)` / `check (py3.13)` / `check (py3.14)` / `gitleaks (secret scan)`, all bound to GitHub Actions, strict=false — and `required_signatures` (closing the prior pack's deferred **P2-3**). Verified effective post-change via `GET /repos/rmednitzer/relay-shell/rules/branches/main` [V]. pip-audit / dependency-review / CodeQL were advisory by operator choice at that date; `ci-gate.yml`'s `ci-success` aggregate has since added them, and whether `ci-success` is a required ruleset status must be verified against the live ruleset (not visible in-tree). | repo owner (executed with operator confirmation) |
 
 ## 2026-07-15 full audit + Vertex/Axiom comparison pass
 
@@ -264,14 +239,3 @@ Open deferrals (severity order; smaller effort first):
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
 | OPS-2 (L4) | `pip-audit` has no KEV/EPSS exploit prioritization | info | S | Lesson from the comparison: layer Known-Exploited / EPSS signal on top of the existing `pip-audit` gate for prioritization. Advisory only — `pip-audit` already fails closed. Low value for the small pinned set; revisit if the dependency set grows. | maintainer |
-
-## Notes on items NOT added here
-
-- No critical / high / medium **code** security findings were produced by
-  this pass, so there is no remediation backlog of that kind.
-- The structural refactor candidates (`R-001` table-driven tool registration,
-  `R-004` OAuth store `Protocol`) already live in runbook §5.2 and are not
-  duplicated here.
-- No destructive or irreversible operation was proposed by this pass
-  (no history rewrite, no dependency major bump, no schema change), so the
-  charter's "proposals, not executed" bucket is empty.

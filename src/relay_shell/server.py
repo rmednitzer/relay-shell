@@ -994,12 +994,14 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         # What reaches the audit record is decided here, before the send clears the
         # session's prompt tail. The executor and the policy still see the real text.
         audit_args: dict[str, Any] = {"session_id": session_id, "enter": enter}
-        if cfg.audit_session_input == "hash":
-            audit_args["data_len"] = len(data)
-            audit_args["data_sha256"] = sha256_hex(data)
-        elif await app.sessions.awaiting_secret(session_id):
+        if await app.sessions.awaiting_secret(session_id):
+            # Withhold the digest too: an unsalted SHA-256 of a typed password is
+            # brute-forceable offline, so `hash` mode must not record one here.
             audit_args["data"] = "[REDACTED: secret prompt]"
             audit_args["data_len"] = len(data)
+        elif cfg.audit_session_input == "hash":
+            audit_args["data_len"] = len(data)
+            audit_args["data_sha256"] = sha256_hex(data)
         else:
             audit_args["data"] = data
 
