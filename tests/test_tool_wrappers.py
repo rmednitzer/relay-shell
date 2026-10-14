@@ -19,6 +19,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from helpers import text as _text
 from relay_shell.config import Settings
 from relay_shell.server import build_server
@@ -639,3 +641,69 @@ async def test_f2_deny_gates_host_for_rce_tools(tmp_path: Path) -> None:
         ).content
     )
     assert "DENIED" not in ok_out
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("ssh_exec", {"command": "true"}),
+        ("ssh_spawn", {}),
+        ("ssh_upload", {"local_path": "/etc/hostname", "remote_path": "/tmp/x"}),
+        ("ssh_download", {"remote_path": "/tmp/x", "local_path": "/tmp/y"}),
+        ("ssh_forward", {"spec": "L:18080:example.org:80"}),
+    ],
+)
+async def test_deny_list_sees_the_jump_host(
+    tmp_path: Path, tool: str, args: dict[str, str]
+) -> None:
+    # The jump host is dialled first, so an operator deny on it (e.g. the cloud
+    # metadata address) must fire even when the destination host looks harmless.
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        policy_mode="open",
+        policy_deny=r"169\.254\.169\.254",
+        ssh_known_hosts="ignore",
+        ssh_config=str(tmp_path / "no_ssh_config"),
+    )
+    mcp = build_server(settings)
+    out = _text(
+        (
+            await mcp.call_tool(
+                tool, {"host": "web1", "jump": "ops@169.254.169.254:22", "timeout": 1, **args}
+            )
+        ).content
+    )
+    assert "DENIED" in out
+    # And a harmless jump host is not refused by the deny list.
+    ok = _text(
+        (
+            await mcp.call_tool(
+                tool, {"host": "web1.invalid", "jump": "bastion.invalid", "timeout": 1, **args}
+            )
+        ).content
+    )
+    assert "DENIED" not in ok
+
+
+def test_jump_is_part_of_the_ssh_policy_probe() -> None:
+    from relay_shell import server as srv
+
+    # No jump: byte-identical to the previous probe text.
+    assert srv._policy_text_ssh_exec("h", "CMD") == "CMD\nh"
+    assert srv._policy_text_ssh_exec("h", "CMD", "u@j:22") == "CMD\nh\nu@j:22"
+    # A hex-spelled jump IP also gets its canonical form appended.
+    assert "169.254.169.254" in srv._policy_text_ssh_exec("h", "CMD", "0xa9fea9fe")
+
+
+def test_canonicalization_work_is_bounded_for_huge_host_lists() -> None:
+    # Hex-spelled tokens are canonicalized with quadratic list/substring scans;
+    # the caps on host counts are enforced only after the policy probe is built.
+    import time
+
+    from relay_shell import server as srv
+
+    hosts = " ".join(f"0x{i:08x}" for i in range(30000))
+    t0 = time.perf_counter()
+    srv._policy_text_ssh_fanout(hosts, "true")
+    assert time.perf_counter() - t0 < 2.0
