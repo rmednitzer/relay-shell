@@ -2102,7 +2102,9 @@ What a result can look like
 - [DENIED tier N (NAME): reason]          refused by policy (depends on
                                           RELAY_SHELL_POLICY_MODE and the
                                           deny/allow lists).
-- [TIMEOUT after Ns]                      exceeded the clamped timeout.
+- [TIMEOUT after Ns]                      exceeded the clamped timeout. For SSH
+                                          the text adds "outcome unknown": verify
+                                          the remote state before retrying.
 - [ERROR: ExcType: message]               any other failure, contained.
 - [TRUNCATED - N bytes total, M shown]    output exceeded the budget.
 """

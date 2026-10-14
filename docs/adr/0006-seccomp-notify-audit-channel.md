@@ -255,6 +255,26 @@ implementation:
   value in the existing `syscall` field, and the `/metrics` `syscall`
   label set stays bounded by `NOTIFIED_SYSCALLS`).
 
+### Correction 2026-10-14 (A14-R4): a closed listener does not fall back to ALLOW
+
+The Decision's *Failure isolation* bullet says the kernel falls back to `ALLOW` once the
+listener is gone. That is wrong for `SECCOMP_RET_USER_NOTIF`: with no listener the kernel
+fails the notified syscall with `ENOSYS`. The channel was therefore only non-blocking while a
+supervisor was answering. The defect showed up when a call returned (or a PTY session closed)
+and `stop()` closed the listener while a backgrounded job still carried the filter: its next
+notified syscall (an `execve`, a write `open`) failed with "Function not implemented"
+(reproduced as root with `CAP_SYS_ADMIN`).
+
+As built now: on `stop()`, if some process still holds the filter (poll does not report
+hang-up) the listener is handed to one shared daemon thread (`_DetachedServer`) that keeps
+answering CONTINUE, **without auditing** (the call is over, so those events are no longer
+recorded), and closes the listener when the kernel reports hang-up, i.e. the last process
+carrying the filter has exited. At most 1024 listeners are kept; beyond that the oldest is
+closed with a warning, and its surviving processes then lose notified syscalls again. Unlike
+the original text, a supervisor that stops on an unexpected RECV error also hands off rather
+than closing. Consequence for operators: a long-lived daemon started from a monitored call
+holds one listener (one fd) for its lifetime and runs unaudited after the call ends.
+
 ## Operational notes (as accepted)
 
 Operator-facing detail now lives in `docs/deployment.md` §6a; the as-built

@@ -500,6 +500,154 @@ _HANDSHAKE_OK = b"\x01"
 _HANDSHAKE_FAIL = b"\x00"
 
 
+_DEAD_POLL: Final = select.POLLHUP | select.POLLERR | select.POLLNVAL
+# Listeners kept alive after their call/session ended (see _DetachedServer). Beyond
+# this the oldest is closed with a warning: its surviving processes then get ENOSYS
+# for notified syscalls, the same gap this mechanism exists to avoid, so the cap is
+# generous (one fd and one dict entry each, served by a single shared thread).
+_DETACHED_MAX: Final = 1024
+
+
+_EINTR_RETRIES: Final = 8
+
+
+def _ioctl_retry(fd: int, cmd: int, arg: int) -> int:
+    """``ioctl`` retried on ``EINTR``; ``0`` on success, ``-1`` with errno left set."""
+    assert _libc is not None
+    for _ in range(_EINTR_RETRIES):
+        ctypes.set_errno(0)
+        if _libc.ioctl(fd, cmd, arg) == 0:
+            return 0
+        if ctypes.get_errno() != errno.EINTR:
+            return -1
+    return -1
+
+
+def _recv_and_continue(
+    fd: int, recv_cmd: int, send_cmd: int, size: int, resp_pack: str
+) -> tuple[bool, tuple[int, int, int, tuple[int, ...]] | None]:
+    """RECV one notification on ``fd`` and answer CONTINUE.
+
+    Returns ``(keep_serving, parsed)``; ``parsed`` is ``(id, pid, nr, args)`` or
+    ``None`` when nothing was received. A signal interrupting either ioctl (``EINTR``)
+    is retried: giving up on RECV would close a listener that surviving processes
+    still need, and giving up on the CONTINUE reply would leave the child blocked.
+    """
+    assert _libc is not None
+    notif = bytearray(size)  # MUST be zeroed before each RECV (else EINVAL)
+    buf = (ctypes.c_char * size).from_buffer(notif)
+    if _ioctl_retry(fd, recv_cmd, ctypes.addressof(buf)) != 0:
+        # ENOENT: this target vanished between poll and recv - keep serving others.
+        # EINTR that outlived the retries: poll will report the listener again.
+        # Any other error: stop serving this listener.
+        return ctypes.get_errno() in (errno.ENOENT, errno.EINTR), None
+    parsed = _parse_notif(notif)
+    resp = struct.pack(resp_pack, parsed[0], 0, 0, _SECCOMP_USER_NOTIF_FLAG_CONTINUE)
+    rbuf = (ctypes.c_char * len(resp)).from_buffer_copy(resp)
+    with contextlib.suppress(Exception):
+        _ioctl_retry(fd, send_cmd, ctypes.addressof(rbuf))
+    return True, parsed
+
+
+class _DetachedServer:
+    """Keeps answering CONTINUE on listeners whose monitor has already stopped.
+
+    A USER_NOTIF filter is inherited by every descendant. When a call returns (or a
+    PTY session closes) its monitor stops, but a backgrounded job may still be
+    running with the filter; if nobody answers, the kernel fails each notified
+    syscall with ENOSYS and the job breaks. ADR 0006 promises the channel never
+    blocks, so the stopped monitor hands its listener here. One shared daemon thread
+    answers CONTINUE (no audit: the call is over) and closes each listener when the
+    kernel reports hang-up, i.e. the last process carrying the filter has exited.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._pending: list[tuple[int, int, int, int, str]] = []
+        self._entries: dict[int, tuple[int, int, int, str]] = {}
+        self._order: list[int] = []
+        self._wake_r: int | None = None
+        self._wake_w: int | None = None
+        self._thread: threading.Thread | None = None
+
+    def adopt(self, fd: int, recv_cmd: int, send_cmd: int, size: int, resp_pack: str) -> bool:
+        """Take ownership of ``fd``. Returns ``False`` (caller keeps ownership) if the
+        server cannot run."""
+        with self._lock:
+            try:
+                if self._thread is None:
+                    self._wake_r, self._wake_w = os.pipe()
+                    self._thread = threading.Thread(
+                        target=self._run, name="relay-seccomp-detached", daemon=True
+                    )
+                    self._thread.start()
+                self._pending.append((fd, recv_cmd, send_cmd, size, resp_pack))
+                assert self._wake_w is not None
+                os.write(self._wake_w, b"x")
+            except Exception:  # noqa: BLE001 - never raise into stop()
+                if self._pending and self._pending[-1][0] == fd:
+                    self._pending.pop()
+                return False
+        return True
+
+    def _close(self, fd: int, poller: select.poll) -> None:
+        with contextlib.suppress(Exception):
+            poller.unregister(fd)
+        with contextlib.suppress(Exception):
+            os.close(fd)
+        self._entries.pop(fd, None)
+        with contextlib.suppress(ValueError):
+            self._order.remove(fd)
+
+    def _run(self) -> None:  # pragma: no cover - needs a live notify fd
+        assert self._wake_r is not None
+        poller = select.poll()
+        poller.register(self._wake_r, select.POLLIN)
+        while True:
+            try:
+                events = poller.poll()
+            except Exception:  # noqa: BLE001
+                continue
+            for fd, rev in events:
+                if fd == self._wake_r:
+                    with contextlib.suppress(Exception):
+                        os.read(self._wake_r, 4096)
+                    with self._lock:
+                        taken, self._pending = self._pending, []
+                    for new_fd, recv_cmd, send_cmd, size, resp_pack in taken:
+                        while len(self._order) >= _DETACHED_MAX:
+                            _log.warning(
+                                "seccomp-notify: detached listener cap reached; "
+                                "closing the oldest (its surviving processes lose "
+                                "notified syscalls)"
+                            )
+                            self._close(self._order[0], poller)
+                        self._entries[new_fd] = (recv_cmd, send_cmd, size, resp_pack)
+                        self._order.append(new_fd)
+                        poller.register(new_fd, select.POLLIN)
+                    continue
+                entry = self._entries.get(fd)
+                if entry is None:
+                    continue
+                # Serve a pending notification before honouring hang-up so a final
+                # blocked syscall is still answered.
+                if rev & select.POLLIN:
+                    keep, _ = _recv_and_continue(fd, *entry)
+                    if not keep:
+                        self._close(fd, poller)
+                        continue
+                elif rev & _DEAD_POLL:
+                    self._close(fd, poller)
+
+    def count(self) -> int:
+        """Listeners currently kept (tests, diagnostics)."""
+        with self._lock:
+            return len(self._entries) + len(self._pending)
+
+
+_DETACHED = _DetachedServer()
+
+
 class SeccompMonitor:
     """Installs the filter on one child and supervises its notifications.
 
@@ -692,20 +840,15 @@ class SeccompMonitor:
         tests on a privileged host, not the portable unit suite.
         """
         assert _libc is not None
-        size = self._sizes.notif
-        notif = bytearray(size)  # MUST be zeroed before each RECV (else EINVAL)
-        buf = (ctypes.c_char * size).from_buffer(notif)
-        ctypes.set_errno(0)
-        if _libc.ioctl(fd, self._recv_cmd, ctypes.addressof(buf)) != 0:
-            # ENOENT: this target vanished between poll and recv — keep serving
-            # others. Any other error: stop draining.
-            return ctypes.get_errno() == errno.ENOENT
-        notif_id, pid, nr, args = _parse_notif(notif)
-        # Answer CONTINUE first so the child unblocks with minimal latency;
+        # Answers CONTINUE first so the child unblocks with minimal latency;
         # auditing the (already-permitted) syscall happens after.
-        self._respond_continue(fd, notif_id)
-        self._dispatch(pid, nr, args)
-        return True
+        keep, parsed = _recv_and_continue(
+            fd, self._recv_cmd, self._send_cmd, self._sizes.notif, _RESP_PACK
+        )
+        if parsed is not None:
+            _notif_id, pid, nr, args = parsed
+            self._dispatch(pid, nr, args)
+        return keep
 
     def _respond_continue(self, fd: int, notif_id: int) -> None:
         resp = struct.pack(_RESP_PACK, notif_id, 0, 0, _SECCOMP_USER_NOTIF_FLAG_CONTINUE)
@@ -740,6 +883,18 @@ class SeccompMonitor:
                 os.write(self._stop_w, b"x")
         if self._thread is not None:
             self._thread.join(timeout=_STOP_JOIN_TIMEOUT)
+        listener = self._listener_fd
+        if (
+            listener is not None
+            and (self._thread is None or not self._thread.is_alive())
+            and not self._hung_up(listener)
+            and _DETACHED.adopt(
+                listener, self._recv_cmd, self._send_cmd, self._sizes.notif, _RESP_PACK
+            )
+        ):
+            # Some process still carries the filter (a backgrounded job): closing
+            # the listener now would make its notified syscalls fail with ENOSYS.
+            self._listener_fd = None
         for attr in ("_listener_fd", "_stop_r", "_stop_w"):
             fd = getattr(self, attr)
             if fd is not None:
@@ -752,6 +907,16 @@ class SeccompMonitor:
                 with contextlib.suppress(Exception):
                     sock.close()
         self._psock = self._csock = None
+
+    @staticmethod
+    def _hung_up(fd: int) -> bool:
+        """True if no process carries the filter any more (poll reports hang-up)."""
+        try:
+            poller = select.poll()
+            poller.register(fd, select.POLLIN)
+            return any(rev & _DEAD_POLL for _fd, rev in poller.poll(0))
+        except Exception:  # noqa: BLE001 - unknown state: treat as still in use
+            return False
 
     def _degrade(self, reason: str) -> None:
         _log.warning("seccomp-notify degraded: %s", reason)

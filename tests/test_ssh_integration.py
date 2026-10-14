@@ -229,7 +229,8 @@ async def test_ssh_run_timeout(ssh_port: int, tmp_path: Path) -> None:
     try:
         out, code = await pool.run("127.0.0.1", "hang", timeout=1, connect_kwargs=_ck(ssh_port))
         assert code is None
-        assert "[TIMEOUT after 1s]" in out
+        assert out.startswith("[TIMEOUT after 1s] outcome unknown")
+        assert "verify the remote state before retrying a mutation" in out
     finally:
         await pool.close_all()
 

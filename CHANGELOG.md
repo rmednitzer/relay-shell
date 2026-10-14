@@ -8,6 +8,24 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed (audit follow-up 2026-10-14)
 
+- **Seccomp-notify no longer breaks backgrounded jobs when the call ends** (A14-R4). `stop()`
+  closed the notify listener as soon as the call returned (or a PTY session closed); a
+  `nohup`/`&` job still carrying the filter then got `ENOSYS` for every notified syscall,
+  because with no listener the kernel fails a `USER_NOTIF` syscall rather than allowing it
+  (ADR 0006 had assumed the opposite; correction appended to the ADR). The listener is now
+  handed to one shared daemon thread that keeps answering CONTINUE until the kernel reports
+  hang-up, then closes it. A signal interrupting the RECV or the CONTINUE reply (`EINTR`) is retried instead of
+  closing the listener or leaving the child blocked. Events after the call ends are not audited; each surviving listener
+  holds one fd (cap 1024, oldest closed with a warning beyond that). Reproduced and fixed under
+  root with `CAP_SYS_ADMIN`; the live test skips on hosts without it.
+- **SSH timeouts say the outcome is unknown** (A14-R8b). `[TIMEOUT after Ns]` from `ssh_exec` /
+  `ssh_fanout` / `ssh_check` and from `ssh_upload` / `ssh_download` now continues
+  (transfers put it before the echoed paths so a long path cannot push it out of the truncated response)
+  `outcome unknown: the remote side may still be running, may have completed, or may have applied
+  part of the change; verify the remote state before retrying a mutation`. The `[TIMEOUT after
+  Ns]` prefix is unchanged, so parsers that match it keep working; local `shell_exec` timeouts are
+  unchanged (the process group is killed).
+
 - **Release and SBOM jobs no longer install unpinned tooling while holding OIDC or write
   tokens** (A14-D7, A14-D8). `release.yml` is now verify -> build -> attest -> publish: `build`
   has a read-only token, installs tooling from the new hash-locked `requirements-build.txt`

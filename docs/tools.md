@@ -108,7 +108,8 @@ timeout=0, ...)`; `ssh_download(host, remote_path, local_path,
 recursive=false, timeout=0, ...)`. `timeout` caps the transfer in seconds
 (clamped to the server max); `0` (default) means no per-call cap, leaving only
 the connection keepalive. A transfer that exceeds the cap returns a
-`[TIMEOUT after Ns]` string. Tier 2 (mutating).
+`[TIMEOUT after Ns] ...` string whose text says the outcome is unknown (see Errors).
+Tier 2 (mutating).
 
 Tests: `tests/test_ssh_integration.py`, `tests/test_sshpool_unit.py`,
 `tests/test_tool_wrappers.py`.
@@ -329,6 +330,10 @@ out = session_recv(id, timeout=3)                    -> table
 Failures are bounded strings, never exceptions:
 
 - `[DENIED tier N (NAME): reason]` - refused by policy.
-- `[TIMEOUT after Ns]` - exceeded the (clamped) timeout.
+- `[TIMEOUT after Ns]` - exceeded the (clamped) timeout. For SSH commands and SFTP
+  transfers the string continues `outcome unknown: ...`: the client gave up, but the remote
+  side may still be running, may have completed, or may have applied part of the change.
+  Verify the remote state before retrying a mutation. A local `shell_exec` timeout kills the
+  command's process group instead, so its outcome is the partial effects of a killed command.
 - `[ERROR: ExcType: message]` - any other failure.
 - `[TRUNCATED - N bytes total, M shown]` - output exceeded the budget.
