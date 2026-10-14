@@ -86,6 +86,7 @@ def redact(text: str) -> str:
     """Replace secret-looking spans in ``text`` with a placeholder."""
     placeholder = patterns.REDACTION_PLACEHOLDER
     out = patterns.URL_CREDS_PATTERN.sub(f"://{placeholder}@", text)
+    out = patterns.URL_TOKEN_USERINFO_PATTERN.sub(lambda m: f"{m.group(1)}://{placeholder}@", out)
     for pat, repl in patterns.REDACTION_PREFIX_PATTERNS:
         out = pat.sub(repl, out)
     for pat, repl in patterns.COMMAND_SCOPED_PREFIX_PATTERNS:

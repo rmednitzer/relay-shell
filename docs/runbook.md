@@ -682,6 +682,11 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
    over overlapping classes. Add a time-ceiling test with a 20-100 KB adversarial payload
    (whitespace runs, repeated `dd `/`rm `) next to the positive/near-miss pair, and run
    `pytest -m fuzz -v` (the fuzz inputs are short, so they do not replace that test).
+6. `policy.classify` removes shell line continuations before matching and ignores a
+   privilege wrapper that only appears in a read-only segment (`grep sudo ...`,
+   `PRIV_ESC_READER_SEGMENT`). A new command-name rule belongs in command position (`_CMD`)
+   so that `man <command>` does not trigger it; add the near-miss to
+   `tests/test_classifier_v16.py`.
 
 ### 6.5 Add a new redaction rule
 
@@ -701,7 +706,11 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
    repetitions, no nested quantifiers) and add a time-ceiling test with a 10-20 KB payload that
    would trigger the worst case (for example `-1` repeated), as in
    `test_cli_flag_redaction_is_not_quadratic_on_hyphen_digit_runs`.
-5. An unquoted value stops at an unquoted shell control operator (`;`, `&`, `|`), shared as
+5. The `COMMAND_SCOPED_PREFIX_PATTERNS` table holds flags that are only secrets for one
+   command (`redis-cli -a`, `unzip -P`, `ldapsearch -w`, `aws configure set`). Add a
+   command-scoped rule there rather than a bare `-x` rule, and a near-miss for the same flag
+   on another command.
+6. An unquoted value stops at an unquoted shell control operator (`;`, `&`, `|`), shared as
    `_VALUE_RUN` in `patterns.py` (v15), so a command glued to a secret is not swallowed;
    tests in `tests/test_redaction_operators.py` pin both directions. Copy that behaviour
    into any new rule with a bare value.

@@ -32,10 +32,12 @@ import re
 
 __all__ = [
     "COMMAND_SCOPED_PREFIX_PATTERNS",
+    "LINE_CONTINUATION_PATTERN",
     "MYSQL_COMPACT_PASSWORD_PATTERN",
     "MYSQL_FAMILY_CLI_PATTERN",
     "PATTERNS_VERSION",
     "PRIV_ESC_PATTERN",
+    "PRIV_ESC_READER_SEGMENT",
     "REDACTION_PATTERNS",
     "REDACTION_PLACEHOLDER",
     "REDACTION_PREFIX_PATTERNS",
@@ -43,6 +45,7 @@ __all__ = [
     "TIER2_PATTERN",
     "TIER3_PATTERN",
     "URL_CREDS_PATTERN",
+    "URL_TOKEN_USERINFO_PATTERN",
 ]
 
 # Bump on any semantic change to a pattern (added / widened / narrowed /
@@ -179,7 +182,25 @@ __all__ = [
 #      Accepted limit: an unquoted secret that really contains one of them is cut at
 #      the first, leaving its tail visible (an unquoted `;` cannot be part of a shell
 #      word, and a quoted secret is handled by the quote-aware rules).
-PATTERNS_VERSION = "15"
+# v16: 2026-10-14 audit follow-up (A14-C8b redaction, A14-C9 classification; every case
+#      reproduced against v15). Redaction: `password := X` and `password => X` (the
+#      separator ate only the `:`/`=` and left the value), an unterminated PEM private-key
+#      block (header plus base64 body now collapses to the end of the key material),
+#      `https://TOKEN@host` user-info without a colon (web schemes, 12+ characters), and
+#      secret flags of `aws configure set`, `redis-cli -a/--pass`, `unzip|zip -P` and
+#      `ldap* -w`. Classification: Tier 3 for `redis-cli FLUSHALL|FLUSHDB`; Tier 2 for
+#      `systemctl start|enable|reload|...` (with global flags), `useradd`/`usermod`/
+#      `groupadd`/..., `iptables -A/-I/-D/...`, `nft add/delete/...`, `firewall-cmd
+#      --add/--permanent/...`, `kubectl exec|drain|cordon|patch|edit|create|...` (after
+#      global flags), `redis-cli shutdown|config set`, `docker-compose`, and writes by
+#      `>`/`>>`/`tee` to `~/.ssh/`, `authorized_keys`, shell rc files, `sudoers`, /root,
+#      /boot, /usr, /bin, /sbin, /lib*, /opt, /srv, /sys, /var/{spool,lib,www}. Under-
+#      classification closed: `rm \<newline>-rf` (line continuations are removed first),
+#      `sudo -u root reboot`, `nice -n 10 reboot`, `timeout 5 reboot` (wrappers with
+#      arguments). Over-classification closed: `crontab -l`, `docker compose ps|logs|...`
+#      and `grep sudo /var/log/auth.log` / `man sudo` / `echo sudo` (a privilege wrapper
+#      named by a read-only command is data). Classification stays heuristic (ADR 0003).
+PATTERNS_VERSION = "16"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -246,7 +267,7 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             r"(?i)(?P<prefix>(?:api[_-]?key"
             r"|(?:secret|private|access|signing|encryption|master)[_-]?key(?:[_-]?base)?"
             r"|secret|token|password|passwd|pwd|credential)"
-            r"[\"']?\s*[:=]\s*(?P<q>[\"']))"
+            r"[\"']?\s*(?::=|=>|[:=])\s*(?P<q>[\"']))"
             r"(?:\\.|(?!(?P=q))[^\\\r\n])*"
         ),
         r"\g<prefix>[REDACTED]",
@@ -268,7 +289,7 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             r"(?i)(?P<prefix>(?:api[_-]?key"
             r"|(?:secret|private|access|signing|encryption|master)[_-]?key(?:[_-]?base)?"
             r"|secret|token|password|passwd|pwd|credential)"
-            r"[\"']?\s*[:=]\s*[\"']?)" + _VALUE_RUN
+            r"[\"']?\s*(?::=|=>|[:=])\s*[\"']?)" + _VALUE_RUN
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -284,7 +305,7 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             r"(?i)(?P<prefix>(?:aws[_-]?)?secret[_-]?access[_-]?key"
-            r"[\"']?\s*[:=]\s*[\"']?)" + _VALUE_RUN
+            r"[\"']?\s*(?::=|=>|[:=])\s*[\"']?)" + _VALUE_RUN
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -423,6 +444,43 @@ COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"(?i)(?P<prefix>(?<![A-Za-z0-9])-pass(?:in|out)?\s+pass:)[^\s;&|]+"),
         r"\g<prefix>[REDACTED]",
     ),
+    # v16: secret flags of other CLIs, each anchored on its command because the short
+    # flags are overloaded (`redis-cli -a` is auth but `-a` means "all" elsewhere,
+    # `unzip -p` pipes to stdout, `ldapsearch -W` prompts and takes no value).
+    #   aws configure set aws_secret_access_key|aws_session_token VALUE
+    (
+        re.compile(
+            r"(?i)(?P<prefix>\baws\b[^|;&\n]{0,128}?\bconfigure\s+set\s+(?:--\S+\s+\S+\s+){0,3}"
+            r"(?:aws_)?(?:secret_access_key|session_token)\s+)"
+            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    #   redis-cli -a PASSWORD / --pass PASSWORD
+    (
+        re.compile(
+            r"(?i)(?P<prefix>\bredis-cli\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])(?:-a|--pass)[=\s]+)"
+            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    #   unzip -P PASSWORD / zip -P PASSWORD (capital P only)
+    (
+        re.compile(
+            r"(?P<prefix>\b(?:unzip|zip)\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-P[=\s]*)"
+            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
+    #   ldapsearch / ldapmodify / ... -w PASSWORD (lower-case w only; -W prompts)
+    (
+        re.compile(
+            r"(?P<prefix>\bldap(?:search|modify|add|delete|compare|modrdn|passwd|whoami)\b"
+            r"[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-w[=\s]*)"
+            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
+        ),
+        r"\g<prefix>[REDACTED]",
+    ),
 )
 
 
@@ -448,7 +506,13 @@ REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
         # cannot drive O(n^2) backtracking and stall the (synchronous) audit
         # redaction path. `[\s\S]` spans newlines without needing DOTALL.
         r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----[\s\S]{0,8192}?"
-        r"-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----",
+        r"-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----"
+        # Unterminated (v16): no END footer within the bound, as when a key is cut
+        # off by the argument cap or pasted without its footer. The audit record keeps
+        # the first 500 characters, which is all key material, so collapse the header
+        # and the base64 body that follows it (bounded, and it stops at the first
+        # character that cannot be part of a PEM body).
+        r"|-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----[A-Za-z0-9+/=:,\s-]{0,8192}",
     ),
     # GitHub: classic/fine-grained PAT, plus the gh[pousr]_ token family
     # (personal, OAuth, user-to-server, server-to-server, refresh).
@@ -529,6 +593,11 @@ SECRET_PROMPT_PATTERN = re.compile(
 # The run stops at `/` and whitespace, so a later `@` in a path or query is untouched.
 URL_CREDS_PATTERN = re.compile(r"://[^/\s:@]+:[^\s/]+@")
 
+# A token used as the whole user-info (`https://TOKEN@host/...`, v16): no colon, so the
+# pattern above does not apply. Limited to web schemes and a 12+ character run so that
+# the usual `ssh://git@host` / `user@host` forms are left alone.
+URL_TOKEN_USERINFO_PATTERN = re.compile(r"(?i)\b(https?|ftps?|wss?)://[^/\s:@]{12,}@")
+
 
 # --- Redaction: MySQL-family compact -p<value> (gated by family CLI) ---
 
@@ -547,7 +616,10 @@ MYSQL_COMPACT_PASSWORD_PATTERN = re.compile(r"(?<![A-Za-z0-9-])(-p)[^\s=\-;&|][^
 # is allowed. The gaps are bounded or character-class limited, so it stays linear.
 _CMD = (
     r"(?:(?:^|[;&|(`\n]|\$\()[^\S\n]*(?:\w+=\S*\s+){0,6}"
-    r"|\b(?:sudo|doas|exec|xargs|nohup|time|command|env)\s+(?:-\S+\s+|\w+=\S*\s+){0,6}"
+    r"|\b(?:sudo|doas)\s+(?:-[ugCphrtUT]\s+\S+\s+|-\S+\s+|\w+=\S*\s+){0,6}"
+    r"|\b(?:exec|xargs|nohup|time|command|env)\s+(?:-\S+\s+|\w+=\S*\s+){0,6}"
+    r"|\b(?:nice|ionice|timeout|setsid|stdbuf|chrt|taskset)\s+"
+    r"(?:-\S+\s+|\d[\w.:,-]*\s+|\w+=\S*\s+){0,6}"
     r"|\b(?:sh|bash|zsh|dash|ksh)\s+-\w*c\s+[\"']\s*"
     r")(?:/[\w./-]*/)?"
 )
@@ -589,7 +661,7 @@ TIER3_PATTERN = re.compile(
     r"drop\s+database|drop\s+table|truncate\s+table|"
     r"git\s+push\s+(?:\S+\s+){0,8}?(?:--force\b|-f\b|\+\S)|git\s+reset\s+--hard|"
     r"userdel|deluser|gpasswd|"
-    r"iptables\s+-F|nft\s+flush|"
+    r"iptables\s+-F|nft\s+flush|redis-cli\b[^|;&\n]{0,128}?\bflush(?:all|db)\b|"
     # `ip link ... down` only as a state change: `ip link show | grep down` is a read.
     r"ip\s+link\s+set\s+\S+(?:\s+\S+){0,4}?\s+down\b|ip\s+link\s+del(?:ete)?\b|ifdown\b|"
     r":\s*\(\s*\)\s*\{|"
@@ -620,13 +692,41 @@ TIER3_PATTERN = re.compile(
     r")"
 )
 
+# Destinations whose modification is persistence or a system change (v16): see the
+# redirect and `tee` rules in TIER2_PATTERN. The leading run is bounded so a long
+# token cannot make the scan quadratic; no literal spaces (the pattern is verbose).
+_SENSITIVE_DEST = (
+    r"[\"']?(?:"
+    r"/(?:boot|usr|bin|sbin|lib|lib32|lib64|opt|srv|root|sys)/"
+    r"|/var/(?:spool|lib|www)/"
+    r"|[^\s\"';&|]{0,200}/\.ssh/"
+    r"|[^\s\"';&|]{0,200}authorized_keys"
+    r"|[^\s\"';&|]{0,200}/sudoers"
+    r"|(?:[^\s\"';&|]{0,200}/)?\.(?:bashrc|bash_profile|bash_login|profile|zshrc|zprofile)\b"
+    r")"
+)
+
 # Substrings that imply a stateful, visible change.
 TIER2_PATTERN = re.compile(
     r"(?imx)(?:(?<![\w])("
-    r"systemctl\s+(stop|restart|disable|mask|kill)|service\s+\S+\s+(stop|restart)|"
+    # systemctl: any state-changing verb, with the global flags (`--user`, `--now`,
+    # `-H host`) that may precede it (v16; previously only five verbs, no flags).
+    r"systemctl\s+(?:--?[\w=.-]+\s+(?:[\w.@:-]+\s+)?){0,3}"
+    r"(stop|restart|disable|mask|kill|start|enable|reload|reload-or-restart|try-restart"
+    r"|try-reload-or-restart|unmask|isolate|daemon-reload|daemon-reexec|set-default"
+    r"|edit|revert)(?![\w.-])|"
+    r"service\s+\S+\s+(stop|restart|start|reload)\b|"
     r"apt(-get)?\s+(install|remove|purge|upgrade|dist-upgrade)|"
     r"yum\s+(install|remove)|dnf\s+(install|remove)|pip\s+install|npm\s+(install|i)\b|"
-    r"docker\s+(run|rm|stop|kill|compose|build)|kubectl\s+(apply|delete|scale|rollout)|"
+    # docker compose / docker-compose: the read-only subcommands (`ps`, `logs`, `config`,
+    # ...) are exempt; `up`, `down`, `exec` and anything unknown stay Tier 2 (v16).
+    r"docker\s+(run|rm|stop|kill|build)|"
+    r"docker(?:\s+|-)compose\b(?![^|;&\n]{0,80}?\s(?:ps|ls|logs|config|images|top|port|version|events)"
+    r"(?![\w.:/-]))|"
+    # kubectl: mutating verbs after any global flags (`-n prod`, `--context x`). The
+    # verb must be a whole word, so `logs job/create-db` is not a `create` (v16).
+    r"kubectl\s+(?:\S+\s+){0,6}?(?:apply|delete|scale|rollout|exec|drain|cordon|uncordon|taint"
+    r"|patch|edit|replace|create|label|annotate|cp|run|expose|autoscale|debug)(?![\w.-])|"
     r"(?:docker|podman)\s+(?:system|volume|image|container|network)\s+(?:prune|rm)\b|"
     r"(?:terraform|tofu)\s+apply|pulumi\s+up|git\s+clean\s+-\w*f|setenforce\b|"
     # Remote content piped into an interpreter: unknowable, stateful at best.
@@ -634,7 +734,12 @@ TIER2_PATTERN = re.compile(
     r"(?:(?:ba|z|da|k)?sh|python[\d.]*|perl|ruby|node)\b|"
     r"(?:ba|z)?sh\s+<\(\s*(?:curl|wget)\b|"
     r"chown|chmod\s+-R|chmod\s+[0-7]{3,4}\s+/|"
-    r"crontab|ln\s+-s|mv\s+/|cp\s+-[a-z]*\s+/|sed\s+-i|tee\s+/etc/|"
+    # `crontab -l` only lists (v16); installing, editing or removing a crontab is Tier 2.
+    r"crontab\b(?!(?:\s+-u\s+\S+)?\s+-l\b)|ln\s+-s|mv\s+/|cp\s+-[a-z]*\s+/|sed\s+-i|tee\s+/etc/|"
+    # Writes to persistence and system locations other than /etc (v16): a redirect or
+    # `tee` into `~/.ssh/`, `authorized_keys`, a shell rc file, `sudoers`, or
+    # /root, /boot, /usr, /bin, /sbin, /lib*, /opt, /srv, /sys, /var/{spool,lib,www}.
+    r">>?\s*" + _SENSITIVE_DEST + r"|tee\s+(?:-\w+\s+)*" + _SENSITIVE_DEST + r"|"
     r"git\s+(push|commit|merge|rebase)|"
     r"ufw\s+(allow|deny|enable|disable)|"
     r"ssh-copy-id|>\s*/etc/|>>\s*/etc/|"
@@ -653,7 +758,17 @@ TIER2_PATTERN = re.compile(
     r"register-scheduledtask|unregister-scheduledtask|schtasks\s+/create|"
     r"set-executionpolicy"
     r"))"
-    r"|" + _CMD + r"(?:kill\s+-(?:9|KILL|SIGKILL)\b|pkill\b|killall\b|truncate\s)"
+    r"|" + _CMD + r"(?:kill\s+-(?:9|KILL|SIGKILL)\b|pkill\b|killall\b|truncate\s"
+    # Account, firewall and cache changes by command name (v16). Command position only:
+    # `man useradd` and `grep iptables log` name the command without running it.
+    r"|(?:useradd|usermod|groupadd|groupmod|groupdel|adduser|addgroup|chpasswd|chage"
+    r"|visudo|newusers)(?![\w.-])"
+    r"|ip6?tables(?:-nft|-legacy)?\s+(?:(?:-t\s+\w+|-w\s*\d*|--wait)\s+){0,3}-[AIDRPXNZ]\b"
+    r"|ip6?tables-restore(?![\w.-])"
+    r"|nft\s+(?:add|delete|insert|replace|create|destroy)\b"
+    r"|firewall-cmd\b[^|;&\n]{0,64}--(?:add|remove|set|reload|permanent|runtime-to-permanent)\b"
+    r"|redis-cli\b[^|;&\n]{0,128}?\b(?:shutdown|config\s+set|replicaof|slaveof|debug"
+    r"|script\s+flush|acl\s+(?:setuser|deluser))\b)"
 )
 
 # Privilege escalation wrappers should not be treated as low-risk commands.
@@ -661,3 +776,17 @@ TIER2_PATTERN = re.compile(
 # `Start-Process … -Verb RunAs` (the `RunAs` verb token matches `\brunas\b`
 # case-insensitively) — the Windows analogue of sudo/doas/pkexec (ADR 0011).
 PRIV_ESC_PATTERN = re.compile(r"(?ix)\b(sudo|doas|pkexec|runas)\b")
+
+# Shell line continuation (v16): `\<newline>` is deleted before the shell parses a line, so
+# `rm \<newline>-rf /x` is `rm -rf /x` and `r\<newline>m` is `rm`. The classifier removes
+# it first; the whitespace-based patterns would otherwise miss the flag.
+LINE_CONTINUATION_PATTERN = re.compile(r"\\\r?\n")
+
+# A segment (up to the next `;`, `&`, `|`, newline, `(` or backtick) whose command only
+# reads or prints text (v16): `grep sudo /var/log/auth.log`, `man sudo`, `echo sudo`. A
+# privilege wrapper named there is data, not a command, so the privilege-escalation tier
+# is not applied to it. Other segments of the same line still are.
+PRIV_ESC_READER_SEGMENT = re.compile(
+    r"(?im)(?:^|[;&|(`])[^\S\n]*(?:grep|egrep|fgrep|zgrep|rg|ag|man|which|whereis|type|apropos"
+    r"|echo|printf|journalctl|locate)\b[^;&|\n(`]*"
+)

@@ -221,6 +221,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **Classifier tuning, both directions (A14-C9, `PATTERNS_VERSION` 16).** Now escalated:
+  `rm \<newline>-rf`, `sudo -u root reboot`, `nice -n 10 reboot`, `timeout 5 reboot` and
+  `redis-cli FLUSHALL` (Tier 3); `systemctl start|enable|reload`, `useradd`, `iptables -A`,
+  `nft add`, `kubectl exec|drain|patch`, `docker-compose`, and `>`/`tee` into `~/.ssh/`,
+  `authorized_keys`, shell rc files, `sudoers` and system directories (Tier 2). Now lower:
+  `crontab -l`, `docker compose ps`, `grep sudo /var/log/auth.log`. Still heuristic
+  (ADR 0003 update).
+- **Redaction gaps closed (A14-C8b, `PATTERNS_VERSION` 16).** `password := X` and
+  `password => X`, an unterminated PEM private-key block, `https://TOKEN@host` user-info,
+  `aws configure set aws_secret_access_key X`, `redis-cli -a`, `unzip -P` and
+  `ldapsearch -w`.
 - **A Tier-3 confirmation token now belongs to the client that received it (A14-C10b).**
   Another authenticated OAuth client issuing the identical irreversible call inside the TTL
   used to consume the token the first client had armed. `arm` and `consume` now require the

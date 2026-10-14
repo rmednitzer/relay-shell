@@ -81,10 +81,10 @@ def classify(tool: str, command: str = "") -> Tier:
     """
     if tool in _READ_ONLY_TOOLS:
         return Tier.READ_ONLY
-    text = command or ""
+    text = patterns.LINE_CONTINUATION_PATTERN.sub("", command or "")
     if patterns.TIER3_PATTERN.search(text):
         return Tier.IRREVERSIBLE
-    if patterns.PRIV_ESC_PATTERN.search(text):
+    if patterns.PRIV_ESC_PATTERN.search(patterns.PRIV_ESC_READER_SEGMENT.sub(" ", text)):
         return Tier.STATEFUL
     if patterns.TIER2_PATTERN.search(text):
         return Tier.STATEFUL
