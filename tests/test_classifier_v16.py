@@ -169,6 +169,15 @@ def test_read_only_commands_no_longer_over_classify(command: str) -> None:
         "grep x $(sudo cat /etc/shadow)",
         "ssh host sudo cp a /usr/bin/a",
         "printf '%s' \"$(sudo cat k)\"",
+        "echo 'sudo -n touch /root/pwn' | sh",
+        "echo 'sudo -n touch /root/pwn' | bash -s",
+        "printf 'sudo id\\n' | /bin/sh",
+        "grep -h sudo cmds.txt | xargs -I{} sh -c {}",
+        'echo sudo id > /tmp/x; sh /tmp/x; eval "$(echo sudo id)"',
+        "$(echo sudo reboot)",
+        "`echo sudo -n touch /x`",
+        "echo sudo -n id | sudo sh",
+        "eval 'echo sudo id'",
     ],
 )
 def test_a_real_privilege_wrapper_still_escalates(command: str) -> None:
@@ -221,6 +230,9 @@ def test_patterns_version_16_or_later() -> None:
         '"' * 50_000,
         '\\"' * 30_000,
         "grep " * 8000,
+        "| " * 20_000,
+        "echo sudo " * 8000,
+        "$( " * 20_000,
         "echo ;" * 10_000,
     ],
 )

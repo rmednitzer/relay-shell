@@ -36,6 +36,7 @@ __all__ = [
     "MYSQL_COMPACT_PASSWORD_PATTERN",
     "MYSQL_FAMILY_CLI_PATTERN",
     "PATTERNS_VERSION",
+    "PRIV_ESC_EVAL_HINT",
     "PRIV_ESC_PATTERN",
     "PRIV_ESC_READER_SEGMENT",
     "REDACTION_PATTERNS",
@@ -836,6 +837,15 @@ LINE_CONTINUATION_PATTERN = re.compile(r"""'[^']*'|"(?:\\.|[^"\\])*"|\\\r?\n|\\.
 # reads or prints text (v16): `grep sudo /var/log/auth.log`, `man sudo`, `echo sudo`. A
 # privilege wrapper named there is data, not a command, so the privilege-escalation tier
 # is not applied to it. Other segments of the same line still are.
+#
+# Not applied when the line can evaluate text (an interpreter or `xargs` after a pipe,
+# `eval`/`source`/`exec`, a `sh -c` string, a backtick, `$(` or `<(`): `echo 'sudo ...' | sh`
+# runs what the reader printed, so the wrapper there is a command, not data.
+PRIV_ESC_EVAL_HINT = re.compile(
+    r"(?i)\|\s*(?:\S*/)?(?:sudo\s+)?(?:(?:ba|z|da|k)?sh|python[\d.]*|perl|ruby|node|php|xargs"
+    r"|source|eval)(?![\w.-])|(?<![\w-])(?:eval|source|exec)(?![\w-])|[`]|\$\(|<\(|(?<![\w-])(?:ba|z|da|k)?sh\s+-\w*c(?![\w-])"
+)
+
 PRIV_ESC_READER_SEGMENT = re.compile(
     r"(?im)(?:^|[;&|(`])[^\S\n]*(?:grep|egrep|fgrep|zgrep|rg|ag|man|which|whereis|type|apropos"
     r"|echo|printf|journalctl|locate)\b[^;&|\n(`]*"

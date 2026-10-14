@@ -77,7 +77,8 @@ anything the patterns do not name.
 - **Over-classified, now lower.** `crontab -l`, `docker compose ps|logs|config|...`, and a
   privilege wrapper named by a read-only command (`grep sudo /var/log/auth.log`,
   `man sudo`, `echo sudo`). Other segments of the same line are still scanned, so
-  `grep x f | sudo tee y` stays Tier 2.
+  `grep x f | sudo tee y` stays Tier 2, and a line that can evaluate text
+  (`echo 'sudo id' | sh`, `eval`, `$(...)`) keeps the privilege tier.
 - **Verification.** Every case has a positive and a near-miss test
   (`tests/test_classifier_v16.py`); a differential run over a realistic corpus and 60,000
   random commands against v15 showed no Tier 3 downgrade except where a line continuation
@@ -123,6 +124,11 @@ review.
   `systemctl`, `kubectl` and `docker compose` and treat a flag value as a value. CS-3
   (UCA-3) a literal `\<newline>` inside `printf '...'`; the scan keeps single-quoted spans.
   CS-4 (UCA-4) option runs repeated thousands of times; every repetition is bounded.
+  CS-5 (UCA-1) a read-only command's output is executed: `echo 'sudo -n touch /x' | sh`,
+  `$(echo sudo ...)`, `eval`. Naming `sudo` after `echo` is data only if nothing evaluates
+  the text, so the reader exemption is switched off for any line with an interpreter or
+  `xargs` after a pipe, `eval`/`source`/`exec`, a `sh -c` string, a backtick, `$(` or `<(`
+  (`test_a_real_privilege_wrapper_still_escalates`).
 - **Trace.** SC-1 and UCA-1: `test_wrapped_or_continued_destructive_commands_are_tier3`,
   `test_state_changes_that_were_tier1_are_now_tier2`, `test_wrappers_with_arguments_need_a_command_boundary`.
   SC-2 and UCA-2: `test_near_misses_stay_tier1`, `test_read_only_commands_no_longer_over_classify`,
