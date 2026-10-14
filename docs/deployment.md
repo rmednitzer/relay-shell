@@ -410,6 +410,16 @@ key. `RELAY_SHELL_SSH_KNOWN_HOSTS=strict` is recommended for production; pre-pop
 `~/.ssh/known_hosts` for the service account. Provide a JSON inventory via
 `RELAY_SHELL_INVENTORY` for hosts not in `ssh_config`.
 
+Every SSH tool also takes a per-call `known_hosts` argument, so by default a caller can
+pass `ignore` against a `strict` server default. Set
+`RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false` to refuse any per-call mode weaker than
+`RELAY_SHELL_SSH_KNOWN_HOSTS` (strength order `strict` > `accept-new` > `ignore`) with a
+bounded error; a stronger per-call mode is always allowed, and a `known_hosts` entry in the
+operator-written inventory is honoured as written. The audit record's `known_hosts` field
+is always the mode actually used (per call, then inventory, then the server default), and
+`server_info.ssh.allow_weaker_known_hosts` reports the setting. The default is `true`
+(historical behaviour); use `false` wherever the server default is `strict`.
+
 The SSH connection pool caches one connection per `user@host:port` and
 reuses it for follow-up calls. `RELAY_SHELL_SSH_IDLE_TIMEOUT` (default
 1800 seconds) drops a cached connection that has not been used for that

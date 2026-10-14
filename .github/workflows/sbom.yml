@@ -1,10 +1,19 @@
 name: sbom
 
-# Generates a CycloneDX SBOM (JSON + XML) of the resolved Python
-# environment for each release tag and attaches it to the GitHub release.
-# Cheap supply-chain signal: lists every runtime dependency that ships
-# with the wheel, with version pins, hashes, and PURLs. No runtime
-# change to the package itself.
+# Generates a CycloneDX SBOM (JSON + XML) of the package's RUNTIME environment
+# for each release tag and attaches it to the GitHub release. Two jobs keep the
+# privileges away from the package installs (A14-D7):
+#
+#   sbom     - read-only token. Verifies the signed tag, builds a clean venv with
+#              only the runtime dependencies (direct pins from requirements.txt as
+#              constraints; no dev tools), runs the hash-locked cyclonedx-bom from a
+#              separate venv against it, and uploads the files as an artifact.
+#   publish  - contents: write + OIDC. Installs nothing: downloads the artifact,
+#              attests it and creates the immutable release.
+#
+# The SBOM lists name, version and PURL per component. Transitive dependencies are
+# resolved at build time (requirements.txt pins only direct dependencies), so the SBOM
+# records what was resolved, not a pre-reviewed lock.
 
 on:
   push:
@@ -25,12 +34,15 @@ permissions:
 
 jobs:
   sbom:
+    # A workflow_dispatch run executes the workflow file of the ref it was started
+    # from; only trust it from the protected default branch. Tag pushes are unaffected.
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write   # final step uploads the SBOM assets to the release
-      id-token: write   # CI-3: OIDC token for Sigstore build-provenance signing
-      attestations: write   # CI-3: write the provenance attestation
+      contents: read   # this job installs third-party packages: no write, no OIDC
+    outputs:
+      tag: ${{ steps.tag.outputs.name }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
@@ -43,7 +55,6 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7
         with:
           python-version: "3.14"
-          cache: "pip"
 
       - name: Resolve tag
         id: tag
@@ -82,43 +93,62 @@ jobs:
           test -s "$signers"
           git -c "gpg.ssh.allowedSignersFile=$signers" tag -v "$RELEASE_TAG"
 
-      - name: Install runtime + SBOM tool into a clean venv
+      - name: Fetch the hash-locked SBOM tool from the workflow revision
+        # Backfilling an SBOM for an older tag checks out that old commit, which
+        # predates requirements-sbom.txt; take the lock from the commit this
+        # workflow runs at (the tag's commit on a push, `main` on a dispatch).
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/${REPO}/contents/requirements-sbom.txt?ref=${WORKFLOW_SHA}" \
+            > "$RUNNER_TEMP/requirements-sbom.txt"
+          test -s "$RUNNER_TEMP/requirements-sbom.txt"
+
+      - name: Install runtime dependencies and the hash-locked SBOM tool
+        run: |
+          # Runtime environment: the package plus its dependencies only. The
+          # direct pins in requirements.txt are constraints (not requirements), so
+          # the dev/CI tools listed there are NOT installed and do not reach the SBOM.
           python -m venv .sbom-venv
-          . .sbom-venv/bin/activate
-          python -m pip install --upgrade pip
-          # Install the package's runtime dependencies (not the dev extra).
-          # Pinning to requirements.txt keeps the SBOM aligned with the
-          # validated build set. requirements.txt carries no --hash entries,
-          # so pip does not require hashes by default.
-          pip install -r requirements.txt
-          pip install .
-          pip install "cyclonedx-bom>=4,<6"
+          .sbom-venv/bin/python -m pip install -c requirements.txt .
+          # The SBOM tool lives in its own venv, from the hash-locked file, so it
+          # is not itself listed as a component of the environment it describes.
+          python -m venv .sbom-tool
+          .sbom-tool/bin/python -m pip install --require-hashes -r "$RUNNER_TEMP/requirements-sbom.txt"
 
       - name: Generate CycloneDX SBOM
         env:
           TAG_NAME: ${{ steps.tag.outputs.name }}
         run: |
-          . .sbom-venv/bin/activate
           OUT_JSON="relay-shell-${TAG_NAME}.cdx.json"
           OUT_XML="relay-shell-${TAG_NAME}.cdx.xml"
-          # `--of JSON` / `--of XML` is the canonical flag in cyclonedx-py
-          # >=4.x; `-o` is the output-file flag. CDX 1.5 is the default
-          # spec version (1.6 exists; held at 1.5 for SIEM compatibility).
-          cyclonedx-py environment \
+          # `--of JSON` / `--of XML` select the format and `-o` the output file.
+          # The spec version is pinned explicitly (`--sv 1.5`): the generator's
+          # own default moved to 1.6 in 7.x, and 1.5 is held for SIEM
+          # compatibility.
+          .sbom-tool/bin/cyclonedx-py environment \
             --of JSON \
+            --sv 1.5 \
             --output-reproducible \
-            -o "$OUT_JSON"
-          cyclonedx-py environment \
+            -o "$OUT_JSON" \
+            .sbom-venv/bin/python
+          .sbom-tool/bin/cyclonedx-py environment \
             --of XML \
+            --sv 1.5 \
             --output-reproducible \
-            -o "$OUT_XML"
+            -o "$OUT_XML" \
+            .sbom-venv/bin/python
           # Sanity: the SBOM must contain the relay-shell component and
           # the version that triggered the workflow.
           python - "$OUT_JSON" "$TAG_NAME" <<'PY'
           import json, re, sys
           path, tag = sys.argv[1], sys.argv[2]
           data = json.load(open(path))
+          assert data.get("specVersion") == "1.5", f"unexpected spec {data.get('specVersion')}"
           comps = {c.get("name"): c.get("version") for c in data.get("components", [])}
           assert "mcp" in comps, "SBOM missing core dependency 'mcp'"
           # Tag is like v0.2.0; allow either match or just presence of relay-shell.
@@ -134,19 +164,6 @@ jobs:
           print(f"SBOM OK: relay-shell={rs}, components={len(comps)}")
           PY
 
-      - name: Attest SBOM build provenance
-        # CI-3: emit a Sigstore-signed in-toto build-provenance attestation for
-        # each SBOM file, mirroring release.yml's attestation of the wheels.
-        # This records, in the public transparency log, which workflow run and
-        # commit produced this SBOM — so a consumer can verify the SBOM is the
-        # genuine output of this repo's CI (`gh attestation verify <file>
-        # --repo ${{ github.repository }}`) rather than a swapped artifact.
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4
-        with:
-          subject-path: |
-            relay-shell-${{ steps.tag.outputs.name }}.cdx.json
-            relay-shell-${{ steps.tag.outputs.name }}.cdx.xml
-
       - name: Upload SBOM as workflow artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
@@ -157,10 +174,40 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  publish:
+    name: Attest and publish the SBOM
+    needs: sbom
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write   # creates the release with the SBOM assets
+      actions: read     # downloads the artifact produced by the sbom job
+      id-token: write   # CI-3: OIDC token for Sigstore build-provenance signing
+      attestations: write   # CI-3: write the provenance attestation
+    steps:
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
+        with:
+          name: sbom-${{ needs.sbom.outputs.tag }}
+          path: sbom/
+
+      - name: Attest SBOM build provenance
+        # CI-3: emit a Sigstore-signed in-toto build-provenance attestation for
+        # each SBOM file, mirroring release.yml's attestation of the wheels.
+        # This records, in the public transparency log, which workflow run and
+        # commit produced this SBOM — so a consumer can verify the SBOM is the
+        # genuine output of this repo's CI (`gh attestation verify <file>
+        # --repo ${{ github.repository }}`) rather than a swapped artifact.
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4
+        with:
+          subject-path: |
+            sbom/relay-shell-${{ needs.sbom.outputs.tag }}.cdx.json
+            sbom/relay-shell-${{ needs.sbom.outputs.tag }}.cdx.xml
+
       - name: Publish immutable release with SBOM assets atomically
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ steps.tag.outputs.name }}
+          TAG_NAME: ${{ needs.sbom.outputs.tag }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -174,8 +221,8 @@ jobs:
             exit 0
           fi
           gh release create "$TAG" \
-            "relay-shell-${TAG}.cdx.json" \
-            "relay-shell-${TAG}.cdx.xml" \
+            "sbom/relay-shell-${TAG}.cdx.json" \
+            "sbom/relay-shell-${TAG}.cdx.xml" \
             --repo "$REPO" \
             --verify-tag \
             --title "$TAG" \

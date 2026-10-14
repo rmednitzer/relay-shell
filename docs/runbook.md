@@ -678,16 +678,20 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
 
 The release path is driven by `.github/workflows/release.yml`. It runs
 on any `v*` tag push (and on `workflow_dispatch` with an existing tag
-as input). The workflow has three gated jobs:
+as input; a dispatch run is only trusted from `main`). The workflow has four gated jobs:
 
   1. **verify** - the tag is annotated, GPG/SSH-signed and verified by
      GitHub, and matches the `[project] version` in `pyproject.toml`.
      A lightweight tag or an unsigned annotated tag fails here, before
      anything is built.
-  2. **build** - dev install on Python 3.14, full test suite, then
-     `python -m build` + `twine check` against the produced
-     wheel + sdist.
-  3. **publish** - runs in the `pypi` GitHub environment; uses OIDC
+  2. **build** - dev install on Python 3.14 (direct pins from `requirements.txt` as
+     constraints), full test suite, then `python -m build --no-isolation` +
+     `twine check`. The build tooling (`build`, `twine`, `hatchling`) comes from the
+     hash-locked `requirements-build.txt`; the job holds a read-only token and no OIDC.
+  3. **attest** - downloads the dist artifact and signs the SLSA build-provenance
+     attestation. It installs nothing, so the `id-token` / `attestations` permissions
+     never share a job with package installs.
+  4. **publish** - runs in the `pypi` GitHub environment; uses OIDC
      (`pypa/gh-action-pypi-publish`) to upload to PyPI. No long-lived
      token. The environment is configured with a required reviewer so
      a human approval clicks between tag push and PyPI publish.
@@ -701,6 +705,24 @@ Pre-conditions (one-time setup, already done):
 - GitHub repo Settings -> Environments -> `pypi` exists with a required
   reviewer rule (so an unauthorized push of a malicious commit followed
   by a signed tag still needs a human click).
+
+The hash-locked tooling files are generated, not hand-edited. To refresh after a tooling
+bump (Renovate proposes updates; regenerate to keep transitive hashes consistent):
+
+```bash
+uv pip compile requirements-build.in --generate-hashes --python-version 3.14 -o requirements-build.txt
+uv pip compile requirements-sbom.in  --generate-hashes --python-version 3.14 -o requirements-sbom.txt
+pytest -q tests/test_release_workflows.py   # pins shared with requirements.txt must agree
+```
+
+The lock files are fetched by SHA (`gh api .../contents/<lock>?ref=$GITHUB_SHA`) from the
+commit the workflow runs at, not from the release checkout, so recovering or backfilling an
+older tag that predates them still works (a dispatch is only trusted from `main`). The SBOM
+spec version is pinned with `--sv 1.5` because `cyclonedx-bom` 7.x defaults to 1.6.
+
+`sbom.yml` is split the same way: a read-only `sbom` job builds the runtime-only SBOM with
+the hash-locked `cyclonedx-bom` from a separate venv, and a `publish` job (contents: write +
+OIDC, no installs) attests it and creates the release.
 
 Per-release procedure:
 

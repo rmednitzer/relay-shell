@@ -19,7 +19,7 @@ from typing import Any
 
 import asyncssh
 
-from .errors import ForwardError, SessionError
+from .errors import ForwardError, RelayError, SessionError
 from .inventory import HostSpec, Inventory
 from .util import gen_id, truncate
 
@@ -30,6 +30,8 @@ _SIG_NAMES = {2: "INT", 9: "KILL", 15: "TERM", 1: "HUP", 3: "QUIT"}
 # that), which would expose an unauthenticated forward/SOCKS proxy to the network.
 _LOOPBACK = "127.0.0.1"
 _KNOWN_HOSTS_MODES = frozenset({"strict", "accept-new", "ignore"})
+# Verification strength, strongest first; used to refuse a per-call downgrade.
+_KNOWN_HOSTS_WEAKNESS = {"strict": 0, "accept-new": 1, "ignore": 2}
 # How long `run` waits for the channel to close after both output streams hit EOF.
 _WAIT_CLOSED_TIMEOUT = 5.0
 # ssh_spawn stdin back-pressure: bound the local write buffer and the wait for it to drain.
@@ -358,6 +360,19 @@ class SshPool:
         eff_key = key_path or spec.identity_file or ""
         eff_jump = jump or spec.jump or ""
         mode = (known_hosts or spec.known_hosts or self.settings.ssh_known_hosts).lower()
+        # Only the caller-supplied value is policed: the server default and an
+        # operator-written inventory entry are the operator's own choices.
+        if (
+            known_hosts
+            and not self.settings.ssh_allow_weaker_known_hosts
+            and _KNOWN_HOSTS_WEAKNESS.get(known_hosts.lower(), 0)
+            > _KNOWN_HOSTS_WEAKNESS.get(self.settings.ssh_known_hosts, 0)
+        ):
+            raise RelayError(
+                f"known_hosts={known_hosts.lower()} would weaken the server default "
+                f"{self.settings.ssh_known_hosts!r}; refused "
+                "(RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false)"
+            )
         key = _conn_key(spec.hostname, eff_user or None, eff_port or None, mode, eff_key, eff_jump)
 
         await self._sweep_conns()

@@ -142,6 +142,12 @@ class Settings(BaseSettings):
     ssh_config: str = "~/.ssh/config"
     inventory: str = ""
     ssh_known_hosts: str = "accept-new"
+    # When false, a per-call `known_hosts` weaker than `ssh_known_hosts` (for
+    # example `ignore` against a `strict` server default) is refused at connect time,
+    # so a caller cannot downgrade host-key verification. A stronger per-call mode and
+    # an operator-written inventory entry are always honoured. Default true keeps the
+    # historical behaviour (per-call overrides in either direction).
+    ssh_allow_weaker_known_hosts: bool = True
     ssh_connect_timeout: int = Field(default=10, ge=1, le=120)
     ssh_keepalive: int = Field(default=30, ge=0, le=600)
     # Idle eviction for cached SSH connections. 0 disables the reaper
