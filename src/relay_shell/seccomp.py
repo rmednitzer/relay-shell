@@ -508,28 +508,44 @@ _DEAD_POLL: Final = select.POLLHUP | select.POLLERR | select.POLLNVAL
 _DETACHED_MAX: Final = 1024
 
 
+_EINTR_RETRIES: Final = 8
+
+
+def _ioctl_retry(fd: int, cmd: int, arg: int) -> int:
+    """``ioctl`` retried on ``EINTR``; ``0`` on success, ``-1`` with errno left set."""
+    assert _libc is not None
+    for _ in range(_EINTR_RETRIES):
+        ctypes.set_errno(0)
+        if _libc.ioctl(fd, cmd, arg) == 0:
+            return 0
+        if ctypes.get_errno() != errno.EINTR:
+            return -1
+    return -1
+
+
 def _recv_and_continue(
     fd: int, recv_cmd: int, send_cmd: int, size: int, resp_pack: str
-) -> tuple[bool, tuple[int, int, int, tuple[int, ...]] | None]:  # pragma: no cover
+) -> tuple[bool, tuple[int, int, int, tuple[int, ...]] | None]:
     """RECV one notification on ``fd`` and answer CONTINUE.
 
     Returns ``(keep_serving, parsed)``; ``parsed`` is ``(id, pid, nr, args)`` or
-    ``None`` when nothing was received. Needs a live notify fd (privileged tests).
+    ``None`` when nothing was received. A signal interrupting either ioctl (``EINTR``)
+    is retried: giving up on RECV would close a listener that surviving processes
+    still need, and giving up on the CONTINUE reply would leave the child blocked.
     """
     assert _libc is not None
     notif = bytearray(size)  # MUST be zeroed before each RECV (else EINVAL)
     buf = (ctypes.c_char * size).from_buffer(notif)
-    ctypes.set_errno(0)
-    if _libc.ioctl(fd, recv_cmd, ctypes.addressof(buf)) != 0:
+    if _ioctl_retry(fd, recv_cmd, ctypes.addressof(buf)) != 0:
         # ENOENT: this target vanished between poll and recv - keep serving others.
+        # EINTR that outlived the retries: poll will report the listener again.
         # Any other error: stop serving this listener.
-        return ctypes.get_errno() == errno.ENOENT, None
+        return ctypes.get_errno() in (errno.ENOENT, errno.EINTR), None
     parsed = _parse_notif(notif)
     resp = struct.pack(resp_pack, parsed[0], 0, 0, _SECCOMP_USER_NOTIF_FLAG_CONTINUE)
     rbuf = (ctypes.c_char * len(resp)).from_buffer_copy(resp)
-    ctypes.set_errno(0)
     with contextlib.suppress(Exception):
-        _libc.ioctl(fd, send_cmd, ctypes.addressof(rbuf))
+        _ioctl_retry(fd, send_cmd, ctypes.addressof(rbuf))
     return True, parsed
 
 

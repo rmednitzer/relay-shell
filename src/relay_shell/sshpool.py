@@ -38,7 +38,9 @@ _WAIT_CLOSED_TIMEOUT = 5.0
 _MAX_PENDING_WRITE = 1 << 20
 # Appended to every SSH timeout string. A timeout is not a result: the client side gave
 # up, but the remote side may have finished, be finishing, or have done part of the work,
-# so a mutation must be reconciled against the remote state before it is retried.
+# so a mutation must be reconciled against the remote state before it is retried. It comes
+# BEFORE any caller-controlled text (paths): the tool response is truncated, and long paths
+# must never push the guidance out of it.
 _TIMEOUT_OUTCOME_UNKNOWN = (
     "outcome unknown: the remote side may still be running, may have completed, or may "
     "have applied part of the change; verify the remote state before retrying a mutation"
@@ -669,8 +671,8 @@ class SshPool:
                         await asyncio.wait_for(transfer, timeout)
                     except TimeoutError:
                         return (
-                            f"[TIMEOUT after {timeout}s] partial upload "
-                            f"{local} -> {target}:{remote}; {_TIMEOUT_OUTCOME_UNKNOWN}"
+                            f"[TIMEOUT after {timeout}s] {_TIMEOUT_OUTCOME_UNKNOWN}; "
+                            f"partial upload {local} -> {target}:{remote}"
                         )
                 else:
                     await transfer
@@ -695,8 +697,8 @@ class SshPool:
                         await asyncio.wait_for(transfer, timeout)
                     except TimeoutError:
                         return (
-                            f"[TIMEOUT after {timeout}s] partial download "
-                            f"{target}:{remote} -> {local}; {_TIMEOUT_OUTCOME_UNKNOWN}"
+                            f"[TIMEOUT after {timeout}s] {_TIMEOUT_OUTCOME_UNKNOWN}; "
+                            f"partial download {target}:{remote} -> {local}"
                         )
                 else:
                     await transfer

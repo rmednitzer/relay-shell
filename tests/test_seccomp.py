@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ctypes
+import errno
 import json
 import os
 import re
@@ -923,3 +925,53 @@ def test_stop_hands_a_live_listener_to_the_detached_server(
         for fd in (lr, lw):
             with contextlib.suppress(OSError):
                 os.close(fd)
+
+
+# --- EINTR handling in the shared RECV + CONTINUE helper (fake libc, no privilege) ---
+
+
+class _FakeLibc:
+    """ioctl stand-in: a scripted list of (return value, errno) per command."""
+
+    def __init__(self, recv: list[tuple[int, int]], send: list[tuple[int, int]]) -> None:
+        self.script = {1: list(recv), 2: list(send)}
+        self.calls: list[int] = []
+
+    def ioctl(self, _fd: int, cmd: int, _arg: int) -> int:
+        self.calls.append(cmd)
+        rc, err = self.script[cmd].pop(0)
+        ctypes.set_errno(err)
+        return rc
+
+
+def _use_fake_libc(monkeypatch: pytest.MonkeyPatch, fake: _FakeLibc) -> None:
+    monkeypatch.setattr(seccomp, "_libc", fake)
+
+
+def test_recv_is_retried_on_eintr_and_still_answers_continue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeLibc(
+        recv=[(-1, errno.EINTR), (-1, errno.EINTR), (0, 0)], send=[(-1, errno.EINTR), (0, 0)]
+    )
+    _use_fake_libc(monkeypatch, fake)
+    keep, parsed = seccomp._recv_and_continue(5, 1, 2, 80, seccomp._RESP_PACK)
+    assert keep is True and parsed is not None
+    assert fake.calls == [1, 1, 1, 2, 2]  # 3 RECV attempts, then CONTINUE retried once
+
+
+def test_recv_enoent_keeps_serving_but_a_hard_error_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_fake_libc(monkeypatch, _FakeLibc(recv=[(-1, errno.ENOENT)], send=[]))
+    assert seccomp._recv_and_continue(5, 1, 2, 80, seccomp._RESP_PACK) == (True, None)
+    _use_fake_libc(monkeypatch, _FakeLibc(recv=[(-1, errno.ENOTTY)], send=[]))
+    assert seccomp._recv_and_continue(5, 1, 2, 80, seccomp._RESP_PACK) == (False, None)
+
+
+def test_persistent_eintr_does_not_close_the_listener(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeLibc(recv=[(-1, errno.EINTR)] * seccomp._EINTR_RETRIES, send=[])
+    _use_fake_libc(monkeypatch, fake)
+    # Gave up retrying, but poll will report the listener again: keep serving it.
+    assert seccomp._recv_and_continue(5, 1, 2, 80, seccomp._RESP_PACK) == (True, None)
+    assert fake.calls == [1] * seccomp._EINTR_RETRIES

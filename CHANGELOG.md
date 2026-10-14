@@ -14,11 +14,13 @@ All notable changes to this project are documented here. The format follows
   because with no listener the kernel fails a `USER_NOTIF` syscall rather than allowing it
   (ADR 0006 had assumed the opposite; correction appended to the ADR). The listener is now
   handed to one shared daemon thread that keeps answering CONTINUE until the kernel reports
-  hang-up, then closes it. Events after the call ends are not audited; each surviving listener
+  hang-up, then closes it. A signal interrupting the RECV or the CONTINUE reply (`EINTR`) is retried instead of
+  closing the listener or leaving the child blocked. Events after the call ends are not audited; each surviving listener
   holds one fd (cap 1024, oldest closed with a warning beyond that). Reproduced and fixed under
   root with `CAP_SYS_ADMIN`; the live test skips on hosts without it.
 - **SSH timeouts say the outcome is unknown** (A14-R8b). `[TIMEOUT after Ns]` from `ssh_exec` /
   `ssh_fanout` / `ssh_check` and from `ssh_upload` / `ssh_download` now continues
+  (transfers put it before the echoed paths so a long path cannot push it out of the truncated response)
   `outcome unknown: the remote side may still be running, may have completed, or may have applied
   part of the change; verify the remote state before retrying a mutation`. The `[TIMEOUT after
   Ns]` prefix is unchanged, so parsers that match it keep working; local `shell_exec` timeouts are

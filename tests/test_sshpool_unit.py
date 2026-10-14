@@ -195,7 +195,8 @@ async def test_sftp_put_timeout_fires(tmp_path: Path, monkeypatch: pytest.Monkey
     msg = await pool.sftp_put(
         "h1.example", "/local/x", "/remote/x", recurse=False, connect_kwargs=_CK, timeout=1
     )
-    assert msg.startswith("[TIMEOUT after 1s] partial upload")
+    assert msg.startswith("[TIMEOUT after 1s] outcome unknown")
+    assert "partial upload /local/x" in msg
     assert "outcome unknown" in msg and "before retrying a mutation" in msg
     assert conn.sftp.exited  # the sftp client was closed on the way out
 
@@ -211,7 +212,8 @@ async def test_sftp_get_timeout_fires(tmp_path: Path, monkeypatch: pytest.Monkey
     msg = await pool.sftp_get(
         "h1.example", "/remote/x", "/local/x", recurse=False, connect_kwargs=_CK, timeout=1
     )
-    assert msg.startswith("[TIMEOUT after 1s] partial download")
+    assert msg.startswith("[TIMEOUT after 1s] outcome unknown")
+    assert "partial download" in msg
     assert "outcome unknown" in msg and "before retrying a mutation" in msg
 
 
@@ -925,3 +927,22 @@ def test_effective_known_hosts_never_raises_on_a_malformed_inventory_value(tmp_p
     relay.settings = settings
     relay.inventory = Inventory(str(tmp_path / "no_ssh_config"), str(inventory_file)).load()
     assert relay.effective_known_hosts("odd", "") == "7"
+
+
+async def test_timeout_guidance_survives_response_truncation_with_long_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The guidance precedes the caller-controlled paths, so a path near PATH_MAX cannot
+    # push it out of the (2 KiB) tool response.
+    conn = _SftpConn(delay=5.0)
+
+    async def fake_connect(*_a: object, **_k: object) -> _SftpConn:
+        return conn
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    pool = _make_pool(tmp_path)
+    long_path = "/" + "d" * 4000
+    msg = await pool.sftp_put(
+        "h1.example", long_path, long_path, recurse=False, connect_kwargs=_CK, timeout=1
+    )
+    assert "verify the remote state before retrying a mutation" in msg[:512]
