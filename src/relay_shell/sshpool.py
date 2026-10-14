@@ -52,10 +52,12 @@ _DRAIN_TIMEOUT = 5.0
 # operator's ``ProxyCommand`` (``%h``, ``%n``, ``%r``) and splits the result into argv, so
 # whitespace, quotes or a leading ``-`` would add arguments (``-oProxyCommand=...``) to a
 # local command; ``${VAR}`` in the value is expanded afterwards. The host is also written to
-# known_hosts verbatim under ``accept-new``. Only a plain hostname, address or bracketed IPv6
-# literal passes; operator-written inventory/ssh_config aliases are trusted as written.
+# known_hosts verbatim under ``accept-new``. A backslash is refused too: shlex treats it as an
+# escape, so ``name\\`` would swallow the following space and merge two trusted arguments.
+# Only a plain hostname, address or bracketed IPv6 literal passes; operator-written
+# inventory/ssh_config aliases are trusted as written.
 _HOST_TOKEN_RE = re.compile(r"[A-Za-z0-9_\[][A-Za-z0-9._\-:%\[\]]{0,254}")
-_USER_TOKEN_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._\-\\]{0,127}")
+_USER_TOKEN_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._\-]{0,127}")
 
 
 def _check_ssh_tokens(*, host: str | None = None, user: str | None = None) -> None:

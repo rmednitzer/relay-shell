@@ -139,6 +139,48 @@ def test_seccomp_degrade_keeps_the_first_reason(
     assert relay.audit.degraded_reason == "audit write failed at runtime"
 
 
+def test_mark_degraded_keeps_one_reason_under_concurrency(settings: Settings) -> None:
+    """Two supervisor threads failing together must not interleave reason and flag."""
+    import threading
+
+    relay = Relay(settings)
+    audit = relay.audit
+    barrier = threading.Barrier(8)
+    reasons = [f"r{i}" for i in range(8)]
+
+    def _fail(reason: str) -> None:
+        barrier.wait()
+        for _ in range(200):
+            audit.mark_degraded(reason)
+
+    threads = [threading.Thread(target=_fail, args=(r,)) for r in reasons]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert audit.degraded
+    assert audit.degraded_reason in reasons
+
+
+def test_mark_degraded_is_atomic(settings: Settings) -> None:
+    """The check and both stores sit under one lock (a preempted writer cannot be overwritten)."""
+    relay = Relay(settings)
+    audit = relay.audit
+    audit._degrade_lock.acquire()
+    done = []
+
+    import threading
+
+    t = threading.Thread(target=lambda: (audit.mark_degraded("late"), done.append(1)))
+    t.start()
+    t.join(0.2)
+    assert not done, "mark_degraded must wait for the lock"
+    assert not audit.degraded
+    audit._degrade_lock.release()
+    t.join(2)
+    assert audit.degraded_reason == "late"
+
+
 # -- cancellation windows ---------------------------------------------------
 
 
@@ -306,6 +348,9 @@ async def test_connect_rejects_hostile_targets(
         {"user": "-oProxyCommand=id"},
         {"user": "a;b"},
         {"user": "$(id)"},
+        {"user": "name\\"},
+        {"user": "DOMAIN\\user"},
+        {"jump": "name\\@j"},
         {"jump": "j1 -oProxyCommand=id"},
         {"jump": "ok,evil host"},
         {"jump": "-oProxyCommand=id"},
