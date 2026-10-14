@@ -429,8 +429,11 @@ exits non-zero. It needs `RELAY_AUDIT_RSYNC_DEST` and, if logrotate keeps other 
 segments, `RELAY_AUDIT_RETAIN_SEGMENTS`; after logrotate prunes the oldest segment the verifier
 accepts the shortened history when it continues a checkpointed record (and hosts that rotated
 before checkpoints existed need one reviewed `approved_heads` entry). Before publishing, the wrapper
-pulls the remote anchor and refuses (exit 4) a local chain that is behind it or has forked from
-it, since the sync is a mirror (`RELAY_AUDIT_REMOTE_CHECK`; write-only destinations skip it).
+pulls the remote anchor (capped at 64 KiB) and refuses (exit 4) a local chain that is behind it
+or that differs from it at the same sequence number, since the sync is a mirror. A chain that
+is ahead is accepted without proving the remote anchor is its ancestor. A missing anchor on the
+first sync is skipped; any other pull failure stops the run, and write-only destinations must
+set `RELAY_AUDIT_REMOTE_CHECK=off` explicitly (any value other than `pull` or `off` is refused).
 Install steps, the ledger
 format and the limits of that check are in
 [`deploy/evidence/README.md`](https://github.com/rmednitzer/relay-shell/blob/main/deploy/evidence/README.md);

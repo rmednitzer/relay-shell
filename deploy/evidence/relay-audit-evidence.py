@@ -462,6 +462,9 @@ def main() -> int:
     return 0 if valid else 1
 
 
+MAX_ANCHOR_BYTES = 65536  # an anchor is a few hundred bytes; bound what a remote can feed us
+
+
 def compare_remote_anchor(remote_path: str) -> tuple[int, str]:
     """Refuse to publish an anchor that is older than, or has diverged from, the remote one.
 
@@ -474,7 +477,11 @@ def compare_remote_anchor(remote_path: str) -> tuple[int, str]:
     either anchor cannot be read.
     """
     try:
-        remote = json.loads(Path(remote_path).read_text(encoding="utf-8"))
+        with Path(remote_path).open("rb") as handle:
+            raw = handle.read(MAX_ANCHOR_BYTES + 1)
+        if len(raw) > MAX_ANCHOR_BYTES:
+            return 2, f"cannot compare anchors: remote anchor exceeds {MAX_ANCHOR_BYTES} bytes"
+        remote = json.loads(raw.decode("utf-8"))
         local = json.loads(ANCHOR.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         return 2, f"cannot compare anchors: {exc}"

@@ -108,15 +108,58 @@ valid_port() {
     [[ "$p" =~ ^[0-9]{1,5}$ ]] && [ "$((10#$p))" -ge 1 ] && [ "$((10#$p))" -le 65535 ]
 }
 
+valid_ipv4() {
+    local oct IFS=.
+    [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    for oct in $1; do [ "$((10#$oct))" -le 255 ] || return 1; done
+}
+
+# Count the 16-bit groups of one side of an IPv6 address (the text before or after "::").
+# Prints the count; fails on an empty group, a hextet over 4 digits, or (unless allow_v4,
+# which is only true for the final side) an embedded dotted IPv4 tail, which counts as two.
+v6_side_groups() {
+    local side="$1" allow_v4="$2" g n=0 i=0 parts IFS=:
+    [ -n "$side" ] || { echo 0; return 0; }
+    case "$side" in :*|*:) return 1 ;; esac
+    read -ra parts <<< "$side"
+    for g in "${parts[@]}"; do
+        i=$((i + 1))
+        if [[ "$g" =~ ^[0-9A-Fa-f]{1,4}$ ]]; then
+            n=$((n + 1))
+        elif [ "$allow_v4" = 1 ] && [ "$i" -eq "${#parts[@]}" ] && valid_ipv4 "$g"; then
+            n=$((n + 2))
+        else
+            return 1
+        fi
+    done
+    echo "$n"
+}
+
+valid_ipv6() {
+    local a="$1" head tail h t
+    [[ "$a" =~ ^[0-9A-Fa-f:.]+$ ]] && [[ "$a" == *:* ]] || return 1
+    [[ "$a" == *:::* ]] && return 1
+    if [[ "$a" == *::* ]]; then
+        head="${a%%::*}"
+        tail="${a#*::}"
+        [[ "$tail" == *::* ]] && return 1
+        h=$(v6_side_groups "$head" 0) || return 1
+        t=$(v6_side_groups "$tail" 1) || return 1
+        # "::" stands for at least one group of zeros.
+        [ $((h + t)) -le 7 ]
+    else
+        h=$(v6_side_groups "$a" 1) || return 1
+        [ "$h" -eq 8 ]
+    fi
+}
+
 valid_cidr_token() {
     local tok="$1" addr prefix=""
     addr="${tok%%/*}"
     [ "$addr" != "$tok" ] && prefix="${tok#*/}"
-    if [[ "$addr" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
-        local oct IFS=.
-        for oct in $addr; do [ "$((10#$oct))" -le 255 ] || return 1; done
+    if valid_ipv4 "$addr"; then
         [ -z "$prefix" ] || { [[ "$prefix" =~ ^[0-9]{1,2}$ ]] && [ "$((10#$prefix))" -le 32 ]; }
-    elif [[ "$addr" =~ ^[0-9A-Fa-f:]+$ ]] && [[ "$addr" == *:* ]]; then
+    elif valid_ipv6 "$addr"; then
         [ -z "$prefix" ] || { [[ "$prefix" =~ ^[0-9]{1,3}$ ]] && [ "$((10#$prefix))" -le 128 ]; }
     else
         return 1

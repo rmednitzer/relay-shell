@@ -246,8 +246,11 @@ All notable changes to this project are documented here. The format follows
   checks the values without root.
 - **The evidence sync will not roll the off-host copy back (A14-D9).** It pulls the remote
   anchor first and refuses a local chain that is behind it or has forked at the same
-  sequence (`RELAY_AUDIT_REMOTE_CHECK`, default `pull`); the README documents a forced-command
-  `rrsync -wo` destination.
+  sequence (`RELAY_AUDIT_REMOTE_CHECK`, default `pull`, only `pull` or `off` accepted); the pull
+  is size-capped and fails closed on anything but a missing first-sync anchor; the README
+  documents a forced-command `rrsync -wo` destination. Refresh-token spent markers now live one
+  refresh lifetime past the latest rotation (at most 64 per client), and the edge preflight
+  parses IPv6 addresses instead of checking their characters.
 - **Classifier tuning, both directions (A14-C9, `PATTERNS_VERSION` 16).** Now escalated:
   `rm \<newline>-rf`, `sudo -u root reboot`, `nice -n 10 reboot`, `timeout 5 reboot` and
   `redis-cli FLUSHALL` (Tier 3); `systemctl start|enable|reload`, `useradd`, `iptables -A`,

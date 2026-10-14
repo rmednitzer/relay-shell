@@ -13,6 +13,16 @@ set -u
 # destination is write-only and cannot be read back).
 : "${RELAY_AUDIT_REMOTE_CHECK:=pull}"
 
+# The remote check guards audit integrity, so an unknown value must not fall through to
+# the same path as the deliberate `off`.
+case "$RELAY_AUDIT_REMOTE_CHECK" in
+  pull|off) ;;
+  *)
+    echo "relay-audit-evidence-sync: RELAY_AUDIT_REMOTE_CHECK must be 'pull' or 'off', got '$RELAY_AUDIT_REMOTE_CHECK'" >&2
+    exit 2
+    ;;
+esac
+
 set --
 if [ -n "${RELAY_AUDIT_RSYNC_CHOWN:-}" ]; then
   set -- "--chown=$RELAY_AUDIT_RSYNC_CHOWN"
@@ -25,12 +35,16 @@ verify_status=$?
 if [ "$RELAY_AUDIT_REMOTE_CHECK" = "pull" ]; then
   remote_dir=$(mktemp -d) || exit 1
   trap 'rm -rf "$remote_dir"' EXIT
-  "$RELAY_AUDIT_RSYNC_BIN" \
-    --archive --protect-args \
+  # The anchor is a few hundred bytes. --max-size keeps a hostile or broken destination from
+  # filling the temporary directory; an oversized file is skipped and then fails the compare.
+  LC_ALL=C "$RELAY_AUDIT_RSYNC_BIN" \
+    --archive --protect-args --max-size=65536 \
     --rsync-path="$RELAY_AUDIT_RSYNC_PATH" \
     -e "/usr/bin/ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RELAY_AUDIT_SSH_KNOWN_HOSTS -o ControlMaster=no -o ControlPath=none" \
-    "${RELAY_AUDIT_RSYNC_DEST%/}/latest-anchor.json" "$remote_dir/latest-anchor.json"
+    "${RELAY_AUDIT_RSYNC_DEST%/}/latest-anchor.json" "$remote_dir/latest-anchor.json" \
+    2> "$remote_dir/pull.err"
   pull_status=$?
+  cat "$remote_dir/pull.err" >&2
   case "$pull_status" in
     0)
       "$RELAY_AUDIT_COMPARE_BIN" --check-remote-anchor "$remote_dir/latest-anchor.json"
@@ -38,9 +52,18 @@ if [ "$RELAY_AUDIT_REMOTE_CHECK" = "pull" ]; then
       [ "$compare_status" -eq 0 ] || exit "$compare_status"
       ;;
     23)
-      # rsync reports a missing source file (first sync) or a write-only destination
-      # (forced command) as a partial transfer: there is nothing to compare against.
-      echo "relay-audit-evidence-sync: no readable remote anchor; skipping the rollback check" >&2
+      # Exit 23 is rsync's generic "partial transfer" status, so it only means "no anchor yet"
+      # (a first sync) when every reported error is a missing source file. A permission or
+      # I/O failure must stop the run rather than disable the check. Write-only destinations
+      # use RELAY_AUDIT_REMOTE_CHECK=off instead.
+      if grep -q 'link_stat .* failed: No such file or directory (2)' "$remote_dir/pull.err" \
+        && ! grep -E '^rsync' "$remote_dir/pull.err" \
+          | grep -qvE 'link_stat .* failed: No such file or directory \(2\)|^rsync error: some files/attrs were not transferred'; then
+        echo "relay-audit-evidence-sync: remote anchor does not exist yet; skipping the rollback check" >&2
+      else
+        echo "relay-audit-evidence-sync: reading the remote anchor failed; refusing to publish (use RELAY_AUDIT_REMOTE_CHECK=off for a write-only destination)" >&2
+        exit 23
+      fi
       ;;
     *) exit "$pull_status" ;;
   esac

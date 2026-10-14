@@ -115,7 +115,8 @@ register (once) ──> authorize+PKCE ──> code ──> exchange ──> acc
 #### Reuse of a rotated-out refresh token
 
 Rotation leaves a marker (`sha256:spent:<hash of the token>`, never the token, carrying the
-client id and the token's own expiry) in `tokens.json`. If the same refresh token is
+client id; it lives as long as the family a rotation can start, i.e. one refresh lifetime past
+the latest rotation, with at most 64 markers kept per client) in `tokens.json`. If the same refresh token is
 presented again, two parties hold it, the legitimate client and whoever copied it:
 
 - within 10 seconds of the rotation it is only refused (`invalid_grant`): two requests that

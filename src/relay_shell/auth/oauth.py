@@ -74,6 +74,7 @@ _SPENT_PREFIX = _HASH_PREFIX + "spent:"
 # benign race (two requests loaded the same token, or a retry crossed the rotation) and
 # only refused; later it is treated as theft of a rotated token and revokes the client.
 _REUSE_GRACE_SECONDS = 10
+_MAX_SPENT_PER_CLIENT = 64
 
 
 def _hashed(secret: str) -> str:
@@ -636,11 +637,32 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                     error_description="refresh token already used or expired",
                 )
             # Remember the spent token so a later replay is recognised (A14-A11b).
+            # The marker must outlive every descendant of the spent token: a thief who
+            # rotates first holds a fresh full-TTL family, so the consumed grant's own
+            # expiry is too early. Extend this client's markers to the new family's
+            # lifetime and keep the newest few, so the store stays bounded.
+            client_id = client.client_id or ""
+            family_expiry = _now() + self._refresh_ttl
             tokens[_SPENT_PREFIX + sha256_hex(raw)] = {
-                "client_id": client.client_id or "",
+                "client_id": client_id,
                 "spent_at": _now(),
-                "expires_at": int(record.get("expires_at", 0)),
+                "expires_at": family_expiry,
             }
+            markers = sorted(
+                (
+                    (k, v)
+                    for k, v in tokens.items()
+                    if k.startswith(_SPENT_PREFIX)
+                    and isinstance(v, dict)
+                    and v.get("client_id") == client_id
+                ),
+                key=lambda kv: int(kv[1].get("spent_at", 0)),
+                reverse=True,
+            )
+            for _key, marker in markers[:_MAX_SPENT_PER_CLIENT]:
+                marker["expires_at"] = max(int(marker.get("expires_at", 0)), family_expiry)
+            for key, _marker in markers[_MAX_SPENT_PER_CLIENT:]:
+                tokens.pop(key, None)
             self._tokens.save(tokens)
             resource = self._checked_resource(record.get("resource"))
             granted = list(record["scopes"])

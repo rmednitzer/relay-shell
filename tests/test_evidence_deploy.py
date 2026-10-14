@@ -84,6 +84,10 @@ def _run_sync(
     remote_anchor: dict[str, Any] | None = None,
     local_anchor: dict[str, Any] | None = None,
     pull_status: int = 23,
+    pull_stderr: str = 'rsync: [sender] link_stat "/evidence/latest-anchor.json" failed: '
+    "No such file or directory (2)\n"
+    "rsync error: some files/attrs were not transferred (code 23)",
+    remote_bytes: bytes | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     verifier = tmp_path / "verify"
     rsync = tmp_path / "rsync"
@@ -108,6 +112,7 @@ case "$last" in
   */latest-anchor.json)
     # The rollback check pulls the remote anchor into a local temp file.
     if [ -n "${FAKE_REMOTE_ANCHOR:-}" ]; then cp "$FAKE_REMOTE_ANCHOR" "$last"; exit 0; fi
+    [ -z "${FAKE_PULL_STDERR:-}" ] || printf '%s\n' "$FAKE_PULL_STDERR" >&2
     exit "${FAKE_PULL_STATUS:-23}"
     ;;
 esac
@@ -122,13 +127,18 @@ esac
     remote_file = tmp_path / "remote-anchor.json"
     if remote_anchor is not None:
         remote_file.write_text(json.dumps(remote_anchor), encoding="utf-8")
+    if remote_bytes is not None:
+        remote_file.write_bytes(remote_bytes)
 
     env = {
         **os.environ,
         "RELAY_AUDIT_REMOTE_CHECK": remote_check,
         "RELAY_AUDIT_COMPARE_BIN": str(VERIFIER),
-        "FAKE_REMOTE_ANCHOR": str(remote_file) if remote_anchor is not None else "",
+        "FAKE_REMOTE_ANCHOR": (
+            str(remote_file) if remote_anchor is not None or remote_bytes is not None else ""
+        ),
         "FAKE_PULL_STATUS": str(pull_status),
+        "FAKE_PULL_STDERR": pull_stderr,
         "RELAY_AUDIT_LOG_DIR": str(evidence_dir),
         "RELAY_AUDIT_RSYNC_DEST": "test.invalid:/evidence/",
         "RELAY_AUDIT_SSH_KNOWN_HOSTS": str(tmp_path / "known_hosts"),
@@ -270,6 +280,59 @@ def test_sync_skips_the_check_when_there_is_no_readable_remote_anchor(tmp_path: 
     assert result.returncode == 0, result.stderr
     assert "skipping the rollback check" in result.stderr
     assert count.read_text(encoding="utf-8").strip() == "3"
+
+
+def test_sync_fails_closed_on_a_generic_partial_transfer_error(tmp_path: Path) -> None:
+    """rsync exit 23 also covers permission and I/O errors, which must not disable the check."""
+    result, _log, count = _run_sync(
+        tmp_path,
+        remote_check="pull",
+        local_anchor=_anchor(5),
+        pull_status=23,
+        pull_stderr=(
+            'rsync: [sender] send_files failed to open "/evidence/latest-anchor.json": '
+            "Permission denied (13)\n"
+            "rsync error: some files/attrs were not transferred (code 23)"
+        ),
+    )
+    assert result.returncode == 23
+    assert "refusing to publish" in result.stderr
+    assert count.read_text(encoding="utf-8").strip() == "1"
+
+
+def test_sync_fails_closed_on_exit_23_without_a_missing_file_report(tmp_path: Path) -> None:
+    result, _log, count = _run_sync(
+        tmp_path, remote_check="pull", local_anchor=_anchor(5), pull_status=23, pull_stderr=""
+    )
+    assert result.returncode == 23
+    assert count.read_text(encoding="utf-8").strip() == "1"
+
+
+@pytest.mark.parametrize("mode", ["Pull", "of", "none", "pull "])
+def test_sync_rejects_an_unknown_remote_check_mode(tmp_path: Path, mode: str) -> None:
+    result, _log, count = _run_sync(tmp_path, remote_check=mode, local_anchor=_anchor(5))
+    assert result.returncode == 2
+    assert "must be 'pull' or 'off'" in result.stderr
+    assert not count.exists(), "nothing may be published or pulled"
+
+
+def test_sync_bounds_the_size_of_the_pulled_anchor(tmp_path: Path) -> None:
+    _result, log, _count = _run_sync(
+        tmp_path, remote_check="pull", local_anchor=_anchor(5), remote_anchor=_anchor(5)
+    )
+    assert "--max-size=65536" in _calls(log)[0]
+
+
+def test_oversized_remote_anchor_is_refused_before_parsing(tmp_path: Path) -> None:
+    result, _log, count = _run_sync(
+        tmp_path,
+        remote_check="pull",
+        local_anchor=_anchor(5),
+        remote_bytes=b'{"valid":true,"pad":"' + b"x" * 70000 + b'"}',
+    )
+    assert result.returncode == 2
+    assert "exceeds" in result.stderr
+    assert count.read_text(encoding="utf-8").strip() == "1"
 
 
 def test_sync_stops_on_a_pull_failure_other_than_a_missing_file(tmp_path: Path) -> None:

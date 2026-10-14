@@ -36,7 +36,10 @@ def test_defaults_and_ordinary_values_pass_without_root() -> None:
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "Edge values are valid" in proc.stdout
     proc = run(
-        RELAY_SHELL_EDGE_CLIENT_CIDRS="10.0.0.0/8 192.168.1.5 2001:db8::/32 ::1",
+        RELAY_SHELL_EDGE_CLIENT_CIDRS=(
+            "10.0.0.0/8 192.168.1.5 2001:db8::/32 ::1 :: 1:2:3:4:5:6:7:8/128 "
+            "1::8 fe80::1 ::ffff:192.0.2.1 64:ff9b::192.0.2.33/96 1:2:3:4:5:6:7::"
+        ),
         RELAY_SHELL_EDGE_UPSTREAM="[::1]:8080",
         RELAY_SHELL_EDGE_ACME_CA="https://acme-staging-v02.api.letsencrypt.org/directory",
     )
@@ -65,6 +68,18 @@ def test_defaults_and_ordinary_values_pass_without_root() -> None:
         ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "300.1.1.1"),
         ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "2001:db8::/129"),
         ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "not-a-network"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "::::"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "1::2::3/64"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "12345::/64"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "1:2:3:4:5:6:7:8:9"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "1:2:3:4:5:6:7"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", ":1:2:3:4:5:6:7"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "1:2:3:4:5:6:7:"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "1:2:3:4:5:6:7::8"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", ":::1"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "1.2.3.4::1"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "::ffff:300.1.1.1"),
+        ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "gggg::1"),
         ("RELAY_SHELL_EDGE_CLIENT_CIDRS", "10.0.0.0/8\x01"),
     ],
 )
@@ -81,12 +96,12 @@ def test_open_cidr_is_accepted_but_warned_about(cidr: str) -> None:
     assert "allows every address" in proc.stderr
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="as root the script would really install the edge")
 def test_the_script_still_requires_root_after_validation() -> None:
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": "/nonexistent", **GOOD}
     assert BASH is not None
     proc = subprocess.run(
         [BASH, str(SCRIPT)], env=env, capture_output=True, text=True, timeout=30, check=False
     )
-    if os.geteuid() != 0:
-        assert proc.returncode != 0
-        assert "must run as root" in proc.stderr
+    assert proc.returncode != 0
+    assert "must run as root" in proc.stderr

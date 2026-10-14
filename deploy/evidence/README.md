@@ -152,9 +152,13 @@ the off-host copy. Before publishing, the wrapper therefore pulls the remote
 (`RELAY_AUDIT_REMOTE_CHECK=pull`, the default). Within one chain epoch it refuses (exit 4) a
 local anchor whose `latest_seq` is behind the remote one, or whose `latest_chain` differs at
 the same sequence. A different epoch (an approved genesis reset) is not compared. If the
-remote anchor cannot be read (first sync, or a write-only destination, which rsync reports as
-exit 23) the check is skipped with a message; any other pull failure stops the run. Set
-`RELAY_AUDIT_REMOTE_CHECK=off` only for a destination that cannot be read back. This check
+remote anchor does not exist yet (first sync: rsync reports only a missing source file) the
+check is skipped with a message. Every other pull failure stops the run, including a generic
+rsync exit 23 for a permission or I/O error, an oversized anchor (the pull is capped at 64 KiB
+and the parser at the same size) and an unknown `RELAY_AUDIT_REMOTE_CHECK` value (only `pull`
+and `off` are accepted). A write-only destination cannot be read back, so it needs
+`RELAY_AUDIT_REMOTE_CHECK=off` set explicitly. A local chain that is ahead is accepted without
+proving that the remote anchor is its ancestor. This check
 protects the history that is already off-host; it does not make the destination append-only.
 
 Harden the destination as well:

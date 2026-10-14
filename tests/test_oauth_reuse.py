@@ -127,3 +127,46 @@ def test_approval_is_required_unless_explicitly_turned_off(tmp_path: Path) -> No
     assert make_oauth_provider(bare)._require_approval is True
     bare.auth_require_approval = False  # type: ignore[attr-defined]
     assert make_oauth_provider(bare)._require_approval is False
+
+
+async def test_marker_outlives_a_descendant_rotated_late_in_the_token_lifetime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A thief who rotates near the end of the TTL holds a fresh full-TTL family."""
+    p = _provider(tmp_path)
+    issued = p._issue("client-a", ["mcp:tools"])
+    assert issued.refresh_token is not None
+    real_now = oauth._now()
+    late = real_now + 86400 - 100  # just before the stolen token's own deadline
+    monkeypatch.setattr(oauth, "_now", lambda: late)
+    refresh = await p.load_refresh_token(_client(), issued.refresh_token)
+    assert refresh is not None
+    thief = await p.exchange_refresh_token(_client(), refresh, ["mcp:tools"])
+    assert thief.refresh_token is not None
+
+    # Past the stolen token's original deadline the thief rotates the descendant; the
+    # issue path purges expired records, but the marker must still be there.
+    after = real_now + 86400 + 50
+    monkeypatch.setattr(oauth, "_now", lambda: after)
+    child = await p.load_refresh_token(_client(), thief.refresh_token)
+    assert child is not None
+    rotated = await p.exchange_refresh_token(_client(), child, ["mcp:tools"])
+    assert any(k.startswith(oauth._SPENT_PREFIX) for k in p._tokens.load())
+
+    # The legitimate client's later replay of the original token still revokes the family.
+    monkeypatch.setattr(oauth, "_now", lambda: after + oauth._REUSE_GRACE_SECONDS + 5)
+    assert await p.load_refresh_token(_client(), issued.refresh_token) is None
+    assert await p.load_access_token(rotated.access_token) is None
+
+
+async def test_spent_markers_per_client_are_bounded(tmp_path: Path) -> None:
+    p = _provider(tmp_path)
+    issued = p._issue("client-a", ["mcp:tools"])
+    token = issued.refresh_token
+    for _ in range(oauth._MAX_SPENT_PER_CLIENT + 5):
+        assert token is not None
+        refresh = await p.load_refresh_token(_client(), token)
+        assert refresh is not None
+        token = (await p.exchange_refresh_token(_client(), refresh, ["mcp:tools"])).refresh_token
+    spent = [k for k in p._tokens.load() if k.startswith(oauth._SPENT_PREFIX)]
+    assert len(spent) == oauth._MAX_SPENT_PER_CLIENT
