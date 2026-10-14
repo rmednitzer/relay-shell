@@ -663,7 +663,9 @@ class Relay:
             inventory_mode = self.inventory.resolve(host).known_hosts
         except Exception:  # noqa: BLE001 - audit helper must never fail the call
             inventory_mode = None
-        return (known_hosts or inventory_mode or self.settings.ssh_known_hosts).lower()
+        # str(): an inventory entry is operator JSON and may hold a non-string; the audit
+        # helper must never raise outside the audited runner (the pool still refuses it).
+        return str(known_hosts or inventory_mode or self.settings.ssh_known_hosts).lower()
 
     def connect_kwargs(
         self,

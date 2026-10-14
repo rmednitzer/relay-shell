@@ -166,12 +166,29 @@ jobs:
           # No pip cache on the release path: nothing restored from a shared
           # cache may influence what is built and signed.
 
+      - name: Fetch the hash-locked build tooling from the workflow revision
+        # The tag being released may predate requirements-build.txt (a
+        # workflow_dispatch recovery of an older release checks out that old
+        # commit). The lock therefore comes from the commit this workflow runs at
+        # (github.sha: the tag's commit on a tag push, `main` on a dispatch, which
+        # the verify job restricts to main), by SHA, not from the release checkout.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/${REPO}/contents/requirements-build.txt?ref=${WORKFLOW_SHA}" \
+            > "$RUNNER_TEMP/requirements-build.txt"
+          test -s "$RUNNER_TEMP/requirements-build.txt"
+
       - name: Install build tooling (hash-locked) and the package
         run: |
           # Build tooling first, from the hash-locked file, so the later
           # --no-build-isolation installs and `python -m build` use these exact
           # (not freshly resolved) hatchling/build/twine.
-          python -m pip install --require-hashes -r requirements-build.txt
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/requirements-build.txt"
           # Direct dependency pins from requirements.txt act as constraints.
           python -m pip install --no-build-isolation -c requirements.txt -e ".[dev]"
 

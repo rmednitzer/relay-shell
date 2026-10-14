@@ -904,3 +904,22 @@ async def test_audit_records_the_effective_known_hosts_mode(tmp_path: Path) -> N
     ]
     modes = {r["args"]["host"]: r["args"]["known_hosts"] for r in recs if r["tool"] == "ssh_exec"}
     assert modes == {"lab": "ignore", "other.invalid": "ignore"}
+
+
+def test_effective_known_hosts_never_raises_on_a_malformed_inventory_value(tmp_path: Path) -> None:
+    # The audit helper runs before the audited runner is entered; a non-string inventory
+    # `known_hosts` must not escape as an uncaught transport failure.
+    from relay_shell.server import Relay
+
+    inventory_file = tmp_path / "inventory.json"
+    inventory_file.write_text('{"odd": {"hostname": "odd.invalid", "known_hosts": 7}}')
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        ssh_config=str(tmp_path / "no_ssh_config"),
+        inventory=str(inventory_file),
+    )
+    relay = Relay.__new__(Relay)
+    relay.settings = settings
+    relay.inventory = Inventory(str(tmp_path / "no_ssh_config"), str(inventory_file)).load()
+    assert relay.effective_known_hosts("odd", "") == "7"

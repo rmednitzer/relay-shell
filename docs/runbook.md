@@ -715,6 +715,11 @@ uv pip compile requirements-sbom.in  --generate-hashes --python-version 3.14 -o 
 pytest -q tests/test_release_workflows.py   # pins shared with requirements.txt must agree
 ```
 
+The lock files are fetched by SHA (`gh api .../contents/<lock>?ref=$GITHUB_SHA`) from the
+commit the workflow runs at, not from the release checkout, so recovering or backfilling an
+older tag that predates them still works (a dispatch is only trusted from `main`). The SBOM
+spec version is pinned with `--sv 1.5` because `cyclonedx-bom` 7.x defaults to 1.6.
+
 `sbom.yml` is split the same way: a read-only `sbom` job builds the runtime-only SBOM with
 the hash-locked `cyclonedx-bom` from a separate venv, and a `publish` job (contents: write +
 OIDC, no installs) attests it and creates the release.

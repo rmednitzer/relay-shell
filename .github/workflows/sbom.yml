@@ -93,6 +93,21 @@ jobs:
           test -s "$signers"
           git -c "gpg.ssh.allowedSignersFile=$signers" tag -v "$RELEASE_TAG"
 
+      - name: Fetch the hash-locked SBOM tool from the workflow revision
+        # Backfilling an SBOM for an older tag checks out that old commit, which
+        # predates requirements-sbom.txt; take the lock from the commit this
+        # workflow runs at (the tag's commit on a push, `main` on a dispatch).
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/${REPO}/contents/requirements-sbom.txt?ref=${WORKFLOW_SHA}" \
+            > "$RUNNER_TEMP/requirements-sbom.txt"
+          test -s "$RUNNER_TEMP/requirements-sbom.txt"
+
       - name: Install runtime dependencies and the hash-locked SBOM tool
         run: |
           # Runtime environment: the package plus its dependencies only. The
@@ -103,7 +118,7 @@ jobs:
           # The SBOM tool lives in its own venv, from the hash-locked file, so it
           # is not itself listed as a component of the environment it describes.
           python -m venv .sbom-tool
-          .sbom-tool/bin/python -m pip install --require-hashes -r requirements-sbom.txt
+          .sbom-tool/bin/python -m pip install --require-hashes -r "$RUNNER_TEMP/requirements-sbom.txt"
 
       - name: Generate CycloneDX SBOM
         env:
@@ -111,16 +126,19 @@ jobs:
         run: |
           OUT_JSON="relay-shell-${TAG_NAME}.cdx.json"
           OUT_XML="relay-shell-${TAG_NAME}.cdx.xml"
-          # `--of JSON` / `--of XML` is the canonical flag in cyclonedx-py
-          # >=4.x; `-o` is the output-file flag. CDX 1.5 is the default
-          # spec version (1.6 exists; held at 1.5 for SIEM compatibility).
+          # `--of JSON` / `--of XML` select the format and `-o` the output file.
+          # The spec version is pinned explicitly (`--sv 1.5`): the generator's
+          # own default moved to 1.6 in 7.x, and 1.5 is held for SIEM
+          # compatibility.
           .sbom-tool/bin/cyclonedx-py environment \
             --of JSON \
+            --sv 1.5 \
             --output-reproducible \
             -o "$OUT_JSON" \
             .sbom-venv/bin/python
           .sbom-tool/bin/cyclonedx-py environment \
             --of XML \
+            --sv 1.5 \
             --output-reproducible \
             -o "$OUT_XML" \
             .sbom-venv/bin/python
@@ -130,6 +148,7 @@ jobs:
           import json, re, sys
           path, tag = sys.argv[1], sys.argv[2]
           data = json.load(open(path))
+          assert data.get("specVersion") == "1.5", f"unexpected spec {data.get('specVersion')}"
           comps = {c.get("name"): c.get("version") for c in data.get("components", [])}
           assert "mcp" in comps, "SBOM missing core dependency 'mcp'"
           # Tag is like v0.2.0; allow either match or just presence of relay-shell.

@@ -19,6 +19,9 @@ All notable changes to this project are documented here. The format follows
   tools and the SBOM tool are not listed) built with the hash-locked `cyclonedx-bom`
   (`requirements-sbom.txt`; the generator moves from 5.x to 7.x). `workflow_dispatch` runs of
   both workflows are only trusted from `main`. `pip-audit.yml` also scans both lock files.
+  The lock files are fetched by SHA from the commit the workflow runs at (so recovering or
+  backfilling an older tag still works), and the SBOM spec version is pinned to CycloneDX 1.5
+  (`--sv 1.5`, checked in the sanity step) because the 7.x generator defaults to 1.6.
   `tests/test_release_workflows.py` guards all of this. Residual: transitive runtime
   dependencies of the package itself are still resolved at build time (runbook L8).
 

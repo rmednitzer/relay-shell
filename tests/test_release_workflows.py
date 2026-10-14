@@ -144,3 +144,24 @@ def test_tooling_locks_are_fully_hashed_and_agree_with_requirements() -> None:
 def test_pip_audit_covers_the_release_tooling_locks() -> None:
     text = (WORKFLOWS / "pip-audit.yml").read_text(encoding="utf-8")
     assert "-r requirements-build.txt" in text and "-r requirements-sbom.txt" in text
+
+
+def test_tooling_locks_come_from_the_workflow_revision_not_the_release_checkout() -> None:
+    # A workflow_dispatch recovery of an older tag checks out a commit that predates the
+    # lock files, so they are fetched by SHA from the commit the workflow runs at.
+    for workflow, job, lock in (
+        (RELEASE, "build", "requirements-build.txt"),
+        (SBOM, "sbom", "requirements-sbom.txt"),
+    ):
+        text = _run_text(workflow["jobs"][job])
+        assert f"contents/{lock}?ref=${{WORKFLOW_SHA}}" in text
+        assert f'-r "$RUNNER_TEMP/{lock}"' in text
+        assert f"-r {lock}" not in text
+
+
+def test_sbom_pins_the_cyclonedx_spec_version() -> None:
+    text = _run_text(SBOM["jobs"]["sbom"])
+    for fmt in ("JSON", "XML"):
+        block = text.split(f"--of {fmt}", 1)[1].split("--output-reproducible", 1)[0]
+        assert "--sv 1.5" in block, f"{fmt} SBOM does not pin spec 1.5"
+    assert 'data.get("specVersion") == "1.5"' in text
