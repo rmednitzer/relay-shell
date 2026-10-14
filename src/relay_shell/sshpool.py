@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -46,6 +47,35 @@ _TIMEOUT_OUTCOME_UNKNOWN = (
     "have applied part of the change; verify the remote state before retrying a mutation"
 )
 _DRAIN_TIMEOUT = 5.0
+
+# Caller-supplied connection tokens. asyncssh substitutes the host and user into the
+# operator's ``ProxyCommand`` (``%h``, ``%n``, ``%r``) and splits the result into argv, so
+# whitespace, quotes or a leading ``-`` would add arguments (``-oProxyCommand=...``) to a
+# local command; ``${VAR}`` in the value is expanded afterwards. The host is also written to
+# known_hosts verbatim under ``accept-new``. A backslash is refused too: shlex treats it as an
+# escape, so ``name\\`` would swallow the following space and merge two trusted arguments.
+# Only a plain hostname, address or bracketed IPv6 literal passes; operator-written
+# inventory/ssh_config aliases are trusted as written.
+_HOST_TOKEN_RE = re.compile(r"[A-Za-z0-9_\[][A-Za-z0-9._\-:%\[\]]{0,254}")
+_USER_TOKEN_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._\-]{0,127}")
+
+
+def _check_ssh_tokens(*, host: str | None = None, user: str | None = None) -> None:
+    """Raise ``RelayError`` unless the caller-supplied host/user are plain tokens."""
+    if host is not None and not _HOST_TOKEN_RE.fullmatch(host):
+        raise RelayError("invalid ssh host: expected a hostname or address (no spaces or quotes)")
+    if user is not None and not _USER_TOKEN_RE.fullmatch(user):
+        raise RelayError("invalid ssh user: expected a plain account name")
+
+
+def _check_jump(jump: str) -> None:
+    """Validate a caller-supplied ``[user@]host[:port][,...]`` jump chain hop by hop."""
+    for hop in jump.split(","):
+        user, sep, host = hop.rpartition("@")
+        try:
+            _check_ssh_tokens(host=host, user=user if sep else None)
+        except RelayError:
+            raise RelayError("invalid ssh jump: expected [user@]host[:port][,...]") from None
 
 
 def _known_hosts_path() -> str:
@@ -364,6 +394,15 @@ class SshPool:
         connect_timeout: int = 0,
     ) -> Any:
         spec: HostSpec = self.inventory.resolve(target)
+        if not self.inventory.knows(target):
+            # A passthrough target (``host`` or ``user@host``) is caller input.
+            _check_ssh_tokens(
+                host=spec.hostname, user=target.partition("@")[0] if "@" in target else None
+            )
+        if user:
+            _check_ssh_tokens(user=user)
+        if jump:
+            _check_jump(jump)
         eff_user = user or spec.user or ""
         eff_port = port or spec.port or 0
         eff_key = key_path or spec.identity_file or ""
@@ -642,7 +681,17 @@ class SshPool:
         # An ssh_spawn session lives indefinitely and drives the channel
         # directly (never re-connecting), so pin the connection for the
         # session's lifetime; the transport releases it in aclose().
-        entry = await self._pin(conn)
+        try:
+            entry = await self._pin(conn)
+        except BaseException:
+            # Cancelled (or failed) between the channel opening and a transport
+            # owning it: nobody else holds a reference, so release the remote PTY
+            # here instead of leaving it parked on the shared connection.
+            with contextlib.suppress(Exception):
+                proc.terminate()
+            with contextlib.suppress(Exception):
+                proc.close()
+            raise
         return SshProcessTransport(proc, pool=self, entry=entry)
 
     async def sftp_put(
@@ -756,6 +805,7 @@ class SshPool:
         # before the handle is tracked, so a listener error or a lost cap race
         # never leaks a pin that would keep the connection alive forever.
         entry = await self._pin(conn)
+        listener: Any = None
         try:
             fid = gen_id("fwd")
             if kind == "L":
@@ -784,6 +834,12 @@ class SshPool:
                 self._forwards[fid] = handle
             return handle
         except BaseException:
+            # A listener that was bound but never tracked has no forward id for
+            # ssh_forward_close to name, so it would keep its port for the life of
+            # the connection. Closing twice (the cap-race branch above) is harmless.
+            if listener is not None:
+                with contextlib.suppress(Exception):
+                    listener.close()
             await self._unpin(entry)
             raise
 

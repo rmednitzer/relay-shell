@@ -393,6 +393,8 @@ class AuditLogger:
         # lock is never taken and the record path is byte-identical to v0.1.
         self.chain = chain
         self._chain_lock = threading.Lock()
+        # Makes "first degraded reason wins" atomic across supervisor threads.
+        self._degrade_lock = threading.Lock()
         self._seq = 0
         self._prev = _CHAIN_GENESIS
         self._log = logging.getLogger("relay_shell.audit")
@@ -515,6 +517,20 @@ class AuditLogger:
         if action:
             entry["action"] = action
         self._emit(entry)
+
+    def mark_degraded(self, reason: str) -> None:
+        """Flag the sink degraded after a runtime failure elsewhere (ADR 0006).
+
+        Used for the gap the seccomp-notify supervisor reports when it fails open
+        (the child ran unfiltered, so its syscalls are missing from the trail).
+        Called from supervisor threads, so the check and both stores are one
+        critical section. The first reason is kept, so a later gap never hides
+        an earlier, more severe one such as a failed write.
+        """
+        with self._degrade_lock:
+            if not self.degraded:
+                self.degraded_reason = reason
+                self.degraded = True
 
     def record_syscall(
         self,
