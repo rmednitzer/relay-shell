@@ -20,6 +20,33 @@ APPROVALS = Path(
 )
 EVIDENCE = LOG_DIR / "chain-verification.jsonl"
 ANCHOR = LOG_DIR / "latest-anchor.json"
+# Boundary records seen by earlier VALID runs. Once logrotate prunes the oldest
+# segments the retained history no longer starts at genesis; it is still trustworthy
+# when its first record continues a record this file proves was verified before.
+CHECKPOINTS = LOG_DIR / "retained-checkpoints.json"
+HEX64 = frozenset("0123456789abcdef")
+MAX_RETAIN_SEGMENTS = 3660  # ten years of daily rotation
+
+
+def _retain_segments() -> tuple[int, str | None]:
+    """Rotated segments logrotate keeps (`rotate N`); head-pruning is only legitimate at N.
+
+    A malformed or out-of-range value is an error (the run fails), never silently
+    coerced: this setting decides whether a non-genesis history is trusted.
+    """
+    raw = os.environ.get("RELAY_AUDIT_RETAIN_SEGMENTS", "90").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 90, f"RELAY_AUDIT_RETAIN_SEGMENTS must be an integer, got {raw!r}"
+    if not 1 <= value <= MAX_RETAIN_SEGMENTS:
+        return 90, f"RELAY_AUDIT_RETAIN_SEGMENTS must be 1..{MAX_RETAIN_SEGMENTS}, got {value}"
+    return value, None
+
+
+RETAIN_SEGMENTS, RETAIN_ERROR = _retain_segments()
+# Keep every endpoint a full retention window can still need (plus the active segment).
+MAX_CHECKPOINTS = max(512, 2 * RETAIN_SEGMENTS + 16)
 GENESIS = "0" * 64
 # The live, actively-appended segment. Rotated segments carry a numeric/date
 # suffix (optionally `.gz`); only this one is written concurrently with the
@@ -69,9 +96,17 @@ def chain_epoch(first: dict[str, Any]) -> str:
     return hashlib.sha256(material.encode()).hexdigest()
 
 
-def load_approvals() -> tuple[dict[str, dict[str, str]], str | None, str | None]:
+def load_approvals() -> tuple[
+    dict[str, dict[str, str]], dict[tuple[int, str], dict[str, str]], str | None, str | None
+]:
+    """Return ``(approved_resets, approved_heads, ledger_sha256, error)``.
+
+    ``approved_heads`` is the root-reviewed bootstrap for a retained history that no
+    longer starts at genesis: an exact ``(first_seq, prev)`` of the oldest retained
+    record, for hosts that crossed the retention window before checkpoints existed.
+    """
     if not APPROVALS.exists():
-        return {}, None, None
+        return {}, {}, None, None
 
     try:
         metadata = APPROVALS.stat()
@@ -109,10 +144,81 @@ def load_approvals() -> tuple[dict[str, dict[str, str]], str | None, str | None]
                 "reason": reason.strip(),
             }
 
+        heads: dict[tuple[int, str], dict[str, str]] = {}
+        head_entries = document.get("approved_heads", [])
+        if not isinstance(head_entries, list):
+            raise ValueError("approved_heads must be a list")
+        for index, entry in enumerate(head_entries):
+            if not isinstance(entry, dict):
+                raise ValueError(f"approved_heads[{index}] must be an object")
+            first_seq = entry.get("first_seq")
+            prev = entry.get("prev")
+            approved_at = normalized_timestamp(entry.get("approved_at"))
+            reason = entry.get("reason")
+            if not isinstance(first_seq, int) or isinstance(first_seq, bool) or first_seq < 1:
+                raise ValueError(f"approved_heads[{index}].first_seq must be an integer >= 1")
+            if not (isinstance(prev, str) and len(prev) == 64 and set(prev) <= HEX64):
+                raise ValueError(f"approved_heads[{index}].prev must be 64 lowercase hex chars")
+            if approved_at is None:
+                raise ValueError(f"approved_heads[{index}].approved_at must be timezone-aware")
+            if not isinstance(reason, str) or not reason.strip():
+                raise ValueError(f"approved_heads[{index}].reason must be non-empty")
+            if (first_seq, prev) in heads:
+                raise ValueError(f"duplicate approved head: seq {first_seq} prev {prev}")
+            epoch = entry.get("epoch")
+            if epoch is not None and not (
+                isinstance(epoch, str) and len(epoch) == 64 and set(epoch) <= HEX64
+            ):
+                raise ValueError(f"approved_heads[{index}].epoch must be 64 lowercase hex chars")
+            heads[(first_seq, prev)] = {
+                "approved_at": approved_at,
+                "reason": reason.strip(),
+                "epoch": epoch or "",
+            }
+
         digest = hashlib.sha256(raw).hexdigest()
-        return approvals, digest, None
+        return approvals, heads, digest, None
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-        return {}, None, f"invalid approval ledger {APPROVALS}: {exc}"
+        return {}, {}, None, f"invalid approval ledger {APPROVALS}: {exc}"
+
+
+def load_checkpoints() -> tuple[dict[tuple[int, str], str | None], str | None]:
+    """Read the checkpoint file. A missing file is empty; an unreadable one is empty
+    too (head-pruned history then fails closed) and is reported as a warning."""
+    if not CHECKPOINTS.exists():
+        return {}, None
+    try:
+        document = json.loads(CHECKPOINTS.read_text(encoding="utf-8"))
+        entries = document["checkpoints"]
+        if document.get("version") != 1 or not isinstance(entries, list):
+            raise ValueError("unsupported checkpoint file")
+        found: dict[tuple[int, str], str | None] = {}
+        for entry in entries:
+            seq, chain, epoch = entry["seq"], entry["chain"], entry.get("epoch")
+            if not isinstance(seq, int) or not isinstance(chain, str):
+                raise ValueError("malformed checkpoint entry")
+            found[(seq, chain)] = epoch if isinstance(epoch, str) else None
+        return found, None
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
+        return {}, f"ignoring unreadable checkpoint file {CHECKPOINTS}: {exc}"
+
+
+def save_checkpoints(
+    existing: dict[tuple[int, str], str | None], fresh: list[dict[str, Any]]
+) -> None:
+    merged: dict[tuple[int, str], dict[str, Any]] = {
+        (seq, chain): {"seq": seq, "chain": chain, "epoch": epoch}
+        for (seq, chain), epoch in existing.items()
+    }
+    for entry in fresh:
+        merged[(entry["seq"], entry["chain"])] = entry
+    entries = list(merged.values())[-MAX_CHECKPOINTS:]
+    temporary = CHECKPOINTS.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps({"version": 1, "checkpoints": entries}, indent=1) + "\n", encoding="utf-8"
+    )
+    temporary.chmod(0o600)
+    temporary.replace(CHECKPOINTS)
 
 
 def verify_segment(
@@ -185,10 +291,15 @@ def verify_segment(
 
 
 def main() -> int:
-    approvals, approval_digest, approval_error = load_approvals()
+    approvals, approved_heads, approval_digest, approval_error = load_approvals()
+    checkpoints, checkpoint_warning = load_checkpoints()
     errors: list[str] = []
     if approval_error:
         errors.append(approval_error)
+    if RETAIN_ERROR:
+        errors.append(RETAIN_ERROR)
+    if checkpoint_warning:
+        print(checkpoint_warning, file=sys.stderr)
 
     paths = [path for path in LOG_DIR.glob("audit.jsonl*") if path.is_file()]
 
@@ -224,6 +335,9 @@ def main() -> int:
     previous_last: dict[str, Any] | None = None
     used_approvals: set[str] = set()
     latest_epoch: str | None = None
+    rotated_count = sum(1 for segment in verified if segment["path"].name != ACTIVE_LOG)
+    pruned_head: str | None = None
+    fresh_checkpoints: list[dict[str, Any]] = []
 
     for segment in verified:
         path = segment["path"]
@@ -233,7 +347,29 @@ def main() -> int:
 
         if previous_last is None:
             if first["seq"] != 0 or first["prev"] != GENESIS:
-                errors.append(f"{path.name}: retained history is not genesis-anchored")
+                head = (first["seq"], first["prev"])
+                before = (first["seq"] - 1, first["prev"])
+                if head in approved_heads:
+                    pruned_head = "approved"
+                    # The chain epoch cannot be recomputed from a pruned history; the
+                    # reviewed ledger entry may carry it (from the last anchor).
+                    latest_epoch = approved_heads[head]["epoch"] or None
+                elif before in checkpoints and rotated_count >= RETAIN_SEGMENTS:
+                    # Logrotate pruned older segments: the oldest retained record
+                    # continues one a previous valid run verified, and the full
+                    # retention window is still present (deleting one more segment
+                    # drops the count below it and fails here).
+                    pruned_head = "checkpoint"
+                    latest_epoch = checkpoints[before]
+                else:
+                    errors.append(
+                        f"{path.name}: retained history is not genesis-anchored and does "
+                        f"not continue a verified checkpoint (first seq {first['seq']}, "
+                        f"prev {first['prev']}; {rotated_count} rotated segments retained, "
+                        f"{RETAIN_SEGMENTS} required). If this host rotated before "
+                        "checkpoints existed, review the evidence and add an approved_heads "
+                        "entry for exactly this seq and prev"
+                    )
         elif first["seq"] == previous_last["seq"] + 1 and first["prev"] == previous_last["chain"]:
             pass
         elif first["seq"] == 0 and first["prev"] == GENESIS:
@@ -262,9 +398,27 @@ def main() -> int:
         )
         total += count
         previous_last = last
+        fresh_checkpoints.append(
+            {
+                "seq": last["seq"],
+                "chain": last["chain"],
+                "epoch": latest_epoch,
+                "ts": last.get("ts"),
+            }
+        )
 
     if not segments:
         errors.append("no chained audit records found")
+
+    LOG_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
+    if not errors:
+        # Persist the boundary records BEFORE declaring the run valid: a run that cannot
+        # record them would publish a valid anchor and then stall for good once logrotate
+        # removes the genesis segment, so it must fail loudly now.
+        try:
+            save_checkpoints(checkpoints, fresh_checkpoints)
+        except OSError as exc:
+            errors.append(f"could not write {CHECKPOINTS}: {exc}")
 
     now = datetime.now(UTC).isoformat()
     valid = not errors
@@ -277,6 +431,8 @@ def main() -> int:
         "approval_policy": "exact_timestamp",
         "approval_ledger_sha256": approval_digest,
         "approved_historic_resets": len(used_approvals),
+        "retention_pruned_head": pruned_head,
+        "first_retained_seq": segments[0]["first_seq"] if segments else None,
         "latest_seq": previous_last.get("seq") if previous_last else None,
         "latest_epoch": latest_epoch,
         "latest_chain": previous_last.get("chain") if previous_last else None,
@@ -291,7 +447,6 @@ def main() -> int:
         "segment_summary": segments,
     }
 
-    LOG_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
     with EVIDENCE.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(evidence, separators=(",", ":")) + "\n")
         handle.flush()
