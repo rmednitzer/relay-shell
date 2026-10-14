@@ -37,7 +37,22 @@ def test_attribute_handling_covers_the_archives_in_the_right_hooks() -> None:
     assert "audit.jsonl-*" in first and "chattr -a" in first
     assert "chattr +a /var/log/relay-shell/audit.jsonl " in post
     assert "audit.jsonl-*" in last and "chattr +a" in last
+    # `postrotate` does not run when the rotation aborts, `lastaction` does: the active file
+    # must be re-protected there as well.
+    assert "chattr +a /var/log/relay-shell/audit.jsonl " in last
     assert "delaycompress" in text  # the writer may still hold the old file for a moment
+
+
+def _local_config(log_dir: Path, extra: str = "") -> str:
+    """The shipped config pointed at ``log_dir``, with `rotate 3`, per-second archive names and
+    optional extra directives. Only the real directive line is rewritten, not the comments."""
+    text = CONFIG.read_text(encoding="utf-8").replace("/var/log/relay-shell", str(log_dir))
+    text = text.replace("create 0600 relay-shell relay-shell", "create 0600 root root")
+    text, count = re.subn(
+        r"^    rotate 90$", "    rotate 3\n    dateformat -%s\n" + extra, text, flags=re.M
+    )
+    assert count == 1
+    return text
 
 
 def _chattr_works(path: Path) -> bool:
@@ -59,13 +74,7 @@ def test_forced_rotations_complete_and_every_file_ends_append_only(tmp_path: Pat
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     conf = tmp_path / "conf"
-    template = CONFIG.read_text(encoding="utf-8")
-    conf.write_text(
-        template.replace("/var/log/relay-shell", str(log_dir))
-        .replace("create 0600 relay-shell relay-shell", "create 0600 root root")
-        .replace("rotate 90", "rotate 3\n    dateformat -%s"),
-        encoding="utf-8",
-    )
+    conf.write_text(_local_config(log_dir), encoding="utf-8")
     state = tmp_path / "state"
     active = log_dir / "audit.jsonl"
     try:
@@ -93,6 +102,44 @@ def test_forced_rotations_complete_and_every_file_ends_append_only(tmp_path: Pat
         for line in listing:
             flags, _, name = line.partition(" ")
             assert "a" in flags, f"not append-only after rotation: {name}"
+    finally:
+        for f in log_dir.iterdir():
+            subprocess.run(["chattr", "-a", str(f)], check=False, capture_output=True)
+
+
+@pytest.mark.skipif(
+    shutil.which("logrotate") is None or shutil.which("chattr") is None,
+    reason="requires logrotate and chattr",
+)
+def test_an_aborted_rotation_leaves_the_live_log_append_only(tmp_path: Path) -> None:
+    """A failed compress aborts the rotation after `firstaction` dropped the attribute."""
+    if not _chattr_works(tmp_path):
+        pytest.skip("this user or filesystem cannot set chattr +a")
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    conf = tmp_path / "conf"
+    conf.write_text(_local_config(log_dir, "    compresscmd /bin/false\n"), encoding="utf-8")
+    state = tmp_path / "state"
+    active = log_dir / "audit.jsonl"
+    try:
+        failed = 0
+        for i in range(3):  # the second rotation tries to compress the first archive and fails
+            with active.open("a", encoding="utf-8") as handle:
+                handle.write(f"record {i}\n")
+            subprocess.run(["chattr", "+a", str(active)], check=True)
+            subprocess.run(["sleep", "1"], check=True)
+            done = subprocess.run(
+                ["logrotate", "-f", "-s", str(state), str(conf)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            failed += done.returncode != 0
+            flags = subprocess.run(
+                ["lsattr", "-d", str(active)], capture_output=True, text=True, check=True
+            ).stdout.split()[0]
+            assert "a" in flags, f"live audit log writable after rotation {i}: {done.stderr}"
+        assert failed, "the scenario must actually abort a rotation"
     finally:
         for f in log_dir.iterdir():
             subprocess.run(["chattr", "-a", str(f)], check=False, capture_output=True)

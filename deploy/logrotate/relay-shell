@@ -11,9 +11,11 @@
 # grow without bound. `firstaction` runs before all of it and drops the attribute on the
 # active file and every archive; `postrotate` restores it on the new active file at once;
 # `lastaction` restores it on every archive (including the new .gz) when the rotation is
-# done. Without the archive part every archive silently lost its protection at its first
-# rotation. `firstaction`/`lastaction` run only when a rotation happens, so an idle day
-# changes nothing.
+# done, and on the active file again, because `lastaction` also runs when the rotation aborted
+# (a failed compress, rename or create) and `postrotate` does not; otherwise an aborted run
+# would leave the live audit log writable until the next successful rotation. Without the
+# archive part every archive silently lost its protection at its first rotation.
+# `firstaction`/`lastaction` run only when a rotation happens, so an idle day changes nothing.
 #
 # `rotate 90` is mirrored by RELAY_AUDIT_RETAIN_SEGMENTS in the evidence verifier.
 
@@ -37,6 +39,7 @@
         /usr/bin/chattr +a /var/log/relay-shell/audit.jsonl 2>/dev/null || true
     endscript
     lastaction
+        /usr/bin/chattr +a /var/log/relay-shell/audit.jsonl 2>/dev/null || true
         for f in /var/log/relay-shell/audit.jsonl-*; do
             [ -e "$f" ] && /usr/bin/chattr +a "$f" 2>/dev/null
         done

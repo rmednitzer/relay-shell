@@ -183,6 +183,11 @@ the inventory, because that dials a caller-chosen address with the relay's keys,
 Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 
 ### `ssh_fanout`
+
+> The result is one JSON object. When the call is risky (Tier 2/3, or a target dialled with
+> `known_hosts=ignore`) the notices are in a `"notices"` array inside that object, not in
+> trailing `[NOTICE ...]` lines, so `json.loads` keeps working
+> ([ADR 0013](adr/0013-open-by-default-with-unsafe-notices.md)).
 Run `command` in parallel across `hosts` (comma/space list, or empty for
 the whole inventory). Returns one JSON object with per-host
 `exit_code` and (truncated) `output`. `concurrency` bounds how many SSH

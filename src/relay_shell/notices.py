@@ -18,14 +18,22 @@ without a notice is not thereby safe, and the executor has no sandbox.
 
 from __future__ import annotations
 
+import json
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .config import Settings
 from .policy import BASIS_PRIVILEGE, PolicyDecision, Tier
 
-__all__ = ["NOTICE_MIN_TIER", "call_notices", "config_warnings", "format_notices"]
+__all__ = [
+    "NOTICE_MIN_TIER",
+    "attach_notices",
+    "call_notices",
+    "config_warnings",
+    "format_notices",
+    "unverified_host_notice",
+]
 
 # Tier 2 and above get a notice; Tier 0/1 calls (reads, and commands with nothing
 # state-changing in them) stay clean so the notice keeps its meaning.
@@ -65,9 +73,45 @@ def call_notices(
     return notes
 
 
-def format_notices(notes: list[str]) -> str:
+def unverified_host_notice(hosts: Sequence[str]) -> list[str]:
+    """Notice for the hosts a call connects to with host-key verification off.
+
+    For the tools that resolve their targets inside the work (``ssh_check``,
+    ``ssh_fanout``), where the mode is the server default or an inventory entry's own.
+    """
+    if not hosts:
+        return []
+    shown = ", ".join(hosts[:5]) + (f" and {len(hosts) - 5} more" if len(hosts) > 5 else "")
+    return [
+        f"ssh: host-key verification is off for {shown} (known_hosts=ignore); the peer is not "
+        "authenticated and the connection can be intercepted"
+    ]
+
+
+def format_notices(notes: Sequence[str]) -> str:
     """Render notices as trailing ``[NOTICE ...]`` lines (empty string for none)."""
     return "".join(f"\n[NOTICE {note}]" for note in notes)
+
+
+def attach_notices(text: str, notes: Sequence[str], *, as_json: bool = False) -> str:
+    """Add ``notes`` to a tool result.
+
+    Text results get trailing ``[NOTICE ...]`` lines. A tool whose result is a JSON object
+    (``ssh_fanout``) passes ``as_json=True`` and gets a ``"notices"`` array inside the object
+    instead, so the result still parses; if the text is not a JSON object (an error string, a
+    truncated body) the trailing lines are used.
+    """
+    if not notes:
+        return text
+    if as_json:
+        try:
+            doc = json.loads(text)
+        except ValueError:
+            doc = None
+        if isinstance(doc, dict):
+            doc["notices"] = list(notes)
+            return json.dumps(doc, default=str)
+    return text + format_notices(notes)
 
 
 def config_warnings(settings: Settings, *, euid: int | None = None) -> list[str]:
@@ -84,16 +128,18 @@ def config_warnings(settings: Settings, *, euid: int | None = None) -> list[str]
             "there is no internal sandbox"
         )
     if settings.policy_mode == "open":
-        gate = []
-        if not settings.policy_deny:
-            gate.append("no RELAY_SHELL_POLICY_DENY")
-        if not settings.confirm_tier3:
-            gate.append("RELAY_SHELL_CONFIRM_TIER3 off")
+        listed = "a deny list is set" if settings.policy_deny else "no RELAY_SHELL_POLICY_DENY"
+        if settings.confirm_tier3:
+            effect = (
+                "irreversible (Tier 3) commands need the two-step confirmation, every other "
+                "command runs on the first request"
+            )
+        else:
+            effect = (
+                "irreversible commands run on the first request (RELAY_SHELL_CONFIRM_TIER3 off)"
+            )
         warnings.append(
-            "policy mode is open ("
-            + ", ".join(gate or ["a deny list is set"])
-            + "): irreversible commands run on the first request; "
-            "'guarded' or 'readonly' narrows this"
+            f"policy mode is open ({listed}): {effect}; 'guarded' or 'readonly' narrows this"
         )
     if settings.ssh_known_hosts == "ignore":
         warnings.append(

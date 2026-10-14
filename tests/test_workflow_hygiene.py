@@ -51,6 +51,8 @@ def test_codeql_also_scans_the_workflows_without_renaming_the_python_check() -> 
     steps = jobs["analyze-actions"]["steps"]
     init = next(s for s in steps if str(s.get("uses", "")).startswith("github/codeql-action/init@"))
     assert init["with"]["languages"] == "actions"
+    gate = (WORKFLOWS / "ci-gate.yml").read_text(encoding="utf-8")
+    assert "Analyze (actions)" in gate and "Analyze (python) (python)" in gate
 
 
 def test_gitleaks_allowlist_is_scoped_per_rule() -> None:

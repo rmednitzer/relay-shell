@@ -189,9 +189,7 @@ def test_open_mode_with_a_deny_list_and_confirmation_says_so() -> None:
     joined = "\n".join(config_warnings(cfg, euid=1000))
     assert "policy mode is open (a deny list is set)" in joined
     cfg = Settings(policy_deny="rm -rf /")
-    assert "policy mode is open (RELAY_SHELL_CONFIRM_TIER3 off)" in "\n".join(
-        config_warnings(cfg, euid=1000)
-    )
+    assert "policy mode is open (a deny list is set)" in "\n".join(config_warnings(cfg, euid=1000))
 
 
 def test_strict_known_hosts_and_stricter_modes_drop_their_warnings() -> None:
@@ -199,3 +197,78 @@ def test_strict_known_hosts_and_stricter_modes_drop_their_warnings() -> None:
     joined = "\n".join(config_warnings(cfg, euid=1000))
     assert "policy mode is open" not in joined
     assert "SSH_KNOWN_HOSTS=ignore" in joined and "accept-new" not in joined
+
+
+async def _fanout(settings: Settings, command: str, hosts: str = "h1.example") -> str:
+    from typing import Any
+
+    from relay_shell.sshpool import SshPool
+
+    async def fake_run(_self: Any, host: str, _cmd: str, **_k: Any) -> tuple[str, int | None]:
+        return ("ok\n", 0)
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(SshPool, "run", fake_run)
+    try:
+        mcp = build_server(settings)
+        return text(
+            (await mcp.call_tool("ssh_fanout", {"command": command, "hosts": hosts})).content
+        )
+    finally:
+        mp.undo()
+
+
+async def test_fanout_keeps_its_json_and_carries_the_notices_inside_it(
+    settings: Settings,
+) -> None:
+    """A trailing line would make json.loads fail after the remote command already ran."""
+    out = await _fanout(settings, "systemctl restart nginx")
+    doc = json.loads(out)  # still valid JSON
+    notes = doc["notices"]
+    assert any(n.startswith("tier 2 (STATEFUL)") for n in notes)
+    assert any("host-key verification is off for h1.example" in n for n in notes)
+    assert doc["results"][0]["host"] == "h1.example"
+    assert "[NOTICE" not in out
+
+
+async def test_fanout_without_anything_to_say_has_no_notices_key(settings: Settings) -> None:
+    strict = settings.model_copy(update={"ssh_known_hosts": "strict"})
+    doc = json.loads(await _fanout(strict, "uptime"))
+    assert "notices" not in doc
+
+
+async def test_ssh_check_and_fanout_report_the_inherited_ignore_mode(
+    settings: Settings,
+) -> None:
+    """The server default (here `ignore`) applies even though the call passes no known_hosts."""
+    assert settings.ssh_known_hosts == "ignore"
+    mcp = build_server(settings)
+    out = text((await mcp.call_tool("ssh_check", {"hosts": "h1.example", "timeout": 1})).content)
+    assert "[NOTICE ssh: host-key verification is off for h1.example" in out
+    fan = json.loads(await _fanout(settings, "uptime"))
+    assert any("host-key verification is off" in n for n in fan["notices"])
+
+
+async def test_inventory_modes_decide_per_host(settings: Settings, tmp_path: Path) -> None:
+    inv = tmp_path / "inv.json"
+    inv.write_text(
+        json.dumps(
+            {
+                "pinned": {"hostname": "1.2.3.4", "known_hosts": "strict"},
+                "loose": {"hostname": "5.6.7.8", "known_hosts": "ignore"},
+            }
+        )
+    )
+    cfg = settings.model_copy(update={"ssh_known_hosts": "strict", "inventory": str(inv)})
+    doc = json.loads(await _fanout(cfg, "uptime", hosts="pinned loose"))
+    (note,) = doc["notices"]
+    assert "for loose" in note and "pinned" not in note
+
+
+def test_enabled_confirmation_is_not_reported_as_ineffective() -> None:
+    cfg = Settings(confirm_tier3=True)
+    joined = "\n".join(config_warnings(cfg, euid=1000))
+    assert "need the two-step confirmation" in joined
+    assert "run on the first request (" not in joined
+    off = "\n".join(config_warnings(Settings(), euid=1000))
+    assert "irreversible commands run on the first request" in off

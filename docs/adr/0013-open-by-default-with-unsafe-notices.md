@@ -35,8 +35,12 @@ record, and the owner's request is the explicit scope.
    `[NOTICE tier 3 (IRREVERSIBLE), matched an irreversible-operation pattern. It may not
    be undoable and ran with no confirmation step; ... Classification is a heuristic, not a
    boundary]`. `policy.assess()` returns the tier together with the basis that produced it
-   (`BASIS_*` strings), and `PolicyDecision.basis` carries it to the runner. Tier 0 and 1
-   calls get nothing, so a notice keeps its meaning. `RELAY_SHELL_UNSAFE_NOTICES=false`
+   (`BASIS_*` strings), and `PolicyDecision.basis` carries it to the runner. A tool whose
+   result is a JSON object (`ssh_fanout`) carries the notices in a `"notices"` array inside
+   the object, so the result still parses. `ssh_check` and `ssh_fanout` resolve their targets
+   inside the work, so they pass the hosts that would be dialled with host-key checking off
+   (server default or inventory entry) as extra notices. Tier 0 and 1 calls get nothing unless
+   they dial a host with verification off, so a notice keeps its meaning. `RELAY_SHELL_UNSAFE_NOTICES=false`
    turns the lines off.
 3. **The audit record does not change.** The record is written from the same `final` text as
    before the notice is appended, so `output_sha256` and `output_len` describe the command's
@@ -128,6 +132,9 @@ asked and says what it considers unsafe".
   checklist item in `docs/runbook.md` for new settings; no automated check.
 - CS-4 (UCA-5) A model learns that "no notice" means "safe". Mitigation: the wording of the
   notice and the tool guidance both say the classifier is a heuristic.
+- CS-6 (UCA-3) A notice appended after a JSON result makes `json.loads` fail after the remote
+  command already ran, so a caller retries a mutation. Addressed by `attach_notices(...,
+  as_json=True)` for `ssh_fanout`. Test: `test_fanout_keeps_its_json_and_carries_the_notices_inside_it`.
 - CS-5 (UCA-2) A refused call was shown with a notice. Test:
   `test_a_blocked_call_is_not_a_notice_it_is_a_denial`.
 

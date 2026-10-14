@@ -25,7 +25,7 @@ import re
 import shlex
 import signal
 import socket
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,12 @@ from .config import Settings, get_settings
 from .errors import RelayError, fmt_exc
 from .inventory import Inventory
 from .metrics import ACTIVE_FORWARDS, ACTIVE_SESSIONS, AUDIT_DEGRADED, Metrics
-from .notices import call_notices, config_warnings, format_notices
+from .notices import (
+    attach_notices,
+    call_notices,
+    config_warnings,
+    unverified_host_notice,
+)
 from .policy import Policy, Tier, classify
 from .redaction import redact_args
 from .sessions import LocalPtyTransport, Session, SessionRegistry, Transport
@@ -487,7 +492,11 @@ class Relay:
         max_output: int,
         work: Work,
         min_tier: Tier = Tier.READ_ONLY,
+        extra_notices: Sequence[str] = (),
+        json_notices: bool = False,
     ) -> str:
+        """Admit, run and audit one call. ``extra_notices`` are tool-specific unsafe facts;
+        ``json_notices`` puts the notices inside a JSON-object result instead of after it."""
         request_id, client_id = _ctx_ids(ctx)
         red = redact_args(audit_args)
         mode = self.settings.policy_mode
@@ -639,7 +648,8 @@ class Relay:
         if self.settings.unsafe_notices:
             # A message to the caller, appended after the audit record was written from
             # `final`: the record and the output hash do not change (ADR 0013).
-            return final + format_notices(call_notices(decision, audit_args))
+            notes = [*call_notices(decision, audit_args), *extra_notices]
+            return attach_notices(final, notes, as_json=json_notices)
         return final
 
     async def register_session(
@@ -662,6 +672,19 @@ class Relay:
             with contextlib.suppress(Exception):
                 await transport.aclose()
             raise
+
+    def target_names(self, hosts: str) -> list[str]:
+        """Hosts an ``ssh_check`` / ``ssh_fanout`` call addresses: the list, or the inventory."""
+        if hosts.strip():
+            return [h for h in hosts.replace(",", " ").split() if h]
+        return [h.name for h in self.inventory.hosts()]
+
+    def host_key_notices(self, names: Sequence[str]) -> list[str]:
+        """Notice for the named hosts that would be dialled without host-key verification."""
+        if not self.settings.unsafe_notices:
+            return []
+        unverified = [n for n in names[:200] if self.effective_known_hosts(n, "") == "ignore"]
+        return unverified_host_notice(unverified)
 
     def ssh_target_audit(
         self, host: str, user: str, port: int, key_path: str, jump: str, known_hosts: str
@@ -1348,11 +1371,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         """Probe connectivity to the given hosts (or the whole inventory)."""
 
         async def _work() -> tuple[str, int | None]:
-            names = (
-                [h for h in hosts.replace(",", " ").split() if h]
-                if hosts.strip()
-                else [h.name for h in app.inventory.hosts()]
-            )
+            names = app.target_names(hosts)
             if not names:
                 return ("[no hosts configured; pass hosts= or add an inventory]", None)
             if len(names) > _SSH_CHECK_MAX_HOSTS:
@@ -1398,6 +1417,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             max_output=8192,
             work=_work,
             min_tier=Tier.REVERSIBLE if outside_inventory else Tier.READ_ONLY,
+            extra_notices=app.host_key_notices(app.target_names(hosts)),
         )
 
     @mcp.tool()
@@ -1423,11 +1443,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         policy_text = _policy_text_ssh_fanout(hosts, command)
 
         async def _work() -> tuple[str, int | None]:
-            names = (
-                [h for h in hosts.replace(",", " ").split() if h]
-                if hosts.strip()
-                else [h.name for h in app.inventory.hosts()]
-            )
+            names = app.target_names(hosts)
             if not names:
                 return ("[no hosts configured; pass hosts= or add an inventory]", None)
             if len(names) > _SSH_FANOUT_MAX_HOSTS:
@@ -1528,6 +1544,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             policy_text=policy_text,
             max_output=app.clamp_output(cfg.max_output),
             work=_work,
+            extra_notices=app.host_key_notices(app.target_names(hosts)),
+            json_notices=True,  # the result is a JSON object: notices go inside it
         )
 
     @mcp.tool()
