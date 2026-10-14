@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Agent guidance (2026-10-14)
+
+- Consolidate Codex, Claude Code and Copilot guidance with repository-specific secure development, STPA traceability and private vulnerability reporting.
+
+
 ### Security
 
 - **`known_hosts=accept-new` is now real trust-on-first-use** (audit 2026-10-04, H2).
