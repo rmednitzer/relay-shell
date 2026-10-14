@@ -82,7 +82,6 @@ class Challenge:
 @dataclass
 class _Entry:
     op_hash: str
-    tool: str
     expires_at: float  # monotonic-clock deadline
     client_id: str = ""  # authenticated client that planned it ("" = no identity)
     armed: bool = False
@@ -145,7 +144,6 @@ class ConfirmationBroker:
             self._sweep(now)
             self._by_token[token] = _Entry(
                 op_hash=_op_hash(tool, op_key),
-                tool=tool,
                 expires_at=now + self._ttl,
                 client_id=client_id,
             )

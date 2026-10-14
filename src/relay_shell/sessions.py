@@ -215,11 +215,9 @@ class LocalPtyTransport:
         assert callable(sink)
         loop = asyncio.get_running_loop()
         event = asyncio.Event()
-        try:
-            loop.add_reader(self._fd, event.set)
-        except NotImplementedError:
-            await self._thread_read_loop(sink)
-            return
+        # This module is POSIX-only (pty, fcntl, termios), so the selector loop's
+        # `add_reader` is always available; there is no thread-based fallback.
+        loop.add_reader(self._fd, event.set)
         try:
             while True:
                 await event.wait()
@@ -237,24 +235,6 @@ class LocalPtyTransport:
         finally:
             with contextlib.suppress(OSError, ValueError):
                 loop.remove_reader(self._fd)
-
-    async def _thread_read_loop(self, sink: object) -> None:
-        assert callable(sink)
-        loop = asyncio.get_running_loop()
-        flags = fcntl.fcntl(self._fd, fcntl.F_GETFL)
-        fcntl.fcntl(self._fd, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
-
-        def _read() -> bytes:
-            try:
-                return os.read(self._fd, _READ_CHUNK)
-            except OSError:
-                return b""
-
-        while True:
-            chunk = await loop.run_in_executor(None, _read)
-            if not chunk:
-                return
-            sink(chunk)
 
     async def aclose(self) -> None:
         if self._closed:

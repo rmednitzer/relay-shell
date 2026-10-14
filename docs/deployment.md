@@ -68,10 +68,13 @@ job-specific SSH keys and application identities may retain their own boundaries
 ```bash
 sudo -u relay-shell python3 -m venv /var/lib/relay-shell/venv
 sudo -u relay-shell /var/lib/relay-shell/venv/bin/pip install --upgrade pip
-sudo -u relay-shell /var/lib/relay-shell/venv/bin/pip install /path/to/relay-shell   # or: pip install relay-shell
+sudo -u relay-shell /var/lib/relay-shell/venv/bin/pip install \
+    -c /path/to/relay-shell/requirements.txt /path/to/relay-shell   # or: pip install relay-shell
 ```
 
-`deploy/install.sh` does this idempotently. It deliberately does **not**
+`deploy/install.sh` does this idempotently (it installs against `requirements.txt` when the
+checkout has one, and saves a copy of any unit, drop-in or logrotate file you edited under
+`/var/lib/relay-shell/preinstall-backups/` before replacing it). It deliberately does **not**
 auto-start the service; review the unit and configuration first.
 
 Validate the resolved configuration against the service account's
@@ -206,6 +209,7 @@ sudo deploy/install-edge.sh
 | `RELAY_SHELL_EDGE_UPSTREAM` | Loopback target (default `127.0.0.1:8080`). |
 | `RELAY_SHELL_EDGE_ACME_CA` | ACME directory override; set to `https://acme-staging-v02.api.letsencrypt.org/directory` for dry runs against LE staging. |
 | `RELAY_SHELL_EDGE_OPEN_FIREWALL` | Set to `1` to `ufw allow 80,443/tcp` if `ufw` is present. |
+| `RELAY_SHELL_EDGE_VALIDATE_ONLY` | Set to `1` to check every value above against a strict shape (fully qualified domain, `user@host` email, `https://` ACME URL, `host:port` upstream with a valid port, IPv4/IPv6 addresses or CIDRs) and exit without needing root. The installer always runs this check first: a `}`, quote or space in a value would otherwise change the Caddyfile or the systemd environment file. A `0.0.0.0/0` or `::/0` CIDR is accepted but warned about, because it removes the source gate. |
 | `RELAY_SHELL_EDGE_DRY_RUN` | Set to `1` to log the resolved values and print the parameterized Caddyfile template, then exit without installing. Caddy substitutes the `{$RELAY_SHELL_EDGE_*}` placeholders at service start. |
 | `RELAY_SHELL_EDGE_FORCE` | Set to `1` to overwrite an existing `/etc/caddy/Caddyfile` that this installer did not write. Without it, the installer refuses to clobber a Caddyfile that may serve other sites on the host. |
 | `RELAY_SHELL_EDGE_CADDY_GPG_FPR` | Pin the Caddy apt repo signing key: the installer fails closed if the fetched key's fingerprint does not match (DEP-1). The key is fetched over TLS but otherwise trust-on-first-use; the installer always logs the observed fingerprint, so set this to that value (after confirming it at <https://caddyserver.com/docs/install>) to enforce it. Unset = unpinned, with a warning. Only used when the installer provisions Caddy via apt. |
@@ -260,7 +264,7 @@ closes the window in which the first party to reach `/register` could obtain a
 token; see [`auth.md`](auth.md#operator-approval). Existing installs are carried
 over as approved on upgrade.
 
-The `[http]` extra (PyJWT, cryptography) is still declared, but `mcp` 2 already depends on both, so
+The `[http]` extra is an empty alias (`mcp` 2 already depends on PyJWT and cryptography), so
 a plain install is enough. Tokens are file-backed under the state dir
 (`clients.json`, `approvals.json`, `codes.json`, `tokens.json`), access tokens are short-lived,
 refresh tokens rotate on use, secrets are stored hashed rather than raw, and expiry
@@ -424,7 +428,10 @@ segments and, last, the anchor as the commit marker. A failed verification publi
 exits non-zero. It needs `RELAY_AUDIT_RSYNC_DEST` and, if logrotate keeps other than 90 rotated
 segments, `RELAY_AUDIT_RETAIN_SEGMENTS`; after logrotate prunes the oldest segment the verifier
 accepts the shortened history when it continues a checkpointed record (and hosts that rotated
-before checkpoints existed need one reviewed `approved_heads` entry). Install steps, the ledger
+before checkpoints existed need one reviewed `approved_heads` entry). Before publishing, the wrapper
+pulls the remote anchor and refuses (exit 4) a local chain that is behind it or has forked from
+it, since the sync is a mirror (`RELAY_AUDIT_REMOTE_CHECK`; write-only destinations skip it).
+Install steps, the ledger
 format and the limits of that check are in
 [`deploy/evidence/README.md`](https://github.com/rmednitzer/relay-shell/blob/main/deploy/evidence/README.md);
 host metrics and the anchor health check are in

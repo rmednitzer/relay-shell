@@ -7,6 +7,11 @@ set -u
 : "${RELAY_AUDIT_RSYNC_PATH:=sudo -n /usr/bin/rsync}"
 : "${RELAY_AUDIT_VERIFY_BIN:=/usr/local/libexec/relay-audit-evidence}"
 : "${RELAY_AUDIT_RSYNC_BIN:=/usr/bin/rsync}"
+: "${RELAY_AUDIT_COMPARE_BIN:=$RELAY_AUDIT_VERIFY_BIN}"
+# pull (default): read the remote latest-anchor.json first and refuse to publish a local
+# chain that is behind it or has forked from it. off: skip the check (use it only when the
+# destination is write-only and cannot be read back).
+: "${RELAY_AUDIT_REMOTE_CHECK:=pull}"
 
 set --
 if [ -n "${RELAY_AUDIT_RSYNC_CHOWN:-}" ]; then
@@ -16,6 +21,30 @@ fi
 "$RELAY_AUDIT_VERIFY_BIN"
 verify_status=$?
 [ "$verify_status" -eq 0 ] || exit "$verify_status"
+
+if [ "$RELAY_AUDIT_REMOTE_CHECK" = "pull" ]; then
+  remote_dir=$(mktemp -d) || exit 1
+  trap 'rm -rf "$remote_dir"' EXIT
+  "$RELAY_AUDIT_RSYNC_BIN" \
+    --archive --protect-args \
+    --rsync-path="$RELAY_AUDIT_RSYNC_PATH" \
+    -e "/usr/bin/ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RELAY_AUDIT_SSH_KNOWN_HOSTS -o ControlMaster=no -o ControlPath=none" \
+    "${RELAY_AUDIT_RSYNC_DEST%/}/latest-anchor.json" "$remote_dir/latest-anchor.json"
+  pull_status=$?
+  case "$pull_status" in
+    0)
+      "$RELAY_AUDIT_COMPARE_BIN" --check-remote-anchor "$remote_dir/latest-anchor.json"
+      compare_status=$?
+      [ "$compare_status" -eq 0 ] || exit "$compare_status"
+      ;;
+    23)
+      # rsync reports a missing source file (first sync) or a write-only destination
+      # (forced command) as a partial transfer: there is nothing to compare against.
+      echo "relay-audit-evidence-sync: no readable remote anchor; skipping the rollback check" >&2
+      ;;
+    *) exit "$pull_status" ;;
+  esac
+fi
 
 "$RELAY_AUDIT_RSYNC_BIN" \
   --archive --checksum --compress --protect-args --delay-updates \

@@ -462,5 +462,44 @@ def main() -> int:
     return 0 if valid else 1
 
 
+def compare_remote_anchor(remote_path: str) -> tuple[int, str]:
+    """Refuse to publish an anchor that is older than, or has diverged from, the remote one.
+
+    The sync is a mirror, so a locally rewritten chain that still verifies would overwrite
+    the off-host copy and erase the evidence of the rewrite (A14-D9). Within one chain epoch
+    the sequence only grows: a smaller ``latest_seq`` is a rollback, and the same
+    ``latest_seq`` with a different ``latest_chain`` is a fork. A different epoch is a new
+    chain (an approved genesis reset, checked against the approvals ledger by ``main``) and
+    is not compared. Returns ``(exit_code, message)``: 0 ok, 4 regression or fork, 2 when
+    either anchor cannot be read.
+    """
+    try:
+        remote = json.loads(Path(remote_path).read_text(encoding="utf-8"))
+        local = json.loads(ANCHOR.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return 2, f"cannot compare anchors: {exc}"
+    if not isinstance(remote, dict) or not isinstance(local, dict):
+        return 2, "cannot compare anchors: not JSON objects"
+    if remote.get("valid") is not True:
+        return 0, "remote anchor is not marked valid; nothing to protect"
+    r_seq, l_seq = remote.get("latest_seq"), local.get("latest_seq")
+    if not isinstance(r_seq, int) or not isinstance(l_seq, int):
+        return 0, "an anchor has no latest_seq; nothing to compare"
+    if remote.get("latest_epoch") != local.get("latest_epoch"):
+        return 0, "chain epoch differs from the remote anchor; not comparable"
+    if l_seq < r_seq:
+        return (
+            4,
+            f"local latest_seq {l_seq} is behind the remote anchor's {r_seq}: refusing to publish",
+        )
+    if l_seq == r_seq and remote.get("latest_chain") != local.get("latest_chain"):
+        return 4, f"local and remote chains diverge at seq {l_seq}: refusing to publish"
+    return 0, f"local anchor (seq {l_seq}) is not behind the remote anchor (seq {r_seq})"
+
+
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--check-remote-anchor":
+        _code, _message = compare_remote_anchor(sys.argv[2])
+        print(_message, file=sys.stderr if _code else sys.stdout)
+        raise SystemExit(_code)
     raise SystemExit(main())

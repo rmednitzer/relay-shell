@@ -62,7 +62,7 @@ jobs:
                   -f check_name="$name" \
                   -f filter=latest \
                   -F per_page=1 \
-                  --jq '.check_runs[0] | [.status, (.conclusion // "")] | @tsv'
+                  --jq '(.check_runs[0] // empty) | [.status, (.conclusion // "")] | @tsv'
               )"
 
               if [ -z "$row" ]; then

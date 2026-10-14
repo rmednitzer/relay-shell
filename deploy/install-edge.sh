@@ -23,6 +23,8 @@ set -euo pipefail
 #   RELAY_SHELL_EDGE_OPEN_FIREWALL set to 1 to open 80/443 via ufw if present
 #   RELAY_SHELL_EDGE_DRY_RUN       set to 1 to print the parameterized
 #                                  Caddyfile template and exit
+#   RELAY_SHELL_EDGE_VALIDATE_ONLY set to 1 to check the values above and
+#                                  exit (needs no root)
 #   RELAY_SHELL_EDGE_FORCE         set to 1 to overwrite an existing
 #                                  /etc/caddy/Caddyfile that this installer
 #                                  did not place (back it up first!)
@@ -87,7 +89,6 @@ load_edge_env() {
 
 load_edge_env "$OPERATOR_ENV_FILE"
 
-[ "$(id -u)" -eq 0 ] || die "must run as root"
 [ -r "$CADDYFILE_SRC" ] || die "Caddyfile template not found at $CADDYFILE_SRC"
 
 require_var RELAY_SHELL_EDGE_DOMAIN
@@ -97,16 +98,73 @@ require_var RELAY_SHELL_EDGE_ACME_EMAIL
 : "${RELAY_SHELL_EDGE_CLIENT_CIDRS:=127.0.0.1/8 ::1}"
 : "${RELAY_SHELL_EDGE_ACME_CA:=https://acme-v02.api.letsencrypt.org/directory}"
 
-# Reject any value containing characters that would corrupt the systemd
-# EnvironmentFile we write below (newlines were caught above; reject NULs
-# and stray quotes that would unbalance the file).
-for var in RELAY_SHELL_EDGE_DOMAIN RELAY_SHELL_EDGE_ACME_EMAIL \
-           RELAY_SHELL_EDGE_ACME_CA RELAY_SHELL_EDGE_UPSTREAM \
-           RELAY_SHELL_EDGE_CLIENT_CIDRS; do
-    case "${!var}" in
-        *[$'\n\r\0']*) die "$var contains a control character" ;;
-    esac
-done
+# Every value is substituted into the Caddyfile by Caddy at start ({$VAR}) and written
+# to a systemd EnvironmentFile below, so a stray `}`, space, quote or newline would
+# change the configuration rather than be data (A14-D6). Check each against a strict
+# shape, and say which variable is wrong. Bash strings cannot hold a NUL, so the control
+# character test is `[[:cntrl:]]`.
+valid_port() {
+    local p="$1"
+    [[ "$p" =~ ^[0-9]{1,5}$ ]] && [ "$((10#$p))" -ge 1 ] && [ "$((10#$p))" -le 65535 ]
+}
+
+valid_cidr_token() {
+    local tok="$1" addr prefix=""
+    addr="${tok%%/*}"
+    [ "$addr" != "$tok" ] && prefix="${tok#*/}"
+    if [[ "$addr" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+        local oct IFS=.
+        for oct in $addr; do [ "$((10#$oct))" -le 255 ] || return 1; done
+        [ -z "$prefix" ] || { [[ "$prefix" =~ ^[0-9]{1,2}$ ]] && [ "$((10#$prefix))" -le 32 ]; }
+    elif [[ "$addr" =~ ^[0-9A-Fa-f:]+$ ]] && [[ "$addr" == *:* ]]; then
+        [ -z "$prefix" ] || { [[ "$prefix" =~ ^[0-9]{1,3}$ ]] && [ "$((10#$prefix))" -le 128 ]; }
+    else
+        return 1
+    fi
+}
+
+validate_edge_values() {
+    local var tok port
+    for var in RELAY_SHELL_EDGE_DOMAIN RELAY_SHELL_EDGE_ACME_EMAIL \
+               RELAY_SHELL_EDGE_ACME_CA RELAY_SHELL_EDGE_UPSTREAM \
+               RELAY_SHELL_EDGE_CLIENT_CIDRS; do
+        case "${!var}" in
+            *[[:cntrl:]]*) die "$var contains a control character" ;;
+        esac
+    done
+    [[ "$RELAY_SHELL_EDGE_DOMAIN" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]] \
+        || die "RELAY_SHELL_EDGE_DOMAIN must be a fully qualified host name (letters, digits, '-', '.')"
+    [ "${#RELAY_SHELL_EDGE_DOMAIN}" -le 253 ] || die "RELAY_SHELL_EDGE_DOMAIN is longer than 253 characters"
+    [[ "$RELAY_SHELL_EDGE_ACME_EMAIL" =~ ^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$ ]] \
+        || die "RELAY_SHELL_EDGE_ACME_EMAIL must look like user@example.org"
+    [[ "$RELAY_SHELL_EDGE_ACME_CA" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/%+-]*)?$ ]] \
+        || die "RELAY_SHELL_EDGE_ACME_CA must be an https:// URL without spaces, quotes or query"
+    if [[ "$RELAY_SHELL_EDGE_UPSTREAM" =~ ^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+):([0-9]+)$ ]]; then
+        port="${BASH_REMATCH[2]}"
+        valid_port "$port" || die "RELAY_SHELL_EDGE_UPSTREAM port must be 1-65535"
+    else
+        die "RELAY_SHELL_EDGE_UPSTREAM must be host:port (for example 127.0.0.1:8080)"
+    fi
+    [ -n "$RELAY_SHELL_EDGE_CLIENT_CIDRS" ] || die "RELAY_SHELL_EDGE_CLIENT_CIDRS must not be empty"
+    for tok in $RELAY_SHELL_EDGE_CLIENT_CIDRS; do
+        valid_cidr_token "$tok" \
+            || die "RELAY_SHELL_EDGE_CLIENT_CIDRS entry '$tok' is not an IPv4/IPv6 address or CIDR"
+        case "$tok" in
+            */0) warn "client CIDR '$tok' allows every address: the CIDR gate no longer limits who can reach the MCP endpoint" ;;
+        esac
+    done
+}
+
+validate_edge_values
+
+# Check the values and stop before anything needs root or touches the host. Used by the
+# test-suite and by operators who want to lint their env file.
+if [ "${RELAY_SHELL_EDGE_VALIDATE_ONLY:-0}" = "1" ]; then
+    log "Edge values are valid"
+    exit 0
+fi
+
+[ "$(id -u)" -eq 0 ] || die "must run as root"
 
 log "Edge domain : $RELAY_SHELL_EDGE_DOMAIN"
 log "ACME email  : $RELAY_SHELL_EDGE_ACME_EMAIL"

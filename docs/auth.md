@@ -112,6 +112,36 @@ register (once) ──> authorize+PKCE ──> code ──> exchange ──> acc
                                                                   └──────────────────────┘
 ```
 
+#### Reuse of a rotated-out refresh token
+
+Rotation leaves a marker (`sha256:spent:<hash of the token>`, never the token, carrying the
+client id and the token's own expiry) in `tokens.json`. If the same refresh token is
+presented again, two parties hold it, the legitimate client and whoever copied it:
+
+- within 10 seconds of the rotation it is only refused (`invalid_grant`): two requests that
+  loaded the same token, or a retry that crossed the rotation, are a race, not theft;
+- later, **all access and refresh tokens of that client are revoked** and the event is logged
+  (`refresh token reuse for client ...`), so the previous access token no longer works for
+  its remaining lifetime and the client has to authorize again;
+- a replay by a different `client_id` is refused and revokes nothing.
+
+STPA trace (authority handover). Losses: L-1 a stolen refresh token keeps minting access
+tokens, L-2 a legitimate client is locked out by a false alarm. Hazards: H-1 a token that was
+rotated away is still useful to its holder, H-2 revocation fires on a benign race.
+Constraints: SC-1 a spent token cannot extend a session unnoticed, SC-2 a race inside the
+grace window never revokes, SC-3 one client's alarm never touches another client's tokens.
+Unsafe control actions: UCA-1 not provided, reuse is not detected (tests:
+`test_replayed_refresh_token_after_the_grace_window_revokes_the_client`); UCA-2 provided
+unsafely, a race revokes (`test_replay_inside_the_grace_window_is_refused_but_revokes_nothing`);
+UCA-3 provided unsafely, a replay by client B revokes client A
+(`test_a_replay_by_another_client_id_does_not_revoke_the_owner`). Scenario CS-1: the thief
+refreshes first and the real client's next refresh is the replay, so the thief's family is
+revoked together with the client's (the client re-authorizes, which is the intended outcome).
+Limits: a thief who refreshes and whose copy is never replayed is invisible, and a theft
+within the 10 s grace window is not caught; both are inherent to rotation without
+sender-constraining. `client_secret` values are stored as the SDK compares them (raw) in
+`clients.json` (0600, state dir 0700).
+
 ### 6. Persistence across restarts
 
 Token state is file-backed, so a server restart does **not** log the client

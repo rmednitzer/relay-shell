@@ -228,7 +228,7 @@ A session id from `shell_spawn` or `ssh_spawn` works with all of these.
 | `session_send` | `session_id`, `data`, `enter=true` | `enter` appends `\n`. The audit record omits `data` (keeping its length) when the session is at a secret prompt such as `sudo`'s; see `RELAY_SHELL_AUDIT_SESSION_INPUT` |
 | `session_recv` | `session_id`, `timeout=2.0`, `max_bytes=65536` | returns buffered/new output; waits up to `timeout`; returns `""` if nothing yet; reports `[session ... ended, exit=N]` when closed |
 | `session_resize` | `session_id`, `cols`, `rows` | resize the PTY |
-| `session_kill` | `session_id`, `signal_name="TERM"`, `close=true` | signal and (default) reap |
+| `session_kill` | `session_id`, `signal_name="TERM"`, `close=true` | signal and (default) reap; `signal_name` is a real signal name with or without the `SIG` prefix (`TERM`, `SIGKILL`, `usr1`); anything else returns `[ERROR: RelayError: unknown signal ...]` and touches nothing |
 | `session_list` | - | active sessions with size/age/idle/byte counters |
 
 `session_recv` is Tier 0; `session_list` is Tier 0; the others are Tier 1.

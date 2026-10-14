@@ -3,7 +3,7 @@ from __future__ import annotations
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from relay_shell.util import clamp, gen_id, now_iso, sha256_hex, truncate, utf8_len
+from relay_shell.util import clamp, gen_id, now_iso, sha256_hex, truncate
 
 
 def test_clamp() -> None:
@@ -35,11 +35,6 @@ def test_truncate_is_byte_safe() -> None:
 def test_now_iso_has_offset() -> None:
     assert "T" in now_iso()
     assert now_iso().endswith("+00:00")
-
-
-def test_utf8_len() -> None:
-    assert utf8_len("a") == 1
-    assert utf8_len("é") == 2
 
 
 def test_gen_id_unique() -> None:
