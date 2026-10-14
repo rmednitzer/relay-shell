@@ -15,18 +15,11 @@ from typing import Any
 
 import pytest
 
+from helpers import audit_lines as _audit_lines
+from helpers import text as _text
 from relay_shell.config import Settings
 from relay_shell.policy import Policy, Tier, classify
 from relay_shell.server import _SSH_FANOUT_MAX_HOSTS, build_server
-
-
-def _audit_lines(path: Path) -> list[dict[str, Any]]:
-    text = path.read_text(encoding="utf-8")
-    return [json.loads(ln) for ln in text.splitlines() if ln.strip()]
-
-
-def _text(content: object) -> str:
-    return "".join(b.text for b in content if getattr(b, "type", "") == "text")
 
 
 @pytest.fixture

@@ -10,22 +10,14 @@ before any subprocess is spawned.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import patch
 
+from helpers import audit_lines as _audit_lines
+from helpers import text as _text
 from relay_shell.config import Settings
 from relay_shell.policy import Tier, classify
 from relay_shell.server import build_server
-
-
-def _audit_lines(path: Path) -> list[dict[str, object]]:
-    text = path.read_text(encoding="utf-8")
-    return [json.loads(ln) for ln in text.splitlines() if ln.strip()]
-
-
-def _text(content: object) -> str:
-    return "".join(b.text for b in content if getattr(b, "type", "") == "text")
 
 
 def test_ssh_keyscan_classified_tier_one_not_zero() -> None:

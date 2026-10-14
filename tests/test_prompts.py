@@ -15,14 +15,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from helpers import audit_lines as _audit_lines
 from relay_shell.config import Settings
 from relay_shell.server import build_server
-
-
-def _audit_lines(path: Path) -> list[dict]:
-    if not path.is_file():
-        return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
 def _prompt_blob(result) -> str:

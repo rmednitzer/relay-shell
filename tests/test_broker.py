@@ -16,6 +16,7 @@ import json
 import re
 from pathlib import Path
 
+from helpers import text as _text
 from relay_shell.broker import ConfirmationBroker
 from relay_shell.config import Settings
 from relay_shell.policy import Tier, classify
@@ -161,10 +162,6 @@ def _on_settings(tmp_path: Path) -> Settings:
         confirm_tier3=True,
         confirm_ttl=120,
     )
-
-
-def _text(content: object) -> str:
-    return "".join(b.text for b in content if getattr(b, "type", "") == "text")  # type: ignore[attr-defined]
 
 
 async def test_on_tier3_challenges_then_executes(tmp_path: Path) -> None:
