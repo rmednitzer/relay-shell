@@ -69,12 +69,48 @@ def test_unterminated_pem_block_is_collapsed() -> None:
     body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 30
     for text in (
         f"-----BEGIN PRIVATE KEY-----\n{body}",
-        f"-----BEGIN RSA PRIVATE KEY----- {body} and more",
+        f"-----BEGIN RSA PRIVATE KEY----- {body}",
         f"-----BEGIN OPENSSH PRIVATE KEY-----\n{body}\n",
     ):
         out = redact(text)
         assert body[:40] not in out
         assert "[REDACTED]" in out
+
+
+def test_unterminated_pem_does_not_swallow_the_next_command() -> None:
+    body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 3
+    out = redact(f"-----BEGIN PRIVATE KEY-----\n{body}\nrm -rf /srv")
+    assert body not in out
+    assert out.endswith("\nrm -rf /srv")
+    # Header lines of an encrypted key are part of the block too.
+    enc = (
+        "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n"
+        f"DEK-Info: AES-128-CBC,ABC123\n\n{body}\necho done"
+    )
+    out = redact(enc)
+    assert "DEK-Info" not in out and body not in out
+    assert out.endswith("\necho done")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "redis-cli -a 'FIRST SECRETTAIL and more",
+        'redis-cli -a "FIRST SECRETTAIL and more',
+        "unzip -P 'FIRST SECRETTAIL and more",
+        "ldapsearch -w 'FIRST SECRETTAIL",
+        "aws configure set aws_secret_access_key 'FIRST SECRETTAIL",
+        "sshpass -p 'FIRST SECRETTAIL",
+    ],
+)
+def test_unterminated_quoted_secret_is_consumed_to_end_of_line(command: str) -> None:
+    out = redact(command)
+    assert "FIRST" not in out and "SECRETTAIL" not in out
+
+
+def test_quoted_secret_beyond_the_scan_window_is_still_collapsed() -> None:
+    record = _scrub_str("redis-cli -a 'FIRST SECRETTAIL " + "x" * 20_000 + "'", 500)
+    assert "FIRST" not in record and "SECRETTAIL" not in record
 
 
 def test_terminated_pem_block_keeps_its_tail() -> None:

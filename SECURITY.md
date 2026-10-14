@@ -113,7 +113,7 @@ and redaction are heuristic; arbitrary shell execution is not a containment boun
   consequence is that an unquoted secret that itself contains one of those characters is cut
   at the first, and its tail is recorded (quote the value, which the quote-aware rules
   consume whole). Also covered: `:=` and `=>` assignments, an unterminated PEM private-key
-  block (collapsed along with the base64 text that follows it), `https://TOKEN@host`
+  block (header and base64 body lines; a command on the next line stays visible), `https://TOKEN@host`
   user-info with no colon (web schemes, 12 or more characters), and the secret flags of
   `aws configure set`, `redis-cli -a/--pass`, `unzip|zip -P` and `ldap* -w`. **Input typed into a PTY
   session** has no keyword for any of this to find, so `session_send` input is

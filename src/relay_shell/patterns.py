@@ -404,6 +404,12 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
+# Value of a command-scoped secret flag (v16): a terminated quote, else an unterminated
+# one consumed to the end of the line (the closing quote is missing or lies beyond the
+# redaction scan window, so the remainder is still secret), else a bare word that stops
+# at a shell control operator. Same shape as the generic CLI-flag rule.
+_SCOPED_VALUE = r"""(?:'[^']*'|"[^"]*"|'[^\r\n]*|"[^\r\n]*|[^\s;&|]+)"""
+
 # Command-scoped credential flags (v12). Each is anchored on the command that
 # gives the flag its meaning, with a bounded gap, because the flags are
 # overloaded (`-u` is a uid in `docker exec`, `-p` a port in `ssh`/`nmap`) and an
@@ -423,8 +429,7 @@ COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # sshpass: `sshpass -p SECRET ...` (also quoted, or glued as `-pSECRET`).
     (
         re.compile(
-            r"(?i)(?P<prefix>\bsshpass\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-p[=\s]*)"
-            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
+            r"(?i)(?P<prefix>\bsshpass\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-p[=\s]*)" + _SCOPED_VALUE
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -433,8 +438,7 @@ COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             r"(?i)(?P<prefix>\b(?:docker|podman|nerdctl|buildah|skopeo)\b[^|;&\n]{0,256}?"
-            r"\blogin\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-p[=\s]*)"
-            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
+            r"\blogin\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-p[=\s]*)" + _SCOPED_VALUE
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -451,8 +455,7 @@ COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             r"(?i)(?P<prefix>\baws\b[^|;&\n]{0,128}?\bconfigure\s+set\s+(?:--\S+\s+\S+\s+){0,3}"
-            r"(?:aws_)?(?:secret_access_key|session_token)\s+)"
-            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
+            r"(?:aws_)?(?:secret_access_key|session_token)\s+)" + _SCOPED_VALUE
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -460,7 +463,7 @@ COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             r"(?i)(?P<prefix>\bredis-cli\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])(?:-a|--pass)[=\s]+)"
-            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
+            + _SCOPED_VALUE
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -468,7 +471,7 @@ COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             r"(?P<prefix>\b(?:unzip|zip)\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-P[=\s]*)"
-            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
+            + _SCOPED_VALUE
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -476,8 +479,7 @@ COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             r"(?P<prefix>\bldap(?:search|modify|add|delete|compare|modrdn|passwd|whoami)\b"
-            r"[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-w[=\s]*)"
-            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
+            r"[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-w[=\s]*)" + _SCOPED_VALUE
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -509,10 +511,13 @@ REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----"
         # Unterminated (v16): no END footer within the bound, as when a key is cut
         # off by the argument cap or pasted without its footer. The audit record keeps
-        # the first 500 characters, which is all key material, so collapse the header
-        # and the base64 body that follows it (bounded, and it stops at the first
-        # character that cannot be part of a PEM body).
-        r"|-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----[A-Za-z0-9+/=:,\s-]{0,8192}",
+        # the first 500 characters, which is all key material, so collapse the header,
+        # any `Proc-Type:` / `DEK-Info:` lines, and the base64 body lines that follow
+        # (runs of 16+ base64 characters). Plain words such as a command on the next line
+        # are not base64 runs of that length, so they stay in the record. A final body
+        # line shorter than 16 characters is not consumed.
+        r"|-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----"
+        r"(?:\s*[A-Za-z][A-Za-z-]*:[^\r\n]{0,200}){0,4}(?:\s*[A-Za-z0-9+/=]{16,}){0,160}",
     ),
     # GitHub: classic/fine-grained PAT, plus the gh[pousr]_ token family
     # (personal, OAuth, user-to-server, server-to-server, refresh).
@@ -618,7 +623,10 @@ _CMD = (
     r"(?:(?:^|[;&|(`\n]|\$\()[^\S\n]*(?:\w+=\S*\s+){0,6}"
     r"|\b(?:sudo|doas)\s+(?:-[ugCphrtUT]\s+\S+\s+|-\S+\s+|\w+=\S*\s+){0,6}"
     r"|\b(?:exec|xargs|nohup|time|command|env)\s+(?:-\S+\s+|\w+=\S*\s+){0,6}"
-    r"|\b(?:nice|ionice|timeout|setsid|stdbuf|chrt|taskset)\s+"
+    # Wrappers that take arguments (v16) count only where they start a command: `echo
+    # timeout 5 reboot` and `man nice -n 10 reboot` do not run `timeout` or `reboot`.
+    r"|(?:^|[;&|(`\n]|\$\()[^\S\n]*(?:\w+=\S*\s+){0,6}(?:/[\w./-]*/)?"
+    r"(?:nice|ionice|timeout|setsid|stdbuf|chrt|taskset)\s+"
     r"(?:-\S+\s+|\d[\w.:,-]*\s+|\w+=\S*\s+){0,6}"
     r"|\b(?:sh|bash|zsh|dash|ksh)\s+-\w*c\s+[\"']\s*"
     r")(?:/[\w./-]*/)?"
@@ -661,7 +669,7 @@ TIER3_PATTERN = re.compile(
     r"drop\s+database|drop\s+table|truncate\s+table|"
     r"git\s+push\s+(?:\S+\s+){0,8}?(?:--force\b|-f\b|\+\S)|git\s+reset\s+--hard|"
     r"userdel|deluser|gpasswd|"
-    r"iptables\s+-F|nft\s+flush|redis-cli\b[^|;&\n]{0,128}?\bflush(?:all|db)\b|"
+    r"iptables\s+-F|nft\s+flush|"
     # `ip link ... down` only as a state change: `ip link show | grep down` is a read.
     r"ip\s+link\s+set\s+\S+(?:\s+\S+){0,4}?\s+down\b|ip\s+link\s+del(?:ete)?\b|ifdown\b|"
     r":\s*\(\s*\)\s*\{|"
@@ -688,8 +696,44 @@ TIER3_PATTERN = re.compile(
     r"|" + _CMD + r"(?:"
     r"(?:reboot|shutdown|halt|poweroff)(?![\w.-])|"
     r"(?:init|telinit)\s+[06]\b|"
-    r"passwd\s+\S"
+    r"passwd\s+\S|"
+    # Cache wipe (v16), in command position like the other command names.
+    r"redis-cli\b[^|;&\n]{0,128}?\bflush(?:all|db)\b"
     r")"
+)
+
+
+# Global options (with arity) that may sit between a command and its verb (v16). A flag
+# that takes a value is listed with that value so the value is never mistaken for the verb
+# (`systemctl --user status stop`, `docker compose --profile logs up`); any other
+# option-looking word is treated as a boolean flag.
+def _opt(valued: str, boolean: str) -> str:
+    """One option word: ``valued`` names consume their value; any other flag is boolean.
+
+    The boolean branch refuses the valued names, so the regex cannot back off a valued
+    flag into a boolean one and then read its value as the verb.
+    """
+    return (
+        rf"(?:(?:{valued})(?:=\S+|\s+\S+)"
+        rf"|(?!(?:{valued})(?![\w-]))--?(?:{boolean})(?:=\S+)?)"
+    )
+
+
+_SYSTEMCTL_OPT = _opt(
+    r"-H|--host|-M|--machine|-t|--type|-p|--property|--state|--root|-n|--lines|-o|--output"
+    r"|-s|--signal|--kill-whom|--kill-who|--job-mode|--timestamp",
+    r"[\w.-]+",
+)
+_KUBECTL_OPT = _opt(
+    r"-n|--namespace|--context|--cluster|--kubeconfig|--user|-s|--server|--as|--as-group"
+    r"|--token|--request-timeout|--cache-dir|--certificate-authority|--client-certificate"
+    r"|--client-key|--tls-server-name|-v|--v",
+    r"[\w-]+",
+)
+_COMPOSE_OPT = _opt(
+    r"-f|--file|-p|--project-name|--profile|--env-file|--project-directory|--ansi|--parallel"
+    r"|--progress|-H|--host|-c|--context",
+    r"[\w-]+",
 )
 
 # Destinations whose modification is persistence or a system change (v16): see the
@@ -700,9 +744,9 @@ _SENSITIVE_DEST = (
     r"/(?:boot|usr|bin|sbin|lib|lib32|lib64|opt|srv|root|sys)/"
     r"|/var/(?:spool|lib|www)/"
     r"|[^\s\"';&|]{0,200}/\.ssh/"
-    r"|[^\s\"';&|]{0,200}authorized_keys"
-    r"|[^\s\"';&|]{0,200}/sudoers"
-    r"|(?:[^\s\"';&|]{0,200}/)?\.(?:bashrc|bash_profile|bash_login|profile|zshrc|zprofile)\b"
+    r"|(?:[^\s\"';&|]{0,200}/)?authorized_keys2?(?![\w.-])"
+    r"|[^\s\"';&|]{0,200}/sudoers(?![\w-])"
+    r"|(?:[^\s\"';&|]{0,200}/)?\.(?:bashrc|bash_profile|bash_login|profile|zshrc|zprofile)(?![\w.-])"
     r")"
 )
 
@@ -711,7 +755,7 @@ TIER2_PATTERN = re.compile(
     r"(?imx)(?:(?<![\w])("
     # systemctl: any state-changing verb, with the global flags (`--user`, `--now`,
     # `-H host`) that may precede it (v16; previously only five verbs, no flags).
-    r"systemctl\s+(?:--?[\w=.-]+\s+(?:[\w.@:-]+\s+)?){0,3}"
+    r"systemctl\s+(?:" + _SYSTEMCTL_OPT + r"\s+){0,4}"
     r"(stop|restart|disable|mask|kill|start|enable|reload|reload-or-restart|try-restart"
     r"|try-reload-or-restart|unmask|isolate|daemon-reload|daemon-reexec|set-default"
     r"|edit|revert)(?![\w.-])|"
@@ -721,11 +765,13 @@ TIER2_PATTERN = re.compile(
     # docker compose / docker-compose: the read-only subcommands (`ps`, `logs`, `config`,
     # ...) are exempt; `up`, `down`, `exec` and anything unknown stay Tier 2 (v16).
     r"docker\s+(run|rm|stop|kill|build)|"
-    r"docker(?:\s+|-)compose\b(?![^|;&\n]{0,80}?\s(?:ps|ls|logs|config|images|top|port|version|events)"
-    r"(?![\w.:/-]))|"
+    r"docker(?:\s+|-)compose\b(?!(?:\s+" + _COMPOSE_OPT + r"){0,6}\s+"
+    r"(?:ps|ls|logs|config|images|top|port|version|events)(?![\w.:/-]))|"
     # kubectl: mutating verbs after any global flags (`-n prod`, `--context x`). The
     # verb must be a whole word, so `logs job/create-db` is not a `create` (v16).
-    r"kubectl\s+(?:\S+\s+){0,6}?(?:apply|delete|scale|rollout|exec|drain|cordon|uncordon|taint"
+    r"kubectl\s+(?:"
+    + _KUBECTL_OPT
+    + r"\s+){0,6}(?:apply|delete|scale|rollout|exec|drain|cordon|uncordon|taint"
     r"|patch|edit|replace|create|label|annotate|cp|run|expose|autoscale|debug)(?![\w.-])|"
     r"(?:docker|podman)\s+(?:system|volume|image|container|network)\s+(?:prune|rm)\b|"
     r"(?:terraform|tofu)\s+apply|pulumi\s+up|git\s+clean\s+-\w*f|setenforce\b|"
@@ -766,7 +812,8 @@ TIER2_PATTERN = re.compile(
     r"|ip6?tables(?:-nft|-legacy)?\s+(?:(?:-t\s+\w+|-w\s*\d*|--wait)\s+){0,3}-[AIDRPXNZ]\b"
     r"|ip6?tables-restore(?![\w.-])"
     r"|nft\s+(?:add|delete|insert|replace|create|destroy)\b"
-    r"|firewall-cmd\b[^|;&\n]{0,64}--(?:add|remove|set|reload|permanent|runtime-to-permanent)\b"
+    r"|firewall-cmd\b[^|;&\n]{0,64}--(?:(?:add|remove|set|new|delete|change|load)-\S|reload\b"
+    r"|complete-reload\b|runtime-to-permanent\b|panic-(?:on|off)\b|lockdown-(?:on|off)\b)"
     r"|redis-cli\b[^|;&\n]{0,128}?\b(?:shutdown|config\s+set|replicaof|slaveof|debug"
     r"|script\s+flush|acl\s+(?:setuser|deluser))\b)"
 )
@@ -780,7 +827,10 @@ PRIV_ESC_PATTERN = re.compile(r"(?ix)\b(sudo|doas|pkexec|runas)\b")
 # Shell line continuation (v16): `\<newline>` is deleted before the shell parses a line, so
 # `rm \<newline>-rf /x` is `rm -rf /x` and `r\<newline>m` is `rm`. The classifier removes
 # it first; the whitespace-based patterns would otherwise miss the flag.
-LINE_CONTINUATION_PATTERN = re.compile(r"\\\r?\n")
+# The scan is quote-aware: a single-quoted span (and a double-quoted span without a
+# continuation) is kept as written, because inside single quotes the pair is literal text.
+# An unbalanced quote simply is not a span, so the rest of the text is scanned as unquoted.
+LINE_CONTINUATION_PATTERN = re.compile(r"""'[^']*'|"(?:\\.|[^"\\])*"|\\\r?\n|\\.""")
 
 # A segment (up to the next `;`, `&`, `|`, newline, `(` or backtick) whose command only
 # reads or prints text (v16): `grep sudo /var/log/auth.log`, `man sudo`, `echo sudo`. A

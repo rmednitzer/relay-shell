@@ -76,6 +76,14 @@ def test_wrapped_or_continued_destructive_commands_are_tier3(command: str) -> No
         "docker compose up -d",
         "docker-compose down",
         "docker compose -f logs.yml up",
+        "docker compose --profile logs up -d",
+        "docker compose up ps",
+        "docker compose -p ps up",
+        "kubectl --namespace=x delete pod y",
+        "kubectl --insecure-skip-tls-verify delete pod",
+        "systemctl -t service start x",
+        "firewall-cmd --reload",
+        "echo x >> authorized_keys",
         "crontab -e",
         "crontab mycron",
     ],
@@ -111,6 +119,24 @@ def test_state_changes_that_were_tier1_are_now_tier2(command: str) -> None:
         "docker compose logs -f web",
         "docker-compose -f a.yml config",
         "docker compose version",
+        "docker compose --profile x logs",
+        "docker compose --ansi never ps",
+        "kubectl get pod delete",
+        "kubectl get pods exec",
+        "systemctl --user status stop",
+        "systemctl --property=Id show stop",
+        "firewall-cmd --permanent --get-zones",
+        "firewall-cmd --permanent --list-all",
+        "firewall-cmd --query-port=80/tcp",
+        "echo x > ./backup_authorized_keys",
+        "echo x > /tmp/notauthorized_keys",
+        "echo x > authorized_keys.bak",
+        "echo x > ~/.bashrc.bak",
+        "echo timeout 5 reboot",
+        "man nice -n 10 reboot",
+        "grep redis-cli FLUSHDB docs",
+        "echo redis-cli FLUSHALL",
+        "printf '%s' 'r\\\nm -rf /srv'",
     ],
 )
 def test_near_misses_stay_tier1(command: str) -> None:
@@ -149,10 +175,23 @@ def test_a_real_privilege_wrapper_still_escalates(command: str) -> None:
     assert tier(command) >= Tier.STATEFUL
 
 
+def test_wrappers_with_arguments_need_a_command_boundary() -> None:
+    assert tier("FOO=1 timeout 5 reboot") is Tier.IRREVERSIBLE
+    assert tier("echo hi; ionice -c 2 shutdown now") is Tier.IRREVERSIBLE
+    assert tier("echo ok && /usr/bin/timeout 5 reboot") is Tier.IRREVERSIBLE
+
+
 def test_line_continuation_is_removed_before_matching() -> None:
     """`\\<newline>` is deleted by the shell: a destructive word cannot hide behind it."""
     assert tier("echo hi \\\nreboot") is Tier.REVERSIBLE  # joined: `reboot` is an argument
     assert tier("echo hi\nreboot") is Tier.IRREVERSIBLE  # a real second command
+    # Inside single quotes the pair is literal text, so it cannot build a command.
+    assert tier("printf '%s' 'r\\\nm -rf /srv'") is Tier.REVERSIBLE
+    # Double quotes still delete it, and an unbalanced quote falls back to deleting.
+    assert tier('echo "x" ; rm \\\n-rf /srv') is Tier.IRREVERSIBLE
+    assert tier("echo it's; rm \\\n-rf /srv") is Tier.IRREVERSIBLE
+    # An escaped backslash before a newline is not a continuation.
+    assert tier("echo hi \\\\\nreboot") is Tier.IRREVERSIBLE
 
 
 def test_patterns_version_16_or_later() -> None:
@@ -177,6 +216,10 @@ def test_patterns_version_16_or_later() -> None:
         "tee " + "-a " * 20_000,
         "crontab " * 8000,
         "\\\n" * 20_000,
+        "'a\\\n" * 20_000,
+        '"a\\\n' * 20_000,
+        '"' * 50_000,
+        '\\"' * 30_000,
         "grep " * 8000,
         "echo ;" * 10_000,
     ],

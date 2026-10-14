@@ -73,6 +73,23 @@ _READ_ONLY_TOOLS = frozenset(
 _MUTATING_TOOLS = frozenset({"ssh_upload", "ssh_download", "ssh_forward"})
 
 
+_CONTINUATIONS = frozenset({"\\\n", "\\\r\n"})
+
+
+def _strip_line_continuations(text: str) -> str:
+    """Delete shell line continuations (``\\<newline>``) outside single quotes.
+
+    The shell removes them before parsing, so ``rm \\<nl>-rf /x`` is ``rm -rf /x`` and
+    ``r\\<nl>m`` is ``rm``; inside single quotes the pair is literal text and is kept
+    (``printf 'r\\<nl>m'`` prints it). Here-document bodies are not tracked.
+    """
+    if "\\\n" not in text and "\\\r\n" not in text:
+        return text
+    return patterns.LINE_CONTINUATION_PATTERN.sub(
+        lambda m: "" if m.group(0) in _CONTINUATIONS else m.group(0), text
+    )
+
+
 def classify(tool: str, command: str = "") -> Tier:
     """Best-effort tier for ``tool`` given an optional command string.
 
@@ -81,7 +98,7 @@ def classify(tool: str, command: str = "") -> Tier:
     """
     if tool in _READ_ONLY_TOOLS:
         return Tier.READ_ONLY
-    text = patterns.LINE_CONTINUATION_PATTERN.sub("", command or "")
+    text = _strip_line_continuations(command or "")
     if patterns.TIER3_PATTERN.search(text):
         return Tier.IRREVERSIBLE
     if patterns.PRIV_ESC_PATTERN.search(patterns.PRIV_ESC_READER_SEGMENT.sub(" ", text)):
