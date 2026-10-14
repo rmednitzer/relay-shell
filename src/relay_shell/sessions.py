@@ -103,6 +103,12 @@ class Transport(Protocol):
     async def aclose(self) -> None: ...
 
 
+# Teardown signal schedule for a local PTY child: SIGTERM at 0, SIGHUP once
+# `_HANGUP_AFTER` has passed, SIGKILL at `_TERM_GRACE` (all seconds).
+_TERM_GRACE = 5.0
+_HANGUP_AFTER = 0.5
+
+
 def _set_winsize(fd: int, cols: int, rows: int) -> None:
     with contextlib.suppress(OSError):
         # Clamp to the unsigned-short range: struct.pack raises struct.error (not
@@ -124,6 +130,10 @@ class LocalPtyTransport:
         self._proc = proc
         self._monitor = monitor
         self._closed = False
+        # `start_new_session=True` makes the child a group leader, so its pgid is its pid.
+        # Kept because `os.getpgid(pid)` fails once the leader has been reaped, while
+        # descendants that stayed in the group may still be running.
+        self._pgid = proc.pid
 
     @classmethod
     async def spawn(
@@ -236,13 +246,54 @@ class LocalPtyTransport:
             with contextlib.suppress(OSError, ValueError):
                 loop.remove_reader(self._fd)
 
+    def _group_alive(self) -> bool:
+        try:
+            os.killpg(self._pgid, 0)
+        except OSError:
+            return False
+        return True
+
+    def _kill_group(self) -> None:
+        with contextlib.suppress(OSError):
+            os.killpg(self._pgid, signal.SIGKILL)
+
+    async def _reap_group(self, deadline: float) -> None:
+        """Once the leader is gone, give the rest of its group until ``deadline``, then SIGKILL.
+
+        The leader exiting on SIGTERM or SIGHUP says nothing about descendants that stayed
+        in its process group and ignore both. Without this a close returned while they ran on
+        with their session removed. Descendants that handle SIGTERM get the remaining grace
+        before SIGKILL; an empty group costs one syscall.
+        """
+        loop = asyncio.get_running_loop()
+        try:
+            # Polled: a process group has no awaitable handle (pidfds are per process).
+            while self._group_alive() and loop.time() < deadline:  # noqa: ASYNC110
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            self._kill_group()
+            raise
+        self._kill_group()
+
     async def aclose(self) -> None:
         if self._closed:
             return
         self._closed = True
+        deadline = asyncio.get_running_loop().time() + _TERM_GRACE
         self.signal(signal.SIGTERM)
         try:
-            await asyncio.wait_for(self._proc.wait(), 5)
+            try:
+                await asyncio.wait_for(self._proc.wait(), _HANGUP_AFTER)
+            except TimeoutError:
+                # Interactive shells ignore SIGTERM, so without this every close of
+                # one sat out the whole grace period and ended in SIGKILL. SIGHUP is
+                # what a closing terminal sends and they exit on it. It follows
+                # SIGTERM only after a short grace so a daemon that traps SIGTERM
+                # for an orderly shutdown (and treats SIGHUP as "reload") is not
+                # hung up mid-shutdown.
+                self.signal(signal.SIGHUP)
+                await asyncio.wait_for(self._proc.wait(), _TERM_GRACE - _HANGUP_AFTER)
+            await self._reap_group(deadline)
         except asyncio.CancelledError:
             # Cancelled during the SIGTERM grace wait: `_closed` is already set, so no
             # second aclose will follow. A child that ignores SIGTERM would outlive its
