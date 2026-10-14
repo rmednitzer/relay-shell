@@ -669,7 +669,9 @@ def test_pem_redaction_matches_and_is_redos_bounded() -> None:
     t0 = time.perf_counter()
     out = redaction.redact(blob)
     assert time.perf_counter() - t0 < 5.0
-    assert "[REDACTED]" not in out  # no closing END -> no match
+    # v16: an unterminated block is collapsed too (header plus the key-like body), so a
+    # key cut off by the argument cap cannot leak its first 500 characters.
+    assert "[REDACTED]" in out
 
 
 # --- 2026-10-14 audit: ReDoS in the classifier and the CLI-flag redaction rule ---
@@ -741,5 +743,5 @@ def test_pgp_private_key_block_is_redacted() -> None:
     assert body not in out
 
 
-def test_patterns_version_is_15() -> None:
-    assert patterns.PATTERNS_VERSION == "15"
+def test_patterns_version_is_16() -> None:
+    assert patterns.PATTERNS_VERSION == "16"

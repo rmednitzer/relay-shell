@@ -112,7 +112,10 @@ and redaction are heuristic; arbitrary shell execution is not a containment boun
   `||`), so a command glued to it (`token=a;rm -rf /srv`) stays visible in the record; the
   consequence is that an unquoted secret that itself contains one of those characters is cut
   at the first, and its tail is recorded (quote the value, which the quote-aware rules
-  consume whole). **Input typed into a PTY
+  consume whole). Also covered: `:=` and `=>` assignments, an unterminated PEM private-key
+  block (header and base64 body lines; a command on the next line stays visible), `https://TOKEN@host`
+  user-info with no colon (web schemes, 12 or more characters), and the secret flags of
+  `aws configure set`, `redis-cli -a/--pass`, `unzip|zip -P` and `ldap* -w`. **Input typed into a PTY
   session** has no keyword for any of this to find, so `session_send` input is
   withheld from the audit record when the session is at a secret prompt (the last
   output line reads like one, or the terminal has echo off), and
