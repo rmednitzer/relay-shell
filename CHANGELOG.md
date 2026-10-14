@@ -12,7 +12,10 @@ All notable changes to this project are documented here. The format follows
   sweep, shutdown) no longer waits out the whole 5 s SIGTERM grace. Interactive shells ignore
   SIGTERM, so every close ended in SIGKILL after 5.01 s. `LocalPtyTransport.aclose` now sends SIGHUP if the child is
   still running 0.5 s after SIGTERM (5.01 s to under 1 s, measured on `sh -i` and `bash -i`);
-  SIGKILL at 5 s is unchanged. SSH session transports are unchanged. ADR 0012.
+  SIGKILL at 5 s is unchanged. Once the leader has exited, the close also SIGKILLs any process
+  still running in its group at the 5 s deadline; before, descendants that ignored SIGTERM and
+  SIGHUP outlived their session whenever the leader itself ended on SIGTERM. SSH session
+  transports are unchanged. ADR 0012.
 
 ### Removed
 

@@ -32,6 +32,13 @@ not a certification, and does not replace the threat model in `SECURITY.md`.
    closing terminal sends and ends them at once (measured: 5.01 s to 0.00 s for `sh -i` and
    `bash -i`). SIGHUP follows SIGTERM, not replaces or accompanies it, so a daemon that
    handles SIGTERM for an orderly shutdown and treats SIGHUP as "reload" is not hung up first.
+4. After the leader exits, `aclose` keeps checking the process group (the pgid is kept from
+   spawn, since `getpgid` fails once the leader is reaped) until the 5 s deadline, then
+   SIGKILLs it. The leader ending on SIGTERM or SIGHUP says nothing about descendants that
+   stayed in the group and ignore both; without this step step 3 turned that case from
+   "SIGKILL at 5 s" into "orphaned, close returned", and a leader that ends on SIGTERM
+   already left them. An empty group costs one syscall; a surviving member costs the
+   remaining grace.
 
 Rejected alternatives: **no change** (leaves the leak); **catch the cancel and tear the
 rest down inline** (a second cancel can interrupt that too, and `suppress(CancelledError)`
@@ -76,6 +83,8 @@ whose capacity the leaked processes consume.
 - SC-5 (H-1) A child that ignores SIGTERM does not make the close wait out the whole grace
   when a hangup would end it, and a child that handles SIGTERM is given 0.5 s to finish
   before it receives SIGHUP.
+- SC-6 (H-1) A close does not return while a non-zombie member of the child's process group
+  is still running past the grace deadline; it is SIGKILLed first.
 
 ### Control structure
 
@@ -98,6 +107,7 @@ registry's `_sessions` map and `Session.closed`.
 | UCA-6 | Provided unsafely | A close signals a process group that is no longer the session's | Accepted, see CS-5 |
 | UCA-7 | Too late / too long | An interactive shell ignores SIGTERM, so each close idles the full 5 s before SIGKILL | SC-4, SC-5 |
 | UCA-8 | Too early / wrong order | SIGHUP reaches a daemon before its SIGTERM handler has run, and it reloads instead of exiting | SC-5 (0.5 s head start; residual: a handler slower than that sees SIGHUP mid-shutdown) |
+| UCA-9 | Not provided | The leader exits on SIGHUP or SIGTERM, `wait()` returns, and no SIGKILL reaches same-group descendants that ignore both | SC-6 |
 
 ### Causal scenarios
 
@@ -125,6 +135,12 @@ registry's `_sessions` map and `Session.closed`.
 - CS-9 (UCA-8) A child exits on SIGTERM and would exit differently on SIGHUP. Test:
   `test_close_gives_sigterm_handlers_their_turn_before_hangup`. A child ignoring both still
   reaches SIGKILL: `test_close_still_kills_a_child_that_ignores_term_and_hup`.
+- CS-10 (UCA-9) A shell that ignores SIGTERM and ends on SIGHUP has a same-group descendant
+  that ignores both (found in review of the SIGHUP step; `main` killed the group at 5 s).
+  Tests: `test_close_reaps_group_members_that_outlive_the_leader[leader-ends-on-hup|
+  leader-ends-on-term]` (real processes; both fail with only the reap call removed).
+  Residual: a zombie member nobody reaps (no init reaper) keeps the group "alive" and costs
+  the full grace, never more; members that left the group are CS-5.
 
 ### Assumptions and limits
 

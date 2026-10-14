@@ -303,3 +303,64 @@ async def test_close_still_kills_a_child_that_ignores_term_and_hup(
     elapsed, rc = await _timed_close(["/bin/sh", "-c", script])
     assert 1.0 < elapsed < 4.0
     assert rc == -signal.SIGKILL
+
+
+def _live_group_members(pgid: int) -> list[int]:
+    """Non-zombie processes in process group ``pgid`` (a reaped-by-nobody zombie is not live)."""
+    live = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            stat = Path(f"/proc/{entry}/stat").read_text()
+        except OSError:
+            continue
+        state, _ppid, group = stat[stat.rindex(")") + 2 :].split()[:3]
+        if state != "Z" and int(group) == pgid:
+            live.append(int(entry))
+    return live
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        # Leader ignores SIGTERM and ends on SIGHUP; the descendant ignores both.
+        'trap "" TERM; (trap "" TERM HUP; exec sleep 300) & wait',
+        # Leader ends on SIGTERM (already true before the SIGHUP step).
+        '(trap "" TERM HUP; exec sleep 300) & wait',
+    ],
+    ids=["leader-ends-on-hup", "leader-ends-on-term"],
+)
+async def test_close_reaps_group_members_that_outlive_the_leader(
+    monkeypatch: pytest.MonkeyPatch, script: str
+) -> None:
+    """The leader exiting says nothing about descendants in its group that ignore SIGTERM and
+    SIGHUP. Pre-fix the close returned with them still running and their session removed."""
+    from relay_shell import sessions
+
+    monkeypatch.setattr(sessions, "_TERM_GRACE", 1.5)
+    tr = await LocalPtyTransport.spawn(
+        ["/bin/bash", "-c", script], cwd=None, env=dict(os.environ), cols=80, rows=24
+    )
+    pgid = tr._proc.pid
+    await asyncio.sleep(0.5)
+    assert len(_live_group_members(pgid)) >= 1  # the descendant is up
+    await tr.aclose()
+    deadline = time.monotonic() + 2
+    while _live_group_members(pgid) and time.monotonic() < deadline:  # noqa: ASYNC110
+        await asyncio.sleep(0.05)  # SIGKILL delivery is asynchronous; /proc has no event
+    leftover = _live_group_members(pgid)
+    for pid in leftover:
+        os.kill(pid, signal.SIGKILL)
+    assert not leftover, f"close left group members running: {leftover}"
+
+
+async def test_close_with_an_empty_group_does_not_wait_for_the_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from relay_shell import sessions
+
+    monkeypatch.setattr(sessions, "_TERM_GRACE", 5.0)
+    elapsed, rc = await _timed_close(["/bin/sleep", "30"])
+    assert elapsed < 1.0
+    assert rc == -signal.SIGTERM
