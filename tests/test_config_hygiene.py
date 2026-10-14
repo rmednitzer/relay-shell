@@ -41,9 +41,15 @@ def test_dotenv_file_is_checked_too(tmp_path: Path) -> None:
     dotenv = tmp_path / ".env"
     dotenv.write_text(
         "# comment\nexport RELAY_SHELL_POLICY_DENY_=x\nRELAY_SHELL_MAX_OUTPUT=2048\n\nbad line\n"
+        "'RELAY_SHELL_POLICY_MOD'=guarded\n"
+        "RELAY_SHELL_MAX_SESSION=4\n"
+        "export 'RELAY_SHELL_HTTP_PRT' = 9\n"
     )
     assert unknown_settings_names({}, dotenv=dotenv) == [
-        ("RELAY_SHELL_POLICY_DENY_", "RELAY_SHELL_POLICY_DENY")
+        ("RELAY_SHELL_HTTP_PRT", "RELAY_SHELL_HTTP_PORT"),
+        ("RELAY_SHELL_MAX_SESSION", "RELAY_SHELL_MAX_SESSIONS"),
+        ("RELAY_SHELL_POLICY_DENY_", "RELAY_SHELL_POLICY_DENY"),
+        ("RELAY_SHELL_POLICY_MOD", "RELAY_SHELL_POLICY_MODE"),
     ]
     assert unknown_settings_names({}, dotenv=tmp_path / "missing.env") == []
 
@@ -74,6 +80,7 @@ def test_default_timeout_is_applied_when_the_caller_omits_it(settings: Settings)
     assert relay.exec_timeout(0) == 7
     assert relay.exec_timeout(5) == 5
     assert relay.exec_timeout(500) == 100
+    assert relay.exec_timeout(-1) == 1, "only 0 selects the default; a negative clamps to the floor"
     capped = Relay(settings.model_copy(update={"default_timeout": 900, "max_timeout": 100}))
     assert capped.exec_timeout(0) == 100, "the default is still clamped to the maximum"
 

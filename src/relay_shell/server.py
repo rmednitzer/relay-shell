@@ -468,9 +468,10 @@ class Relay:
         return clamp(timeout, 1, self.settings.max_timeout)
 
     def exec_timeout(self, timeout: int) -> int:
-        """Per-call timeout for ``shell_exec`` / ``ssh_exec``: ``0`` means the server
-        default (``RELAY_SHELL_DEFAULT_TIMEOUT``), anything else is clamped as usual."""
-        return self.clamp_timeout(timeout if timeout > 0 else self.settings.default_timeout)
+        """Per-call timeout for ``shell_exec`` / ``ssh_exec``: exactly ``0`` means the server
+        default (``RELAY_SHELL_DEFAULT_TIMEOUT``); every other value, a negative one
+        included, is clamped as usual (so a negative becomes the 1 s floor, never the default)."""
+        return self.clamp_timeout(self.settings.default_timeout if timeout == 0 else timeout)
 
     def clamp_output(self, max_output: int) -> int:
         return clamp(max_output, 1024, self.settings.max_output_hard)

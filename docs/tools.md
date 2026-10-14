@@ -18,12 +18,28 @@ refuses Tier 2+ unless `RELAY_SHELL_POLICY_ALLOW` matches; `readonly`
 permits only Tier 0. `RELAY_SHELL_POLICY_DENY` is always enforced first.
 
 `RELAY_SHELL_POLICY_DENY` and `RELAY_SHELL_POLICY_ALLOW` are Python `re.search` patterns,
-unanchored, run over the probe `<tool> <policy text>` (the tool name, a space, then the command
-with its stdin, script body and env overlay). A match anywhere in that text counts, so a
-pattern such as `systemctl restart` also matches when those words sit inside another
-command, an argument or a heredoc. An `ALLOW` match admits the whole call, whatever else it
-contains: anchor it (`^shell_exec systemctl restart nginx$`). Neither pattern is a
-containment boundary (`SECURITY.md`).
+unanchored, run over the probe `<tool> <policy text>` (the tool name, a space, then the
+tool's policy text). A match anywhere in that text counts, so a pattern such as
+`systemctl restart` also matches when those words sit inside another command, an argument or
+a heredoc. An `ALLOW` match admits the whole call, whatever else it contains. The policy
+text differs per tool and often carries lines after the command:
+
+| Tool | Policy text (newline-joined) |
+|------|------------------------------|
+| `shell_exec` | command, stdin, `env_json` |
+| `shell_script` / `shell_spawn` | script or command, `env_json` |
+| `ssh_exec` / `ssh_spawn` | command, destination host, jump chain, then the canonical IP spellings of the host and hops when they differ |
+| `ssh_fanout` | command, the host list, canonical IP spellings |
+| `ssh_check` / `ssh_keyscan` | the host list, canonical IP spellings |
+| `ssh_upload` / `ssh_download` | `upload <local> <host>:<remote>` / `download <host>:<remote> <local>`, jump chain, canonical IPs |
+| `ssh_forward` | `forward <spec>`, jump chain, host, canonical IPs |
+| `session_send` | the partial line already typed, then the new input |
+
+Anchor the start only (`(?s)^shell_exec systemctl restart nginx\b`) and never end-anchor an
+SSH or transfer pattern with `$`: the host, jump and IP lines follow the command, so the
+pattern would never match. For the same reason a fully anchored `DENY` is easy to defeat
+with appended text; prefer short substrings there. Neither pattern is a containment
+boundary (`SECURITY.md`).
 
 Conventions:
 

@@ -465,9 +465,11 @@ accumulate idle handles.
   documented single-owner default.
 - `guarded` - Tier 2+ refused unless `RELAY_SHELL_POLICY_ALLOW` matches; set an
   allowlist of sanctioned change patterns. The pattern is an unanchored `re.search`
-  over `<tool> <command, stdin, script and env text>`, and a match admits the whole
-  call, so anchor it (`^shell_exec systemctl restart nginx$`) rather than naming a
-  word that could appear anywhere in a longer command.
+  over `<tool> <policy text>`, and a match admits the whole call, so anchor the start
+  (`(?s)^shell_exec systemctl restart nginx\b`) rather than naming a word that could
+  appear anywhere in a longer command. SSH and transfer tools append host, jump and IP
+  lines after the command, so do not end-anchor with `$`; the per-tool shapes are in
+  [`tools.md`](tools.md).
 - `readonly` - only Tier 0. Useful for an observation-only client.
 
 Interactive PTY sessions are classified per input: each `session_send` payload

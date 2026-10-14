@@ -265,7 +265,9 @@ class Settings(BaseSettings):
 # server's settings without being Settings fields.
 _FOREIGN_PREFIXES = ("RELAY_SHELL_EDGE_",)
 _PREFIX = "RELAY_SHELL_"
-_DOTENV_KEY_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+# python-dotenv (which `Settings` uses) accepts `KEY=`, `export KEY=` and a single-quoted key
+# (`'KEY'=`). A double-quoted key keeps its quotes in the name, so no setting can match it.
+_DOTENV_KEY_RE = re.compile(r"""^\s*(?:export\s+)?(?:'(?P<sq>[^'=]+)'|(?P<bare>[^\s='"#]+))\s*=""")
 
 
 def unknown_settings_names(
@@ -282,7 +284,7 @@ def unknown_settings_names(
     try:
         for line in Path(dotenv).read_text(encoding="utf-8").splitlines():
             if (m := _DOTENV_KEY_RE.match(line)) is not None:
-                names.add(m.group(1))
+                names.add(m.group("sq") or m.group("bare"))
     except OSError:
         pass
     unknown: dict[str, str | None] = {}
