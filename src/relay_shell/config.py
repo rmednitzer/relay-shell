@@ -99,6 +99,11 @@ class Settings(BaseSettings):
     policy_deny: str = ""
     policy_allow: str = ""
 
+    # Append a one-line `[NOTICE ...]` to the result of a call that ran as Tier 2/3 or with
+    # SSH host-key verification off, and report the permissive settings in `server_info`
+    # (ADR 0013). Informational only: it never blocks, and the audit record is unchanged.
+    unsafe_notices: bool = True
+
     # Tier-3 confirmation broker (ADR 0009; opt-in, default off). When true, a
     # Tier-3 (IRREVERSIBLE) operation that passes the deny list and mode check
     # is not executed on first request: the runner returns a single-use,

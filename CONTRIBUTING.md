@@ -93,7 +93,7 @@ short version:
 | If you change                | Also update                                                                            |
 |------------------------------|----------------------------------------------------------------------------------------|
 | Add or remove a tool         | `docs/tools.md`, `tests/test_server.py::_EXPECTED`, README capability tables, `_INSTRUCTIONS` in `server.py` |
-| Add or remove an env var     | `.env.example`, `Settings`, `docs/deployment.md`                                       |
+| Add or remove an env var     | `.env.example`, `Settings`, `docs/deployment.md` (and `notices.config_warnings` if it widens access) |
 | Add or change a module       | `docs/architecture.md` module table                                                    |
 | Add a runtime dependency     | `requirements.txt` (pinned), the `pyproject.toml` bound + a justification in the PR body |
 | Change release/SBOM tooling or a workflow | `requirements-build.in` / `requirements-sbom.in` then regenerate the hashed `.txt` locks (runbook §6.6), `tests/test_release_workflows.py` |

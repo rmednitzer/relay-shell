@@ -68,3 +68,10 @@ outside the service does not substitute for an execution-path test.
 - Full sandbox: breaks the capability; defeats the purpose.
 - Partial sandbox presented as containment: misleading and still bypassable
   for the operations the tool must perform.
+
+## Addendum 2026-10-14: telling the caller what is unsafe
+
+The decision stands: no sandbox, full access by default. [ADR 0013](0013-open-by-default-with-unsafe-notices.md)
+adds the counterpart that was missing, a plain-language notice to the caller when a call ran as
+Tier 2/3 or with host-key verification off, and a `server_info.warnings` list of the permissive
+settings, without refusing anything.

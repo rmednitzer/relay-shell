@@ -109,3 +109,32 @@ def test_metrics_temp_file_is_not_collectable_and_is_cleaned_up(
     assert [p.name for p in tmp_path.iterdir() if p.suffix == ".prom"] == ["relay.prom"]
     assert not [p for p in tmp_path.iterdir() if p.suffix == ".tmp"], "temp file removed"
     assert os.stat(out).st_mode & 0o777 == 0o644
+
+
+def _run_probe(
+    module: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mcp_code: int
+) -> str:
+    monkeypatch.setattr(module, "service_active", lambda _name: 1.0)
+
+    def fake(url: str) -> tuple[int, object, bytes]:
+        if url.endswith("/mcp"):
+            return mcp_code, {}, b""
+        raise OSError("offline")
+
+    monkeypatch.setattr(module, "request", fake)
+    out = tmp_path / "relay.prom"
+    monkeypatch.setenv("RELAY_MONITOR_DOMAIN", "relay.example.org")
+    monkeypatch.setenv("RELAY_MONITOR_TEXTFILE", str(out))
+    monkeypatch.setenv("RELAY_MONITOR_AUDIT_ANCHOR", str(tmp_path / "anchor.json"))
+    assert module.main() == 0
+    return out.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(("code", "rejected"), [(401, 1), (403, 1), (200, 0), (500, 0)])
+def test_mcp_probe_counts_the_edge_gate_403_as_a_rejection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int, rejected: int
+) -> None:
+    """A14-D15: the host probes itself, so the CIDR gate answers 403 instead of the app's 401."""
+    text = _run_probe(_load_metrics(), tmp_path, monkeypatch, code)
+    assert f"relay_mcp_unauthenticated_rejected {float(rejected)}" in text
+    assert f"relay_mcp_probe_http_status {float(code)}" in text

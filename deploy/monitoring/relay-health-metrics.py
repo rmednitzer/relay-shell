@@ -95,6 +95,7 @@ def main() -> int:
 
     redirect_ok = metadata_ok = authorize_validation_ok = 0.0
     mcp_rejected = hsts_ok = security_headers_ok = 0.0
+    mcp_status = 0.0
     try:
         code, headers, _ = request(f"http://{domain}/")
         redirect_ok = float(
@@ -134,7 +135,12 @@ def main() -> int:
 
     try:
         code, _, _ = request(f"https://{domain}/mcp")
-        mcp_rejected = float(code == 401)
+        # 401 is the application refusing a caller without a token; 403 is the edge's CIDR
+        # gate refusing the probing host itself (its own address is not in
+        # RELAY_SHELL_EDGE_CLIENT_CIDRS). Both mean "rejected"; the status gauge below
+        # keeps them apart. Anything else, 200 above all, is not a rejection.
+        mcp_status = float(code)
+        mcp_rejected = float(code in (401, 403))
     except (OSError, ValueError) as exc:
         errors.append(f"MCP unauthorized probe: {exc}")
 
@@ -155,8 +161,14 @@ def main() -> int:
     )
     add(
         "relay_mcp_unauthenticated_rejected",
-        "Whether an unauthenticated MCP request is rejected with HTTP 401.",
+        "Whether an unauthenticated MCP request is rejected (HTTP 401 by the app or 403 by the "
+        "edge CIDR gate).",
         mcp_rejected,
+    )
+    add(
+        "relay_mcp_probe_http_status",
+        "HTTP status of the unauthenticated MCP probe (401 app, 403 edge gate, 0 on error).",
+        mcp_status,
     )
     add(
         "relay_hsts_ok",

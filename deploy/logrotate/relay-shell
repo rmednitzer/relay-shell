@@ -1,8 +1,21 @@
 # /etc/logrotate.d/relay-shell
 #
-# The audit log is append-only on disk (chattr +a). The append-only attribute
-# must be dropped only for the rotate itself and restored immediately, so a
+# The audit log is append-only on disk (chattr +a), and so are its rotated archives. The
+# attribute is dropped only for the rotate itself and restored immediately, so a
 # compromised process cannot rewrite history through the rotation window.
+#
+# Why the archives are handled too (A14-D15): logrotate compresses the previous archive
+# (`delaycompress`: writes a .gz and unlinks the plain file) before it runs `prerotate`,
+# renames the active file, and unlinks archives past `rotate N`. None of that works on an
+# append-only file, and a failed compress aborts the whole rotation, so the active file would
+# grow without bound. `firstaction` runs before all of it and drops the attribute on the
+# active file and every archive; `postrotate` restores it on the new active file at once;
+# `lastaction` restores it on every archive (including the new .gz) when the rotation is
+# done. Without the archive part every archive silently lost its protection at its first
+# rotation. `firstaction`/`lastaction` run only when a rotation happens, so an idle day
+# changes nothing.
+#
+# `rotate 90` is mirrored by RELAY_AUDIT_RETAIN_SEGMENTS in the evidence verifier.
 
 /var/log/relay-shell/audit.jsonl {
     daily
@@ -13,10 +26,20 @@
     delaycompress
     create 0600 relay-shell relay-shell
     dateext
-    prerotate
+    firstaction
         /usr/bin/chattr -a /var/log/relay-shell/audit.jsonl 2>/dev/null || true
+        for f in /var/log/relay-shell/audit.jsonl-*; do
+            [ -e "$f" ] && /usr/bin/chattr -a "$f" 2>/dev/null
+        done
+        true
     endscript
     postrotate
         /usr/bin/chattr +a /var/log/relay-shell/audit.jsonl 2>/dev/null || true
+    endscript
+    lastaction
+        for f in /var/log/relay-shell/audit.jsonl-*; do
+            [ -e "$f" ] && /usr/bin/chattr +a "$f" 2>/dev/null
+        done
+        true
     endscript
 }

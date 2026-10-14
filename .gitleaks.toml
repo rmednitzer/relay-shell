@@ -18,10 +18,21 @@ title = "relay-shell"
 [extend]
 useDefault = true
 
-[allowlist]
-description = "Synthetic secret fixtures: redaction/policy tests, the runbook redaction sample, and the audit evidence that documents the same shapes (finding S-004). Not real credentials."
+# A14-D12: scoped per rule. A path allowlist that applies to every rule would also hide a
+# real credential of any other kind committed in the same files, so this one names the five
+# rules whose synthetic fixtures live in the redaction tests (checked against the full
+# history with gitleaks 8.30.1: the only findings without it are these rules in these
+# files). The runbook and audit notes no longer need an entry; a new finding there fails
+# the scan.
+[[allowlists]]
+description = "Synthetic secret fixtures in the redaction/policy/audit tests (finding S-004). Not real credentials."
+targetRules = [
+  "private-key",
+  "generic-api-key",
+  "jwt",
+  "curl-auth-header",
+  "curl-auth-user",
+]
 paths = [
   '''tests/.*\.py$''',
-  '''docs/runbook\.md$''',
-  '''audit/.*\.md$''',
 ]

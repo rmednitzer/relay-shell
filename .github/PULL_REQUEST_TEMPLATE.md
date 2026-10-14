@@ -38,6 +38,8 @@ backlog item if applicable: "Closes F-6 from docs/runbook.md". -->
       tables.
 - [ ] No new env var is missing from `.env.example`, `Settings`, and
       `docs/deployment.md`.
+- [ ] A new permissive setting has a matching entry in `notices.config_warnings`, and the
+      default configuration still refuses no command (ADR 0013).
 - [ ] No new dependency is added without a justification in the PR body
       and a pinned version in `requirements.txt`.
 

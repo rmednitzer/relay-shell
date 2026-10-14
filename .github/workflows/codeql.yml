@@ -38,3 +38,29 @@ jobs:
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4
+
+  # A14-D12: the workflows themselves are code that holds tokens. A separate job (not a
+  # matrix entry) so the required check `Analyze (python) (python)` keeps its name;
+  # add `Analyze (actions)` to the required checks and the ci-gate list once it has run
+  # green on main.
+  analyze-actions:
+    name: Analyze (actions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4
+        with:
+          languages: actions
+          build-mode: none
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4
+        with:
+          category: "/language:actions"

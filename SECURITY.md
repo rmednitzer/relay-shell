@@ -46,7 +46,10 @@ and redaction are heuristic; arbitrary shell execution is not a containment boun
 
 - **Tiered authority** (`docs/adr/0003-tiered-authority.md`). Every call is
   classified Tier 0 (read-only) to Tier 3 (irreversible). `RELAY_SHELL_POLICY_MODE`:
-  - `open` (default): full access, every call still classified and audited.
+  - `open` (default): full access, nothing refused for what it does; every call is classified
+    and audited, and an admitted Tier 2/3 call or one with host-key checking off is answered with
+    a trailing `[NOTICE ...]` line (ADR 0013). `server_info.warnings` lists the permissive
+    settings. A notice is information, not a control.
   - `guarded`: Tier 2+ refused unless `RELAY_SHELL_POLICY_ALLOW` matches.
   - `readonly`: only Tier 0 permitted.
   `RELAY_SHELL_POLICY_DENY` is always enforced first, in every mode.

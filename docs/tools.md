@@ -13,7 +13,10 @@ effective decision also depends on `RELAY_SHELL_POLICY_MODE` and the deny/allow 
 | 2    | `STATEFUL`    | Visible impact a user or dependent notices.   |
 | 3    | `IRREVERSIBLE`| High blast; rollback expensive or impossible. |
 
-Mode semantics: `open` permits all but still classifies; `guarded`
+Mode semantics: `open` (the default) permits all but still classifies, and the result of an
+admitted Tier 2/3 call ends with a `[NOTICE ...]` line saying what is risky about it
+([ADR 0013](adr/0013-open-by-default-with-unsafe-notices.md); `RELAY_SHELL_UNSAFE_NOTICES=false`
+turns the lines off, the audit record never changes); `guarded`
 refuses Tier 2+ unless `RELAY_SHELL_POLICY_ALLOW` matches; `readonly`
 permits only Tier 0. `RELAY_SHELL_POLICY_DENY` is always enforced first.
 

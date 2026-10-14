@@ -694,6 +694,44 @@ class SshPool:
             raise
         return SshProcessTransport(proc, pool=self, entry=entry)
 
+    async def _sftp_transfer(
+        self,
+        target: str,
+        *,
+        upload: bool,
+        src: str,
+        dst: str,
+        route: str,
+        recurse: bool,
+        connect_kwargs: dict[str, Any],
+        timeout: int,
+    ) -> str:
+        """Shared body of :meth:`sftp_put` / :meth:`sftp_get`; ``route`` names the transfer."""
+        conn = await self.connect(target, **connect_kwargs)
+        # Pin for the transfer's duration: with timeout=0 an SFTP transfer is
+        # bounded only by connection keepalive, so a long transfer must not be
+        # idle-evicted out from under itself.
+        async with self._pinned(conn):
+            async with conn.start_sftp_client() as sftp:
+                move = sftp.put if upload else sftp.get
+                transfer = move(src, dst, recurse=recurse, preserve=True)
+                # ``timeout`` is a per-call cap on the transfer itself (the
+                # connection-level keepalive is the only other bound). 0 disables
+                # it. On a hung transfer wait_for cancels the in-flight transfer; the
+                # sftp client is closed by the context manager on the way out.
+                if timeout > 0:
+                    try:
+                        await asyncio.wait_for(transfer, timeout)
+                    except TimeoutError:
+                        kind = "upload" if upload else "download"
+                        return (
+                            f"[TIMEOUT after {timeout}s] {_TIMEOUT_OUTCOME_UNKNOWN}; "
+                            f"partial {kind} {route}"
+                        )
+                else:
+                    await transfer
+            return f"{'uploaded' if upload else 'downloaded'} {route}"
+
     async def sftp_put(
         self,
         target: str,
@@ -704,28 +742,16 @@ class SshPool:
         connect_kwargs: dict[str, Any],
         timeout: int = 0,
     ) -> str:
-        conn = await self.connect(target, **connect_kwargs)
-        # Pin for the transfer's duration: with timeout=0 an SFTP transfer is
-        # bounded only by connection keepalive, so a long upload must not be
-        # idle-evicted out from under itself.
-        async with self._pinned(conn):
-            async with conn.start_sftp_client() as sftp:
-                transfer = sftp.put(local, remote, recurse=recurse, preserve=True)
-                # ``timeout`` is a per-call cap on the transfer itself (the
-                # connection-level keepalive is the only other bound). 0 disables
-                # it. On a hung transfer wait_for cancels the in-flight put; the
-                # sftp client is closed by the context manager on the way out.
-                if timeout > 0:
-                    try:
-                        await asyncio.wait_for(transfer, timeout)
-                    except TimeoutError:
-                        return (
-                            f"[TIMEOUT after {timeout}s] {_TIMEOUT_OUTCOME_UNKNOWN}; "
-                            f"partial upload {local} -> {target}:{remote}"
-                        )
-                else:
-                    await transfer
-            return f"uploaded {local} -> {target}:{remote}"
+        return await self._sftp_transfer(
+            target,
+            upload=True,
+            src=local,
+            dst=remote,
+            route=f"{local} -> {target}:{remote}",
+            recurse=recurse,
+            connect_kwargs=connect_kwargs,
+            timeout=timeout,
+        )
 
     async def sftp_get(
         self,
@@ -737,21 +763,16 @@ class SshPool:
         connect_kwargs: dict[str, Any],
         timeout: int = 0,
     ) -> str:
-        conn = await self.connect(target, **connect_kwargs)
-        async with self._pinned(conn):  # see sftp_put: unbounded when timeout=0
-            async with conn.start_sftp_client() as sftp:
-                transfer = sftp.get(remote, local, recurse=recurse, preserve=True)
-                if timeout > 0:
-                    try:
-                        await asyncio.wait_for(transfer, timeout)
-                    except TimeoutError:
-                        return (
-                            f"[TIMEOUT after {timeout}s] {_TIMEOUT_OUTCOME_UNKNOWN}; "
-                            f"partial download {target}:{remote} -> {local}"
-                        )
-                else:
-                    await transfer
-            return f"downloaded {target}:{remote} -> {local}"
+        return await self._sftp_transfer(
+            target,
+            upload=False,
+            src=remote,
+            dst=local,
+            route=f"{target}:{remote} -> {local}",
+            recurse=recurse,
+            connect_kwargs=connect_kwargs,
+            timeout=timeout,
+        )
 
     @staticmethod
     def _parse_forward_spec(spec: str) -> tuple[str, int, str, int]:

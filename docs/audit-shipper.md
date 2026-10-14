@@ -491,7 +491,7 @@ journalctl -u systemd-journal-upload -n 100 --no-pager | grep -iE 'error|fail' |
 reopens when `logrotate` lands a new file at the canonical path.
 This is acceptable here because the bundled `deploy/logrotate/
 relay-shell` uses `create` (the new file is in place before
-`prerotate` ever finishes), but it is **not** inode-safe in the
+`firstaction` ever finishes), but it is **not** inode-safe in the
 strict sense Vector and Fluent Bit provide. A small race exists: if
 the relay writes the very last byte to the *old* inode after
 `tail -F` has switched to the *new* path, that byte ships when the

@@ -141,3 +141,11 @@ review.
   commands stay Tier 1; wrappers chained behind other wrappers (`sudo nice reboot`) are not
   followed. The deny-list probe reads the raw text. This is a heuristic with an operator
   override, not a boundary; the no-sandbox posture (ADR 0002) is unchanged.
+
+## Addendum 2026-10-14: the tier now has a stated basis and reaches the caller
+
+`policy.assess()` returns the tier together with why it was chosen (`BASIS_*` strings), and
+`PolicyDecision.basis` carries it to the runner. In `open` mode, which remains the default and
+refuses nothing, the tier and basis now also reach the caller as a trailing `[NOTICE ...]` line
+for Tier 2 and Tier 3 calls. Admission rules are unchanged. See
+[ADR 0013](0013-open-by-default-with-unsafe-notices.md) for the decision and its STPA trace.

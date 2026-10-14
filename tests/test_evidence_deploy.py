@@ -678,3 +678,10 @@ def test_approved_head_can_carry_the_chain_epoch(tmp_path: Path) -> None:
     # A malformed epoch invalidates the ledger (fail closed).
     result, _ = _run_verifier(tmp_path, retain=3, approvals=_ledger({"epoch": "not-hex"}))
     assert result.returncode == 1 and "epoch must be 64 lowercase hex" in result.stderr
+
+
+def test_rsync_runs_unprivileged_on_the_destination_by_default(tmp_path: Path) -> None:
+    """A14-D9: the root-equivalent write on the backup host is opt-in, not the default."""
+    _result, log, _count = _run_sync(tmp_path, remote_check="off", local_anchor=_anchor(5))
+    flags = [a for call in _calls(log) for a in call if a.startswith("--rsync-path=")]
+    assert flags and set(flags) == {"--rsync-path=rsync"}

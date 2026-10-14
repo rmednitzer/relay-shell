@@ -234,7 +234,8 @@ registered `redirect_uri` receives a code, and `/token` redeems it. A confidenti
 (`token_endpoint_auth_method=none`) with a loopback redirect such as
 `http://localhost:PORT/cb` is the weak case: whoever holds its `client_id` can run their own
 listener on that port and obtain a token. A `client_id` is not a secret; it appears in
-authorize URLs and in the edge access log.
+authorize URLs and in the edge access log (the access log does not record the redirect's
+`Location` header, which carries the authorization code).
 
 What bounds this (accepted, 2026-10-14, A14-A2): the MCP endpoint and every other operational
 path stay behind the edge CIDR gate (`RELAY_SHELL_EDGE_CLIENT_CIDRS`), so a token minted from
