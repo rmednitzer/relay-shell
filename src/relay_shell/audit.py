@@ -516,6 +516,19 @@ class AuditLogger:
             entry["action"] = action
         self._emit(entry)
 
+    def mark_degraded(self, reason: str) -> None:
+        """Flag the sink degraded after a runtime failure elsewhere (ADR 0006).
+
+        Used for the gap the seccomp-notify supervisor reports when it fails open
+        (the child ran unfiltered, so its syscalls are missing from the trail).
+        Called from the supervisor thread: two attribute stores, no lock needed.
+        The first reason is kept, so a later gap never hides an earlier, more
+        severe one such as a failed write.
+        """
+        if not self.degraded:
+            self.degraded_reason = reason
+            self.degraded = True
+
     def record_syscall(
         self,
         *,

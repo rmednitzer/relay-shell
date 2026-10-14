@@ -591,7 +591,11 @@ covered above:
   design, so it is exposed to whoever can reach the port.
 - **SSH:** `RELAY_SHELL_SSH_CONFIG` (default `~/.ssh/config`) and `RELAY_SHELL_INVENTORY`
   (JSON inventory) say where hosts come from; `RELAY_SHELL_SSH_KNOWN_HOSTS` and
-  `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS` set host-key verification (§7).
+  `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS` set host-key verification (§7). The server
+  honours `ProxyCommand` and `Match exec` in that file, which start local processes under the
+  service account without a per-call audit record; use `ProxyJump` instead and keep the file
+  operator-owned and not writable by the service account. Caller-supplied hosts, users and
+  jump hops are restricted to plain tokens so they cannot add arguments to a `ProxyCommand`.
 - **SSH connect tuning:** `RELAY_SHELL_SSH_CONNECT_TIMEOUT` / `_SSH_KEEPALIVE`
   (dial timeout + keepalive; `_SSH_IDLE_TIMEOUT` for the pool reaper is in §7).
 - **Audit sink:** `RELAY_SHELL_AUDIT_STDERR` (also mirror audit lines to stderr).

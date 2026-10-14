@@ -19,7 +19,12 @@ permits only Tier 0. `RELAY_SHELL_POLICY_DENY` is always enforced first.
 
 Conventions:
 
-- `host` is an inventory / `ssh_config` alias or `user@host`.
+- `host` is an inventory / `ssh_config` alias or `user@host`. A host or user that is not an
+  operator-written alias must be a plain token: letters, digits and `. _ - : % [ ]`, no
+  whitespace, quotes or leading `-` (a per-call `user` and every `jump` hop are held to the
+  same rule). Anything else is refused before any connection with
+  `[ERROR: RelayError: invalid ssh host|user|jump ...]`, because asyncssh substitutes these
+  values into the operator's `ProxyCommand` and the `known_hosts` file.
 - `known_hosts` is `strict` | `accept-new` | `ignore` (default from
   `RELAY_SHELL_SSH_KNOWN_HOSTS`). `accept-new` is trust-on-first-use: an unknown
   host is accepted and recorded, a host with an existing entry is verified and a
@@ -203,6 +208,11 @@ A session id from `shell_spawn` or `ssh_spawn` works with all of these.
 | `session_list` | - | active sessions with size/age/idle/byte counters |
 
 `session_recv` is Tier 0; `session_list` is Tier 0; the others are Tier 1.
+
+Sessions are not owned by the client that opened them: under multi-client OAuth every
+approved client sees every session in `session_list` and can drive or close it by id. All
+approved clients are one trust domain (`SECURITY.md`, "Residual risk"); isolate clients by
+running separate instances.
 
 Tests: `tests/test_sessions.py`, `tests/test_tool_wrappers.py`.
 

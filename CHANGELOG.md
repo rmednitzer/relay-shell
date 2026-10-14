@@ -121,6 +121,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A seccomp-notify monitor that fails open now marks the audit sink degraded** (ADR 0006;
+  `on_degraded` was never wired), so `relay_shell_audit_degraded` and `server_info` show the
+  gap. A call cancelled while `ssh_spawn` pins its connection no longer orphans the remote
+  PTY, and one cancelled while `ssh_forward` registers its listener no longer leaves it
+  bound and unreachable by `ssh_forward_close` (A14-RS).
 - An SSH command that hits its timeout now also closes its channel (not just SIGTERM).
 - `known_hosts` appends no longer fuse onto an unterminated final line (which corrupted
   both entries and made `accept-new` repeat first-contact trust).
@@ -207,6 +212,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **SSH host, user and jump values are validated (A14-RS).** asyncssh substitutes them
+  into an `ssh_config` `ProxyCommand` (`%h`, `%n`, `%r`) and splits the result into argv,
+  so a host such as `x -oProxyCommand=...` added arguments to a local command, reachable
+  through Tier-0 `ssh_check`, and a host with a newline could add a `known_hosts` line under
+  `accept-new`. A caller-supplied host, `user` and `jump` hop must now be a plain token
+  (no whitespace, quotes or leading `-`); operator inventory and `ssh_config` aliases are
+  trusted as written. Documented: `ProxyCommand` / `Match exec` in the operator's
+  `ssh_config` still start unaudited local processes (prefer `ProxyJump`), and sessions
+  are shared by all approved clients (owner decision).
 - **Event-loop stalls from adversarial input are closed** (audit 2026-10-14,
   `PATTERNS_VERSION` 13 -> 14). The tier classifier ran super-linear on whitespace runs
   (400 newlines: 3.5 s, cubic) and on repeated `dd ` (quadratic), *before* the deny list;

@@ -735,6 +735,7 @@ class Relay:
             arch=support.arch,
             on_event=_on_event,
             on_overflow=_on_overflow,
+            on_degraded=lambda reason: self.audit.mark_degraded(f"seccomp-notify: {reason}"),
         )
 
 

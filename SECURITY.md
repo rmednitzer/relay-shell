@@ -130,6 +130,11 @@ and redaction are heuristic; arbitrary shell execution is not a containment boun
   `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false`; the audit record states the mode actually
   used. Jump hosts are verified against `~/.ssh/known_hosts`. Local (`L`) and dynamic (`D`)
   forwards listen on loopback only.
+- **SSH target tokens.** A caller-supplied host, `user` or `jump` hop must be a plain token
+  (no whitespace, quotes or leading `-`) or the call is refused. asyncssh substitutes them
+  into an `ssh_config` `ProxyCommand` (`%h`, `%n`, `%r`) and splits the result into argv, so
+  a host such as `x -oProxyCommand=...` would otherwise run a local command; operator-written
+  inventory and `ssh_config` aliases are trusted as written.
 - **Resource bounds.** Per-call timeout and output caps, a bounded number of
   concurrent sessions, bounded per-session buffers, and idle/lifetime
   reaping. Failure paths return a structured error string; a tool never
@@ -172,6 +177,16 @@ capabilities of the service account on this host and any host its SSH
 credentials reach. In privileged posture, this is effectively root-level host
 control. Scope accounts/keys accordingly and isolate the host. This is stated
 plainly so it can be designed around rather than discovered.
+
+Sessions (`shell_spawn`, `ssh_spawn`) and port forwards are shared by all approved clients:
+there is no per-client owner, so under multi-client OAuth any client can list, read, drive
+and close the others' sessions (accepted 2026-10-14, A14-RS). Treat all approved clients as
+one trust domain, or run one instance per domain.
+
+An `ssh_config` that uses `ProxyCommand` or `Match exec` makes the server start a local
+process (`Match exec` through a shell, at config evaluation) under the service account.
+That is operator-written configuration, so it is trusted, but it is not audited per call and
+carries no seccomp-notify observation; prefer `ProxyJump`.
 
 OAuth operator approval gates a *client*, not each authorization: with the shipped edge
 template `/authorize` is public and has no login step, so a host that knows an approved public

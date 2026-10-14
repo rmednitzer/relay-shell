@@ -330,10 +330,10 @@ Use this for every PR, your own or external.
 | `server.py`          | Every new tool goes through `Relay.run()`. No tool ever raises into the transport.                |
 | `patterns.py`        | The single home for `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN` and the redaction tables. Any change bumps `PATTERNS_VERSION`. Paired tests in `tests/test_patterns.py`. |
 | `policy.py`          | Consumes `patterns`; deny list is still the first gate; `_READ_ONLY_TOOLS` / `_MUTATING_TOOLS` membership intact. |
-| `audit.py`           | Output body never written, only `sha256` + `len`. `degraded` path still degrades, not crashes, and a runtime write failure (not just a bad path at start-up) sets `degraded`. With `audit_chain` on, `seq`/`prev`/`chain` are appended under `_chain_lock` and `verify_chain` round-trips (ADR 0007); the default-off path is byte-identical. |
+| `audit.py`           | Output body never written, only `sha256` + `len`. `degraded` path still degrades, not crashes, and a runtime write failure (not just a bad path at start-up) sets `degraded`, and so does a seccomp-notify monitor that fails open (`mark_degraded`, first reason kept; ADR 0006). With `audit_chain` on, `seq`/`prev`/`chain` are appended under `_chain_lock` and `verify_chain` round-trips (ADR 0007); the default-off path is byte-identical. |
 | `redaction.py`       | Consumes `patterns`; the loop order (URL creds → prefix patterns → whole-match patterns → MySQL family) is unchanged. |
 | `sessions.py`        | Lost-wakeup invariant: `recv` clears the event under the buffer lock before awaiting. PTY spawn adopts the active seccomp monitor; the transport stops it in `aclose()` — on the failure path too (B-026). |
-| `sshpool.py`         | `known_hosts` arg is validated and, when `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false`, may not weaken the server default. The connection cache key includes user, port, verification mode, identity key and jump host; a failed or cancelled connect always releases its single-flight slot. `L:`/`D:` forwards listen on loopback only. Forwards leak-free. |
+| `sshpool.py`         | `known_hosts` arg is validated and, when `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false`, may not weaken the server default. The connection cache key includes user, port, verification mode, identity key and jump host; a failed or cancelled connect always releases its single-flight slot. `L:`/`D:` forwards listen on loopback only. Forwards leak-free, including a cancel between binding a listener and tracking it, and between opening an `ssh_spawn` channel and its transport owning it. A caller-supplied host, user and jump hop must be a plain token (`_check_ssh_tokens`): they are substituted into the operator's `ProxyCommand`, so whitespace or a leading `-` would add local argv. |
 | `auth/oauth.py`      | File modes (0o700 dir / 0o600 files), atomic save (unique temp, fsync, rename; ownership of the state dir kept when run as root), approval written before the client, lazy expiry, single-client lockdown intact, refusals raised as `RegistrationError`/`TokenError` (never a bare exception), every grant bound to the configured resource. |
 | `auth/admin.py`      | Approve / reject only touch the named client's approval, codes and tokens; an unreadable store is an error, not empty. |
 | `shelltools.py`      | `start_new_session=True` preserved (so `killpg` works). Env overlay does not propagate JSON errors. |
@@ -1000,9 +1000,13 @@ closed three MEDIUM defence-in-depth / correctness gaps in the engagement PR
   keep the spawning call's `request_id`. The cap therefore bounds events
   per session, not per call. The "SSH-local half" deferred from B-021 turned
   out to be vacuous as implemented: `asyncssh` runs in-process and
-  `sshpool.py` spawns no local child (no `ProxyCommand` support is wired),
+  `sshpool.py` spawns no local child of its own,
   so there is nothing local to observe on that path; if a local-subprocess
   proxy path ever lands, the ambient-monitor pattern covers it the same way.
+  Correction (2026-10-14, A14-RS): asyncssh does honour `ProxyCommand` and
+  `Match exec` from the operator's `ssh_config`, which start a local process
+  that this channel does not observe; the caller-supplied host, user and jump
+  values that reach those tokens are now validated (runbook §3.2, `sshpool.py`).
   Tests: portable adoption/lifetime tests + a `seccomp`-marked end-to-end
   `shell_spawn` session test in `tests/test_seccomp.py`.
 - **B-023 (P2)** — **Closed** by

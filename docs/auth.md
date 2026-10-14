@@ -218,6 +218,16 @@ the allowlist, and any deployment whose allowlist is broad (a whole VPN range, o
   `@blocked` in the Caddyfile (see the EDGE-1 comment) so it is CIDR-gated too;
 - treat the `client_id` of a loopback-redirect public client as sensitive.
 
+### Residual: sessions and forwards are shared between clients
+
+Approval admits a client to the whole tool surface. `shell_spawn` / `ssh_spawn` sessions and
+`ssh_forward` listeners carry no owner, so with several approved clients each one sees all
+sessions in `session_list` and can `session_send`, `session_recv` and `session_kill` any of
+them by id (accepted 2026-10-14, A14-RS). A second client could open its own shell anyway, so
+the exposure is cross-client visibility of one operator's terminal output (including anything
+typed at a secret prompt), not extra capability. Where clients must not see each other's
+terminals, run a separate instance per trust domain.
+
 ## Single-client lockdown
 
 With `RELAY_SHELL_AUTH_SINGLE_CLIENT=true` (**the default**), DCR is frozen
