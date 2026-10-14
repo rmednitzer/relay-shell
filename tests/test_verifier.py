@@ -277,3 +277,13 @@ def test_edge_installer_supports_gpg_fingerprint_pin() -> None:
     sh = (TEMPLATES_DIR / "install-edge.sh").read_text(encoding="utf-8")
     assert "RELAY_SHELL_EDGE_CADDY_GPG_FPR" in sh
     assert "fingerprint mismatch" in sh
+
+
+def test_verify_deploy_non_utf8_installed_file_is_drift_not_a_raise(tmp_path: Path) -> None:
+    prefix = tmp_path / "root"
+    for pair in DEFAULT_PAIRS:
+        _copy_template_into_prefix(prefix, pair.name)
+    (prefix / "etc/systemd/system/relay-shell.service").write_bytes(b"\xff\xfe\x00bad")
+    report = verify_deploy(templates_dir=TEMPLATES_DIR, install_prefix=prefix)
+    assert not report.ok
+    assert [f.name for f in report.by_status(Status.DRIFT)] == ["systemd-unit"]

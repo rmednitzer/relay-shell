@@ -149,3 +149,11 @@ async def test_run_script_output_cap_bounds_buffer() -> None:
     )
     assert code == 0
     assert len(out.encode("utf-8")) <= 1000
+
+
+async def test_run_script_sh_strict_works_on_dash() -> None:
+    # dash rejects `set -o pipefail`; strict mode for `sh` must not depend on it.
+    out, code = await run_script("echo ok-from-sh", interpreter="sh", strict=True, timeout=5)
+    assert code == 0 and "ok-from-sh" in out
+    out, code = await run_script("false\necho NOPE", interpreter="sh", strict=True, timeout=5)
+    assert code != 0 and "NOPE" not in out

@@ -72,8 +72,8 @@ Tier: heuristic (Tier 0..3 from the command text). Example:
 
 ### `shell_script`
 Run a multi-line script fed on stdin. `interpreter` is `bash` | `sh` |
-`python`. With `strict` and a shell interpreter, `set -euo pipefail` is
-prepended. Tier: heuristic from the script text.
+`python`. With `strict` and a shell interpreter, `set -euo pipefail` (`set -eu`
+for `sh`, whose dash implementation lacks `pipefail`) is prepended. Tier: heuristic from the script text.
 
 Tests: `tests/test_shell.py`, `tests/test_tool_wrappers.py`.
 

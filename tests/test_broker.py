@@ -16,6 +16,7 @@ import json
 import re
 from pathlib import Path
 
+from helpers import text as _text
 from relay_shell.broker import ConfirmationBroker
 from relay_shell.config import Settings
 from relay_shell.policy import Tier, classify
@@ -163,10 +164,6 @@ def _on_settings(tmp_path: Path) -> Settings:
     )
 
 
-def _text(content: object) -> str:
-    return "".join(b.text for b in content if getattr(b, "type", "") == "text")  # type: ignore[attr-defined]
-
-
 async def test_on_tier3_challenges_then_executes(tmp_path: Path) -> None:
     cfg = _on_settings(tmp_path)
     mcp = build_server(cfg)
@@ -300,3 +297,17 @@ def test_confirm_op_key_binds_ssh_identity() -> None:
 def test_operation_confirm_is_tier0() -> None:
     # Control-plane step: classified read-only so it is available in every mode.
     assert classify("operation_confirm") == Tier.READ_ONLY
+
+
+def test_overflow_evicts_unarmed_plans_before_an_armed_token() -> None:
+    # An operator-armed token must survive a flood of un-armed plans; evicting by
+    # expiry alone dropped the soonest-expiring entry, which is the armed one.
+    now = [0.0]
+    b = ConfirmationBroker(ttl=300, max_pending=8, clock=lambda: now[0])
+    armed = b.plan("shell_exec", "rm -rf /x").token
+    assert b.arm(armed)
+    for i in range(50):
+        now[0] += 0.01
+        b.plan("shell_exec", f"other-{i}")
+    assert b.pending() == 8
+    assert b.consume("shell_exec", "rm -rf /x") is True

@@ -117,9 +117,12 @@ class ConfirmationBroker:
             del self._by_token[tok]
         if len(self._by_token) > self._max_pending:
             overflow = len(self._by_token) - self._max_pending
-            for tok, _ in sorted(self._by_token.items(), key=lambda kv: kv[1].expires_at)[
-                :overflow
-            ]:
+            # Evict un-armed (merely planned) tokens first, soonest-expiring first: an
+            # armed token is one the operator already confirmed, and a flood of
+            # un-armed plans must not push it out before the re-issued call.
+            for tok, _ in sorted(
+                self._by_token.items(), key=lambda kv: (kv[1].armed, kv[1].expires_at)
+            )[:overflow]:
                 del self._by_token[tok]
 
     def plan(self, tool: str, op_key: str) -> Challenge:

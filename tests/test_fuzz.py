@@ -67,11 +67,6 @@ _PRINTABLE = st.text(
 
 
 @given(_TEXT)
-def test_redact_never_raises(s: str) -> None:
-    redact(s)  # only asserting no exception escapes
-
-
-@given(_TEXT)
 def test_redact_is_idempotent(s: str) -> None:
     once = redact(s)
     twice = redact(once)

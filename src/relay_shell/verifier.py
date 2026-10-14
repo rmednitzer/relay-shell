@@ -166,6 +166,15 @@ def verify_pair(pair: Pair, templates_dir: Path, install_prefix: Path | None) ->
             status=Status.MISSING,
             detail=f"could not read: {exc}",
         )
+    except UnicodeDecodeError as exc:
+        # Not valid UTF-8, so it cannot equal the (UTF-8) template: drift, not a raise.
+        return Finding(
+            name=pair.name,
+            template=str(tpl_path),
+            install_path=str(install_path),
+            status=Status.DRIFT,
+            detail=f"not valid UTF-8: {exc.reason}",
+        )
     if pair.leader and installed.startswith(pair.leader):
         installed = installed[len(pair.leader) :].lstrip("\n")
     if installed == template:

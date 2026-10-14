@@ -1,9 +1,10 @@
 # Relay Shell
 
 **Status:** v0.3.0 · Python 3.12 / 3.13 / 3.14 · transports: `stdio` and
-`streamable-http` · MCP SDK `mcp>=2,<3` · last validated against
-upstream surfaces on 2026-08-12
-([ADR 0005](docs/adr/0005-codebase-validation.md)).
+`streamable-http` · MCP SDK `mcp>=2,<3` · pin history in
+[ADR 0001](docs/adr/0001-runtime-and-sdk.md); validation procedure and its recorded
+passes (latest 2026-06-21, before the `mcp` v2 move) in
+[ADR 0005](docs/adr/0005-codebase-validation.md).
 
 A highly reliable, maximally capable [Model Context Protocol](https://modelcontextprotocol.io)
 server for **complete shell and SSH mastery**.
@@ -147,7 +148,7 @@ Configuration is environment-driven; see [`.env.example`](.env.example) and
 | Host OS (dev)     | macOS                                                      | Unsupported for production; `pty`/SSH paths work for local development.                |
 | Host OS (other)   | Windows                                                    | Out of scope — no PTY contract, no systemd integration.                                |
 | Transports        | `stdio`, `streamable-http`                                 | Stdio is the default. HTTP binds loopback and requires a TLS edge (see `deployment.md`). |
-| SDK               | `mcp>=2,<3` (validated set: `2.0.0`)                        | Range-pinned since the v2 migration (ADR 0001); bumps trigger a fresh validation pass. |
+| SDK               | `mcp>=2,<3` (pinned: `requirements.txt`)                       | Range-pinned since the v2 migration (ADR 0001); bumps trigger a fresh validation pass. |
 | SSH library       | `asyncssh>=2.23.0` (tested at 2.24.1)                      | Native async; no shell-out to system `ssh`.                                            |
 
 ## Security posture
@@ -202,10 +203,13 @@ administrative hosts with strict network controls and full audit shipping.
 ## Layout
 
 ```
-src/relay_shell/   server, config, audit, policy, redaction, sessions,
-                   shelltools, sshpool, inventory, errors, util, auth
-deploy/            systemd unit + hardening drop-in, Caddyfile, logrotate, installers
-docs/              architecture, tool reference, deployment, ADRs
+src/relay_shell/   server, config, audit, policy, patterns, redaction, broker,
+                   sessions, shelltools, sshpool, inventory, seccomp, metrics,
+                   verifier, errors, util, auth/ (oauth, resource, admin)
+deploy/            systemd unit + hardening drop-in, Caddyfile, logrotate,
+                   installers, evidence/ (off-host audit sync), monitoring/
+docs/              architecture, tool reference, deployment, auth, runbook,
+                   audit shipper, release trust, ADRs
 tests/             unit + integration (in-process SSH server, no network)
 ```
 

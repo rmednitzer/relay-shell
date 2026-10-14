@@ -147,7 +147,7 @@ def _tail_path(path: Path, lines: int) -> str:
             data = fh.read(read) + data
 
     text = data.decode("utf-8", errors="replace")
-    text_records = [line for line in text.splitlines() if line.strip()]
+    text_records = [line for line in text.split("\n") if line.strip()]
     return "\n".join(text_records[-lines:])
 
 
@@ -362,6 +362,16 @@ def verify_chain(path: str) -> ChainResult:
     return ChainResult(True, records, start_seq, start_prev, None, reason, anchored=anchored)
 
 
+class _AuditFileHandler(WatchedFileHandler):
+    owner: Any = None
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        if self.owner is not None:
+            self.owner.degraded = True
+            self.owner.degraded_reason = "audit write failed at runtime"
+        super().handleError(record)
+
+
 class AuditLogger:
     """Writes structured audit records. Construction never raises."""
 
@@ -421,7 +431,8 @@ class AuditLogger:
                 self.degraded_reason = (
                     f"audit path is not a regular file (records not durably stored): {path}"
                 )
-            sink = WatchedFileHandler(str(target), encoding="utf-8")
+            sink = _AuditFileHandler(str(target), encoding="utf-8", errors="backslashreplace")
+            sink.owner = self
         except OSError as exc:  # unwritable path -> degrade, never crash
             self.degraded = True
             self.degraded_reason = str(exc)

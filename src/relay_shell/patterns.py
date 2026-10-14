@@ -167,7 +167,7 @@ __all__ = [
 #      (Tier 3); `kill -9`, `pkill`, `killall`, `truncate`, `docker|podman system|
 #      volume|image|container|network prune|rm`, `terraform|tofu apply`, `git clean
 #      -f`, `setenforce` (Tier 2). Classification stays heuristic (ADR 0003).
-PATTERNS_VERSION = "13"
+PATTERNS_VERSION = "14"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -199,7 +199,7 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             r"(?i)\b(?P<prefix>(?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?)"
             r"(?:"
             r"[^\"'\r\n]+(?=[\"'])"
-            r"|[^\r\n\"']+?(?=(?:\s(?:&&|\|\||\|)\s|[\r\n]|$))"
+            r"|[^\r\n\"']+?(?=(?:;\s|\s;|\s(?:&&|\|\||\|)\s|[\r\n]|$))"
             r")"
         ),
         r"\g<prefix>[REDACTED]",
@@ -221,7 +221,9 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # collapses to end-of-line instead of leaking its tail.
     (
         re.compile(
-            r"(?i)(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd|credential)"
+            r"(?i)(?P<prefix>(?:api[_-]?key"
+            r"|(?:secret|private|access|signing|encryption|master)[_-]?key(?:[_-]?base)?"
+            r"|secret|token|password|passwd|pwd|credential)"
             r"[\"']?\s*[:=]\s*(?P<q>[\"']))"
             r"(?:\\.|(?!(?P=q))[^\\\r\n])*"
         ),
@@ -237,7 +239,9 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # pre-RED-6 unquoted case redacts byte-identically.
     (
         re.compile(
-            r"(?i)(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|pwd|credential)"
+            r"(?i)(?P<prefix>(?:api[_-]?key"
+            r"|(?:secret|private|access|signing|encryption|master)[_-]?key(?:[_-]?base)?"
+            r"|secret|token|password|passwd|pwd|credential)"
             r"[\"']?\s*[:=]\s*[\"']?)"
             # Value = non-space, non-quote run. Stopping at a quote catches the
             # JSON-quoted-key shape `"password": "x"` (the value ends at the
@@ -305,7 +309,7 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             (?P<prefix>
                 (?<![A-Za-z])
                 --?(?!(?:no|ask|prompt|skip|use|with|show|hide)[-_])
-                (?:[A-Za-z0-9]+[-_])*
+                (?:[A-Za-z0-9]+[-_]){0,6}
                 (?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|credentials?
                   |secret[_-]?key|secret[_-]?access[_-]?key)
                 [=\ \t]+
@@ -427,8 +431,8 @@ REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
         # argument carrying many unterminated `-----BEGIN ... KEY-----` markers
         # cannot drive O(n^2) backtracking and stall the (synchronous) audit
         # redaction path. `[\s\S]` spans newlines without needing DOTALL.
-        r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----[\s\S]{0,8192}?"
-        r"-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----",
+        r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----[\s\S]{0,8192}?"
+        r"-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----",
     ),
     # GitHub: classic/fine-grained PAT, plus the gh[pousr]_ token family
     # (personal, OAuth, user-to-server, server-to-server, refresh).
@@ -526,10 +530,10 @@ MYSQL_COMPACT_PASSWORD_PATTERN = re.compile(r"(?<![A-Za-z0-9-])(-p)[^\s=-]\S*")
 # words, or at the start of a `sh -c '...'` string; an absolute path to the binary
 # is allowed. The gaps are bounded or character-class limited, so it stays linear.
 _CMD = (
-    r"(?:(?:^|[;&|(`\n]|\$\()\s*(?:\w+=\S*\s+){0,6}"
+    r"(?:(?:^|[;&|(`\n]|\$\()[^\S\n]*(?:\w+=\S*\s+){0,6}"
     r"|\b(?:sudo|doas|exec|xargs|nohup|time|command|env)\s+(?:-\S+\s+|\w+=\S*\s+){0,6}"
-    r"|\b(?:sh|bash|zsh|dash|ksh)\s+-\w*c\s+[\"']"
-    r")\s*(?:/[\w./-]*/)?"
+    r"|\b(?:sh|bash|zsh|dash|ksh)\s+-\w*c\s+[\"']\s*"
+    r")(?:/[\w./-]*/)?"
 )
 
 # Substrings that strongly imply an irreversible / high-blast action. Two groups:
@@ -554,7 +558,7 @@ TIER3_PATTERN = re.compile(
     r"[sc]?fdisk\b(?!\s+(?:-l|--list|-s)\b)|"
     r"sgdisk\b(?!\s+(?:-p|--print|-i|--info)\b)|"
     r"parted\b(?!\s+(?:-l|--list)\b)(?![^|;&\n]{0,64}\b(?:print|unit)\b)|"
-    r"dd\s+[^|]*of=/dev/|"
+    r"dd\s+[^|]{0,256}of=/dev/|"
     r">>?\s*/dev/(?:[sh]d|nvme|vd|xvd|mmcblk)|"
     r"tee\s+(?:-\w+\s+)*/dev/(?:[sh]d|nvme|vd|xvd|mmcblk)|"
     r"zpool\s+(?:destroy|labelclear)|zfs\s+destroy|lvremove|vgremove|pvremove|"

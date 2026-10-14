@@ -59,3 +59,27 @@ def test_resolve_passthrough_and_userhost(tmp_path: Path) -> None:
     spec = inv.resolve("alice@h2")
     assert spec.user == "alice" and spec.hostname == "h2"
     assert inv.ssh_config_file is None
+
+
+def test_match_block_is_not_merged_into_the_preceding_host(tmp_path: Path) -> None:
+    cfg = tmp_path / "config"
+    cfg.write_text(
+        "Host web\n"
+        "    HostName 10.0.0.1\n"
+        "Match host db\n"
+        "    User dbadmin\n"
+        "    IdentityFile ~/.ssh/db_key\n"
+        "Host app\n"
+        "    HostName 10.0.0.3\n",
+        encoding="utf-8",
+    )
+    hosts = {h.name: h for h in Inventory(str(cfg), "").load().hosts()}
+    assert set(hosts) == {"web", "app"}
+    assert hosts["web"].user is None and hosts["web"].identity_file is None
+
+
+def test_non_ascii_digit_port_is_ignored_not_a_crash(tmp_path: Path) -> None:
+    cfg = tmp_path / "config"
+    cfg.write_text("Host odd\n    HostName 10.0.0.9\n    Port ²\n", encoding="utf-8")
+    hosts = {h.name: h for h in Inventory(str(cfg), "").load().hosts()}
+    assert hosts["odd"].port is None

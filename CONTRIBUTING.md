@@ -33,7 +33,7 @@ weaken the deny list, or introduce an internal sandbox (see
 
 Before opening a non-trivial PR, check whether the change is already in
 the backlog at [`docs/runbook.md`](docs/runbook.md) §7. If it is, the
-PR description should reference the backlog item (e.g. "Closes B-007").
+PR description should reference the backlog item (e.g. "Closes F-6").
 If not, consider opening an issue first. The repository ships a
 feature-request issue template (under `.github/ISSUE_TEMPLATE/`) that
 lists the questions a feature proposal should answer.
@@ -65,8 +65,8 @@ Requires CPython 3.12+.
 ### Pre-commit
 
 The repository ships a `.pre-commit-config.yaml` that mirrors the
-local loop above (plus a forbidden-imports check that fails if anything
-imports `requests` or `urllib3` — those would block the event loop).
+local loop above (the ban on `requests` / `urllib3`, which would block the event loop,
+is enforced by ruff's `TID` `banned-api` rule).
 Install it once after the venv setup:
 
 ```bash
@@ -74,7 +74,7 @@ pre-commit install            # set up the git hook
 pre-commit run --all-files    # one-time sweep
 ```
 
-The hooks are advisory locally and mandatory in CI. Pre-commit cuts a
+The hooks are advisory locally; CI runs the same ruff and mypy gates directly. Pre-commit cuts a
 round-trip you would otherwise lose when CI catches a missing `ruff
 format` or a strict-typing regression on a remote runner.
 
@@ -99,8 +99,8 @@ short version:
 | Change audit-record fields   | `docs/architecture.md` request lifecycle, `tests/test_audit.py`, runbook §2.3          |
 | Change a redaction/tier pattern | `src/relay_shell/patterns.py` (bump `PATTERNS_VERSION`), paired over-scrub/under-scrub (redaction) or positive/near-miss (policy) tests in `tests/test_patterns.py`, runbook §6.4 (policy heuristics) / §6.5 (redaction rules) |
 
-If the PR adds a new `.md` file, also add a §8 entry to the runbook so
-the next maintainer knows what "done" means for that file.
+If the PR adds a new `.md` file under `docs/`, add it to `mkdocs.yml` `nav:` and
+`docs/index.md` (runbook §8).
 
 ## Tests
 

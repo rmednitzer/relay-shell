@@ -141,7 +141,9 @@ def _filter_audit_records(text: str, tool: str, tier: int, denied: bool | None) 
     ``audit_tail`` view — never on the write path.
     """
     out: list[str] = []
-    for line in text.splitlines():
+    # split on \n only: str.splitlines() also breaks on U+2028/U+2029/U+0085, which
+    # json.dumps(ensure_ascii=False) writes raw, fragmenting that record.
+    for line in text.split("\n"):
         if not line.strip():
             continue
         try:
@@ -208,14 +210,33 @@ def _policy_text_shell_spawn(command: str, env_json: str) -> str:
 # the host, so a host embedding a destructive word at a token start
 # over-classifies (bites only `guarded`; `RELAY_SHELL_POLICY_ALLOW` is the
 # escape hatch). The command stays first so its tier tokens classify as before.
-def _policy_text_ssh_exec(host: str, command: str) -> str:
-    """The remote command line plus the destination host, for the deny list."""
-    return _with_canonical_ips(f"{command}\n{host}", host)
+def _jump_hosts(jump: str) -> list[str]:
+    """Bare host names of a ``user@host:port[,hop2...]`` jump chain (for IP widening)."""
+    hosts: list[str] = []
+    for hop in jump.replace(",", " ").split():
+        hop = hop.rsplit("@", 1)[-1]
+        if hop.count(":") == 1:  # host:port (a bare IPv6 literal has several colons)
+            hop = hop.split(":", 1)[0]
+        hosts.append(hop)
+    return hosts
 
 
-def _policy_text_ssh_spawn(host: str, command: str) -> str:
-    """The remote command (empty = login shell) plus the destination host."""
-    return _with_canonical_ips(f"{command}\n{host}", host)
+def _with_jump(text: str, jump: str) -> tuple[str, list[str]]:
+    """Append the jump chain to a probe: it is dialled before the destination, so the
+    deny list must see it. Empty ``jump`` leaves the probe byte-identical."""
+    return (f"{text}\n{jump}", _jump_hosts(jump)) if jump else (text, [])
+
+
+def _policy_text_ssh_exec(host: str, command: str, jump: str = "") -> str:
+    """The remote command line plus the destination host (and jump chain)."""
+    text, hops = _with_jump(f"{command}\n{host}", jump)
+    return _with_canonical_ips(text, host, *hops)
+
+
+def _policy_text_ssh_spawn(host: str, command: str, jump: str = "") -> str:
+    """The remote command (empty = login shell) plus the destination host (and jump)."""
+    text, hops = _with_jump(f"{command}\n{host}", jump)
+    return _with_canonical_ips(text, host, *hops)
 
 
 def _policy_text_ssh_fanout(hosts: str, command: str) -> str:
@@ -250,31 +271,41 @@ def _policy_text_session_send(data: str, pending: str = "") -> str:
     return pending + data
 
 
-def _policy_text_ssh_upload(host: str, local_path: str, remote_path: str) -> str:
+def _policy_text_ssh_upload(host: str, local_path: str, remote_path: str, jump: str = "") -> str:
     """A synthetic ``upload`` phrase naming both endpoints, for the deny list.
 
     Widened with the canonical IP of ``host`` (SSRF-2) so an IP deny is not
     dodged by a decimal/hex/octal/IPv4-mapped spelling of the destination.
     """
-    return _with_canonical_ips(f"upload {local_path} {host}:{remote_path}", host)
+    text, hops = _with_jump(f"upload {local_path} {host}:{remote_path}", jump)
+    return _with_canonical_ips(text, host, *hops)
 
 
-def _policy_text_ssh_download(host: str, remote_path: str, local_path: str) -> str:
+def _policy_text_ssh_download(host: str, remote_path: str, local_path: str, jump: str = "") -> str:
     """A synthetic ``download`` phrase naming both endpoints, for the deny list.
 
     Widened with the canonical IP of ``host`` (SSRF-2), as in ``ssh_upload``.
     """
-    return _with_canonical_ips(f"download {host}:{remote_path} {local_path}", host)
+    text, hops = _with_jump(f"download {host}:{remote_path} {local_path}", jump)
+    return _with_canonical_ips(text, host, *hops)
 
 
-def _policy_text_ssh_forward(spec: str) -> str:
+def _policy_text_ssh_forward(spec: str, host: str = "", jump: str = "") -> str:
     """A synthetic ``forward`` phrase carrying the spec, for the deny list.
 
     Widened with the canonical IP of the forward's destination host (SSRF-2):
     an ``L:/R:`` forward dials ``dhost``, so an IP deny on, say, the cloud
     metadata address should catch it however the caller spelled it.
     """
-    return _with_canonical_ips(f"forward {spec}", _forward_dhost(spec))
+    text, hops = _with_jump(f"forward {spec}", jump)
+    if host:
+        text = f"{text}\n{host}"
+    return _with_canonical_ips(text, _forward_dhost(spec), *([host] if host else []), *hops)
+
+
+# Every host-list tool caps its host count well below this (<= 100) and refuses longer
+# lists, so canonicalizing more tokens would only add quadratic work before admission.
+_MAX_CANON_TOKENS = 128
 
 
 def _canonical_ips(token: str) -> list[str]:
@@ -330,7 +361,7 @@ def _with_canonical_ips(text: str, *host_tokens: str) -> str:
     canonicalized as whole tokens instead of being split apart.
     """
     extra: list[str] = []
-    for tok in host_tokens:
+    for tok in host_tokens[:_MAX_CANON_TOKENS]:
         for ip in _canonical_ips(tok):
             if ip != tok and ip not in extra and ip not in text:
                 extra.append(ip)
@@ -790,8 +821,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         For a single command use ``shell_exec``; for interactive or long-lived
         work that needs a TTY use ``shell_spawn``.
 
-        With ``strict`` and a shell interpreter, ``set -euo pipefail`` is
-        prepended so failures abort early.
+        With ``strict`` and a shell interpreter, ``set -euo pipefail`` (``set -eu``
+        for ``sh``) is prepended so failures abort early.
         """
         t = app.clamp_timeout(timeout)
         policy_text = _policy_text_shell_script(script, env_json)
@@ -910,7 +941,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "jump": jump,
                 "known_hosts": known_hosts or app.settings.ssh_known_hosts,
             },
-            policy_text=_policy_text_ssh_exec(host, command),
+            policy_text=_policy_text_ssh_exec(host, command, jump),
             max_output=65536,
             # PERF-4: bound the buffered remote output to the absolute ceiling
             # (max_output_hard) via SshPool.run's drain instead of the
@@ -974,7 +1005,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "jump": jump,
                 "known_hosts": known_hosts or app.settings.ssh_known_hosts,
             },
-            policy_text=_policy_text_ssh_spawn(host, command),
+            policy_text=_policy_text_ssh_spawn(host, command, jump),
             max_output=4096,
             work=_work,
         )
@@ -994,12 +1025,14 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         # What reaches the audit record is decided here, before the send clears the
         # session's prompt tail. The executor and the policy still see the real text.
         audit_args: dict[str, Any] = {"session_id": session_id, "enter": enter}
-        if cfg.audit_session_input == "hash":
-            audit_args["data_len"] = len(data)
-            audit_args["data_sha256"] = sha256_hex(data)
-        elif await app.sessions.awaiting_secret(session_id):
+        if await app.sessions.awaiting_secret(session_id):
+            # Withhold the digest too: an unsalted SHA-256 of a typed password is
+            # brute-forceable offline, so `hash` mode must not record one here.
             audit_args["data"] = "[REDACTED: secret prompt]"
             audit_args["data_len"] = len(data)
+        elif cfg.audit_session_input == "hash":
+            audit_args["data_len"] = len(data)
+            audit_args["data_sha256"] = sha256_hex(data)
         else:
             audit_args["data"] = data
 
@@ -1022,16 +1055,18 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         ctx: Context | None = None,
     ) -> str:
         """Read buffered/new output from a session, waiting up to ``timeout`` seconds."""
+        # Clamp up front so the audited value is always finite (a bare NaN/Infinity
+        # is not valid JSON for strict log shippers).
+        tmo = max(0.0, min(float(timeout), 60.0))
 
         async def _work() -> tuple[str, int | None]:
-            tmo = max(0.0, min(float(timeout), 60.0))
             mb = clamp(max_bytes, 256, app.settings.max_output_hard)
             return (await app.sessions.recv(session_id, tmo, mb), None)
 
         return await app.run(
             tool="session_recv",
             ctx=ctx,
-            audit_args={"session_id": session_id, "timeout": timeout},
+            audit_args={"session_id": session_id, "timeout": tmo},
             policy_text="",
             max_output=max_bytes,
             work=_work,
@@ -1044,8 +1079,9 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         """Resize a session's PTY."""
 
         async def _work() -> tuple[str, int | None]:
-            await app.sessions.resize(session_id, max(1, cols), max(1, rows))
-            return (f"resized {session_id} to {cols}x{rows}", None)
+            c, r = clamp(cols, 1, 0xFFFF), clamp(rows, 1, 0xFFFF)
+            await app.sessions.resize(session_id, c, r)
+            return (f"resized {session_id} to {c}x{r}", None)
 
         return await app.run(
             tool="session_resize",
@@ -1151,7 +1187,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "jump": jump,
                 "known_hosts": known_hosts or app.settings.ssh_known_hosts,
             },
-            policy_text=_policy_text_ssh_upload(host, local_path, remote_path),
+            policy_text=_policy_text_ssh_upload(host, local_path, remote_path, jump),
             max_output=2048,
             work=_work,
         )
@@ -1201,7 +1237,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "jump": jump,
                 "known_hosts": known_hosts or app.settings.ssh_known_hosts,
             },
-            policy_text=_policy_text_ssh_download(host, remote_path, local_path),
+            policy_text=_policy_text_ssh_download(host, remote_path, local_path, jump),
             max_output=2048,
             work=_work,
         )
@@ -1244,7 +1280,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "jump": jump,
                 "known_hosts": known_hosts or app.settings.ssh_known_hosts,
             },
-            policy_text=_policy_text_ssh_forward(spec),
+            policy_text=_policy_text_ssh_forward(spec, host, jump),
             max_output=1024,
             work=_work,
         )

@@ -90,22 +90,11 @@ def classify(tool: str, command: str = "") -> Tier:
         return Tier.STATEFUL
     if tool in _MUTATING_TOOLS:
         return Tier.STATEFUL
-    if tool in {
-        "shell_exec",
-        "shell_script",
-        "ssh_exec",
-        "ssh_fanout",
-        "shell_spawn",
-        "ssh_spawn",
-    }:
-        # An interactive shell or arbitrary command with no obvious mutating
-        # token: treat as reversible-by-default but never read-only.
-        # ssh_fanout is the multi-host variant of ssh_exec - the TIER
-        # heuristics above already escalate (rm -rf, systemctl restart,
-        # ...) based on the command itself before we reach this branch.
-        return Tier.REVERSIBLE
-    if tool in {"session_send", "session_kill", "session_resize"}:
-        return Tier.REVERSIBLE
+    # Anything else (shell_exec/script/spawn, ssh_exec/fanout/spawn, session_send/
+    # kill/resize): an arbitrary command or interactive input with no obvious
+    # mutating token is reversible-by-default but never read-only. The TIER
+    # heuristics above already escalate (rm -rf, systemctl restart, ...) based on
+    # the command itself before we reach this default.
     return Tier.REVERSIBLE
 
 

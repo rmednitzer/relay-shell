@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed (audit 2026-10-14)
+
+- An SSH command that hits its timeout now also closes its channel (not just SIGTERM).
+- `known_hosts` appends no longer fuse onto an unterminated final line (which corrupted
+  both entries and made `accept-new` repeat first-contact trust).
+- `shell_spawn` / `session_resize` clamp the window size to 1..65535 (a larger value raised
+  `struct.error` and leaked the pty descriptors); the audited `session_recv` timeout is the
+  clamped, finite value (a bare `NaN` is not valid JSON).
+- The shutdown path can now SIGKILL a local PTY child whose handle belongs to a closed loop.
+- `~/.ssh/config` `Match` blocks are no longer merged into the preceding `Host`; a
+  non-ASCII-digit `Port` is ignored instead of crashing inventory load.
+- `shell_script(interpreter="sh")` with `strict` uses `set -eu` (dash has no `pipefail`).
+- `--verify-deploy` reports a non-UTF-8 installed file as drift instead of raising.
+- `install-edge.sh` validates the rendered Caddyfile before replacing the live one and keeps
+  the previous file as `Caddyfile.bak`.
+
 ### Agent guidance (2026-10-14)
 
 - Consolidate Codex, Claude Code and Copilot guidance with repository-specific secure development, STPA traceability and private vulnerability reporting.
@@ -13,6 +29,58 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **Event-loop stalls from adversarial input are closed** (audit 2026-10-14,
+  `PATTERNS_VERSION` 13 -> 14). The tier classifier ran super-linear on whitespace runs
+  (400 newlines: 3.5 s, cubic) and on repeated `dd ` (quadratic), *before* the deny list;
+  the CLI-flag redaction rule was quadratic on `-1-1-1...` runs and runs on every audit
+  record; the canonical-IP widening of host lists was quadratic and ran before the host
+  caps. All three are now linear/bounded (`dd ... of=/dev/` looks at most 256 characters
+  ahead; the flag rule allows at most 6 hyphen-joined words). A 200,000-sample differential
+  test found no classification change.
+- **Audit-evasion and audit-loss fixes** (audit 2026-10-14). A bare `Authorization:`
+  value no longer swallows the rest of the command line past `;` (a destructive command
+  after it vanished from the record); a runtime audit write failure now sets the
+  `degraded` flag and gauge instead of reporting healthy; U+2028/U+2029/U+0085 in a record
+  no longer fragments `audit_tail` or resets the hash chain at the next start; an
+  unencodable character (lone surrogate) no longer drops the record.
+- **Redaction coverage:** `SECRET_KEY` / `DJANGO_SECRET_KEY` / `ENCRYPTION_KEY` /
+  `PRIVATE_KEY` / `ACCESS_KEY` / `SIGNING_KEY` / `*_KEY_BASE` assignments and PGP private
+  key blocks are redacted.
+- **The jump host reaches the deny list** (audit 2026-10-14). `jump=` is dialled first
+  but was not part of the `ssh_exec` / `ssh_spawn` / `ssh_upload` / `ssh_download` /
+  `ssh_forward` policy probe, so a `RELAY_SHELL_POLICY_DENY` on an address was bypassable by
+  routing through it; `ssh_forward` now also includes its destination host. Without a jump
+  the probe is unchanged.
+- **Broker:** an armed Tier-3 confirmation token is no longer the first entry evicted when
+  the pending-token cap is hit.
+- **`ssh_forward` `L:` and `D:` listeners bind to loopback only** (audit 2026-10-14).
+  They passed an empty listen host, which asyncssh binds on every interface, so any
+  host that could reach the relay got an unauthenticated TCP forward or SOCKS proxy
+  into the SSH target's network. They now listen on `127.0.0.1`. **Upgrade:** a
+  deployment that relied on reaching a forward from another host must front it
+  explicitly (e.g. a reverse proxy); there is no non-loopback bind option.
+- **A failed or cancelled `SshPool.connect` no longer poisons its single-flight slot**
+  (audit 2026-10-14). An invalid `known_hosts` mode, a bad `key_path`, or a cancel
+  during the `accept-new` lookup left the in-flight future unresolved, hanging every
+  later connect to the same key; and cancelling the connect owner cancelled all its
+  waiters (including a whole `ssh_fanout`). The slot is now always released and waiters
+  retry when only the owner was cancelled.
+- **`/register` refusals are RFC 7591 `400`s, not HTTP 500s** (audit 2026-10-14). The
+  provider raised a bare `ValueError`, which the SDK handler does not catch, on every
+  registration after the first under single-client lockdown (and on an unreadable
+  store). It now raises `RegistrationError`.
+- **OAuth state writes are crash- and race-safer** (audit 2026-10-14). The approval
+  record is written before the client record (a crash between them could previously
+  leave a client that the legacy migration auto-approves on restart); stores are written
+  via a unique same-directory temp file, fsynced and renamed; and a root-run
+  `--auth-approve` / `--auth-reject` keeps the state directory's ownership instead of
+  leaving a root-owned file the service user cannot read.
+- **`RELAY_SHELL_AUDIT_SESSION_INPUT=hash` no longer records a digest of a typed secret**
+  (audit 2026-10-14): at a recognised secret prompt only `data_len` is written; an unsalted
+  SHA-256 of a typed password is brute-forceable offline.
+- **`ssh_spawn` input is back-pressured** (audit 2026-10-14): `session_send` to a remote
+  that stops reading now fails with a bounded error once 1 MiB is pending instead of
+  buffering without limit.
 - **`known_hosts=accept-new` is now real trust-on-first-use** (audit 2026-10-04, H2).
   It previously connected with host-key verification disabled on every call, so a
   changed or substituted host key was accepted and then persisted. A host that

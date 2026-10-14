@@ -234,3 +234,21 @@ async def test_transfer_forward_and_spawn_audit_the_connection_identity(
         assert args["known_hosts"] == "strict", tool
     assert by_tool["ssh_upload"]["recursive"] is True
     assert by_tool["ssh_download"]["recursive"] is False
+
+
+async def test_hash_mode_withholds_the_digest_at_a_secret_prompt(settings: Settings) -> None:
+    # An unsalted SHA-256 of a typed password is brute-forceable from the audit log.
+    from relay_shell.util import sha256_hex
+
+    mcp = build_server(settings.model_copy(update={"audit_session_input": "hash"}))
+    sid = _sid(_text(await mcp.call_tool("shell_spawn", {"command": _PROMPT_CMD})))
+    try:
+        await asyncio.sleep(0.5)
+        await mcp.call_tool("session_send", {"session_id": sid, "data": _SECRET})
+    finally:
+        await mcp.call_tool("session_kill", {"session_id": sid})
+    raw = Path(settings.audit_path).read_text(encoding="utf-8")
+    assert _SECRET not in raw and sha256_hex(_SECRET) not in raw
+    (rec,) = [r for r in _audit(settings) if r["tool"] == "session_send"]
+    assert "data_sha256" not in rec["args"]
+    assert rec["args"]["data_len"] == len(_SECRET)

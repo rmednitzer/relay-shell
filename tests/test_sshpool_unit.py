@@ -711,3 +711,81 @@ async def test_run_output_budget_is_shared_across_streams(
         f"combined kept bytes {len(payload.encode('utf-8'))} exceeded the shared cap {cap}; "
         "pre-fix stdout+stderr could each keep up to cap (2x total)"
     )
+
+
+async def test_failed_option_building_does_not_poison_the_connect_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An error raised after the single-flight slot is claimed but before the connect
+    # (here: an invalid known_hosts mode) used to leave the slot's future unresolved,
+    # so every later identical call hung forever.
+    async def fake_connect(*_a: object, **_k: object) -> _MockConn:
+        return _MockConn()
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    pool = _make_pool(tmp_path)
+    for _ in range(2):
+        with pytest.raises(ValueError, match="known_hosts"):
+            await asyncio.wait_for(pool.connect("h1.example", known_hosts="bogus"), 3)
+
+
+async def test_cancelled_connect_owner_does_not_cancel_waiters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Waiters on the same key must retry when only the connect OWNER was cancelled.
+    calls = 0
+    started = asyncio.Event()
+
+    async def fake_connect(*_a: object, **_k: object) -> _MockConn:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            await asyncio.sleep(30)
+        return _MockConn()
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    pool = _make_pool(tmp_path)
+    owner = asyncio.create_task(pool.connect("h1.example"))
+    await started.wait()
+    waiter = asyncio.create_task(pool.connect("h1.example"))
+    await asyncio.sleep(0.05)
+    owner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    conn = await asyncio.wait_for(waiter, 3)
+    assert isinstance(conn, _MockConn)
+    assert not waiter.cancelled()
+    await pool.close_all()
+
+
+async def test_ssh_process_transport_refuses_unbounded_input_buffering() -> None:
+    from relay_shell.errors import SessionError
+    from relay_shell.sshpool import _MAX_PENDING_WRITE, SshProcessTransport
+
+    class _Stdin:
+        def __init__(self, pending: int) -> None:
+            self.pending = pending
+            self.written: list[bytes] = []
+
+        def get_write_buffer_size(self) -> int:
+            return self.pending
+
+        def write(self, data: bytes) -> None:
+            self.written.append(data)
+
+        async def drain(self) -> None:
+            return None
+
+    class _Proc:
+        def __init__(self, stdin: _Stdin) -> None:
+            self.stdin = stdin
+
+    healthy = _Stdin(0)
+    await SshProcessTransport(_Proc(healthy)).write(b"ls\n")  # type: ignore[arg-type]
+    assert healthy.written == [b"ls\n"]
+
+    stuck = _Stdin(_MAX_PENDING_WRITE + 1)
+    with pytest.raises(SessionError, match="not reading input"):
+        await SshProcessTransport(_Proc(stuck)).write(b"more\n")  # type: ignore[arg-type]
+    assert stuck.written == []

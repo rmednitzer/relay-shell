@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import secrets
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from mcp.server.auth.provider import (
     AuthorizeError,
     OAuthAuthorizationServerProvider,
     RefreshToken,
+    RegistrationError,
     TokenError,
     construct_redirect_uri,
 )
@@ -161,14 +163,29 @@ class _Store:
         return {}
 
     def save(self, data: dict[str, Any]) -> None:
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
         payload = json.dumps(data, indent=2, default=str)
-        # Race-free: create the temp file with 0o600 atomically rather than
-        # writing first and chmod'ing after.
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _FILE_MODE)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(payload)
-        tmp.replace(self._path)
+        # A unique temp file in the same directory (mkstemp creates it 0o600
+        # atomically): the server and the admin CLI share no lock, so a fixed
+        # temp name would let concurrent writers interleave into one corrupt file.
+        fd, tmp_name = tempfile.mkstemp(
+            dir=self._path.parent, prefix=self._path.name + ".", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                if hasattr(os, "geteuid") and os.geteuid() == 0:
+                    # The admin CLI run as root must not leave a root-owned file the
+                    # service user can no longer read (an unreadable store fails
+                    # closed): keep the state directory's ownership.
+                    st = self._path.parent.stat()
+                    os.fchown(fh.fileno(), st.st_uid, st.st_gid)
+                fh.write(payload)
+                fh.flush()
+                os.fsync(fh.fileno())
+            Path(tmp_name).replace(self._path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                Path(tmp_name).unlink()
+            raise
 
 
 class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-arg]
@@ -278,9 +295,10 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             except StoreUnreadableError as exc:
                 # An unparsable clients.json must not read as "no clients": that
                 # would reopen registration and let a caller replace the real client.
-                raise ValueError(
+                raise RegistrationError(
+                    "invalid_client_metadata",
                     "OAuth client store is unreadable; refusing registration "
-                    "(repair or restore clients.json)"
+                    "(repair or restore clients.json)",
                 ) from exc
             incoming = json.loads(client_info.model_dump_json())
             # Single-client lockdown freezes registration once the first client
@@ -290,19 +308,26 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             # could re-register it and overwrite its `redirect_uri` — steering
             # the next authorization code to an attacker URL (AUTH-2). Refuse
             # anything that would create or *modify* a client under lockdown; a
-            # byte-identical re-registration is a harmless no-op and still
-            # allowed so a client that re-runs DCR is not broken.
+            # byte-identical re-registration of an existing client_id stays a
+            # no-op (the SDK handler always mints a new client_id, so over HTTP a
+            # repeat registration is a new client and is refused).
             if self._single_client and clients and clients.get(cid) != incoming:
-                raise ValueError("Dynamic client registration is closed (single-client lockdown).")
+                raise RegistrationError(
+                    "invalid_client_metadata",
+                    "Dynamic client registration is closed (single-client lockdown).",
+                )
             is_new = cid not in clients
-            clients[cid] = incoming
-            self._clients.save(clients)
             if is_new:
                 # A new client is usable only after the operator approves it (when
                 # the gate is on); an identical re-registration keeps its status.
+                # Record the approval state BEFORE the client: a crash between the
+                # two writes must leave an unused approval, never a client with no
+                # approvals.json (which the legacy migration would auto-approve).
                 approvals = self._approvals.load()
                 approvals[cid] = {"approved": not self._require_approval}
                 self._approvals.save(approvals)
+            clients[cid] = incoming
+            self._clients.save(clients)
 
     # --- authorization codes ---
     async def authorize(

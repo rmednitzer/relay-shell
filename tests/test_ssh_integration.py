@@ -803,3 +803,74 @@ def test_conn_key_separates_identity_inputs() -> None:
     assert base != _conn_key("h", "u", 22, "ignore", "/k1", "")
     assert base != _conn_key("h", "u", 22, "strict", "/k2", "")
     assert base != _conn_key("h", "u", 22, "strict", "/k1", "bastion")
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-14 audit regressions
+# ---------------------------------------------------------------------------
+
+
+def _listening_addrs(port: int) -> set[str]:
+    """Local addresses (hex, as in /proc/net/tcp*) of LISTEN sockets on ``port``."""
+    found: set[str] = set()
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            rows = Path(table).read_text(encoding="utf-8").splitlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            fields = row.split()
+            addr, _, p = fields[1].rpartition(":")
+            if int(p, 16) == port and fields[3] == "0A":
+                found.add(addr)
+    return found
+
+
+@pytest.mark.skipif(not Path("/proc/net/tcp").exists(), reason="needs /proc/net/tcp")
+@pytest.mark.parametrize("spec", ["L:0:127.0.0.1:80", "D:0"])
+async def test_local_and_dynamic_forwards_listen_on_loopback_only(
+    forward_ssh_port: int, tmp_path: Path, spec: str
+) -> None:
+    # Binding "" makes asyncssh listen on every interface, i.e. an unauthenticated
+    # TCP forward / SOCKS proxy for anything that can reach the relay host.
+    pool = _pool(tmp_path)
+    try:
+        handle = await pool.add_forward("127.0.0.1", spec, connect_kwargs=_ck(forward_ssh_port))
+        assert _listening_addrs(handle.listen_port) == {"0100007F"}
+    finally:
+        await pool.close_all()
+
+
+async def test_append_known_host_repairs_a_missing_final_newline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from relay_shell.sshpool import _append_known_host
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    kh = tmp_path / ".ssh" / "known_hosts"
+    kh.parent.mkdir()
+    kh.write_text("hostA ssh-ed25519 AAAAexisting", encoding="utf-8")  # no trailing newline
+    _append_known_host("hostB", "ssh-ed25519", "AAAAnew", None)
+    assert kh.read_text(encoding="utf-8").splitlines() == [
+        "hostA ssh-ed25519 AAAAexisting",
+        "hostB ssh-ed25519 AAAAnew",
+    ]
+
+
+async def test_ssh_timeout_closes_the_channel(ssh_port: int, tmp_path: Path) -> None:
+    pool = _pool(tmp_path)
+    closed: list[bool] = []
+    real = asyncssh.SSHClientProcess.close
+
+    def _spy(self: Any) -> None:
+        closed.append(True)
+        real(self)
+
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(asyncssh.SSHClientProcess, "close", _spy)
+            out, _ = await pool.run("127.0.0.1", "hang", timeout=1, connect_kwargs=_ck(ssh_port))
+        assert "[TIMEOUT after 1s]" in out
+        assert closed
+    finally:
+        await pool.close_all()

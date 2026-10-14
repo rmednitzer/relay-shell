@@ -180,8 +180,11 @@ once the first client registers:
   `redirect_uri` cannot be overwritten, which would otherwise let someone who
   learned the `client_id` steer the next authorization code to their own URL
   (AUTH-2);
-- a **byte-identical** re-registration is a harmless no-op, so a client that
-  re-runs DCR with the same metadata is not broken.
+- every `/register` call is minted a fresh `client_id` by the SDK, so under
+  lockdown a repeated registration is always a *new* client and is refused with
+  an RFC 7591 `400 invalid_client_metadata` (it used to surface as an HTTP 500).
+  The provider itself still treats a byte-identical re-registration of an
+  existing `client_id` as a no-op.
 
 Set it to `false` for a multi-client deployment, where ordinary DCR (including
 metadata updates) applies.
@@ -196,7 +199,7 @@ metadata updates) applies.
 | Access TTL | `RELAY_SHELL_AUTH_ACCESS_TTL` | `3600` (1 h) | Bearer access-token lifetime. |
 | Refresh TTL | `RELAY_SHELL_AUTH_REFRESH_TTL` | `2592000` (30 d) | Refresh-token lifetime (resets on each rotation). |
 | Code TTL | `RELAY_SHELL_AUTH_CODE_TTL` | `300` (5 min) | Authorization-code lifetime (single-use). |
-| State dir | `RELAY_SHELL_AUTH_STATE_DIR` | `/var/lib/relay-shell/oauth` | `clients.json` / `codes.json` / `tokens.json` (`0o700`/`0o600`). |
+| State dir | `RELAY_SHELL_AUTH_STATE_DIR` | `/var/lib/relay-shell/oauth` | `clients.json` / `approvals.json` / `codes.json` / `tokens.json` (`0o700`/`0o600`). |
 | Issuer | `RELAY_SHELL_AUTH_ISSUER` | `https://localhost:8080` | Advertised issuer URL. |
 
 ## Security model — why opt-in

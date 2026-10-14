@@ -11,6 +11,7 @@ import stat
 from pathlib import Path
 
 import pytest
+from mcp.server.auth.provider import RegistrationError
 
 from relay_shell.auth.oauth import FileOAuthProvider, build_auth_settings, make_oauth_provider
 from relay_shell.config import Settings
@@ -99,7 +100,7 @@ async def test_single_client_lockdown(tmp_path: Path, single: bool) -> None:
     got = await p.get_client("c1")
     assert got is not None and got.client_id == "c1"
     c2 = OAuthClientInformationFull(client_id="c2", redirect_uris=["https://y/cb"])
-    with pytest.raises(ValueError, match="closed"):
+    with pytest.raises(RegistrationError, match="closed"):
         await p.register_client(c2)
 
 
@@ -114,7 +115,7 @@ async def test_single_client_lockdown_refuses_redirect_uri_overwrite(tmp_path: P
         OAuthClientInformationFull(client_id="c1", redirect_uris=["https://good/cb"])
     )
     evil = OAuthClientInformationFull(client_id="c1", redirect_uris=["https://attacker/cb"])
-    with pytest.raises(ValueError, match="closed"):
+    with pytest.raises(RegistrationError, match="closed"):
         await p.register_client(evil)
     got = await p.get_client("c1")
     assert got is not None
@@ -549,3 +550,71 @@ async def test_exchange_refresh_token_refuses_expired_token(tmp_path: Path) -> N
     with pytest.raises(TokenError):
         await p.exchange_refresh_token(client, rt, ["mcp:tools"])
     assert _REFRESH_PREFIX + "expired-refresh" not in p._tokens.load()
+
+
+async def test_register_refusal_is_a_registration_error_not_a_500(tmp_path: Path) -> None:
+    # The SDK registration handler only converts RegistrationError into an RFC 7591
+    # 400; any other exception becomes an unhandled 500 plus a logged traceback on
+    # the publicly reachable /register endpoint.
+    from mcp.server.auth.handlers.register import RegistrationHandler
+    from mcp.server.auth.settings import ClientRegistrationOptions
+    from starlette.requests import Request
+
+    p = _provider(tmp_path, single_client=True)
+    handler = RegistrationHandler(p, ClientRegistrationOptions(enabled=True))
+
+    def _request() -> Request:
+        body = b'{"redirect_uris": ["https://x/cb"], "token_endpoint_auth_method": "none"}'
+        sent = False
+
+        async def receive() -> dict[str, object]:
+            nonlocal sent
+            first, sent = not sent, True
+            return {"type": "http.request", "body": body if first else b"", "more_body": False}
+
+        scope = {"type": "http", "method": "POST", "path": "/register", "headers": []}
+        return Request(scope, receive)  # type: ignore[arg-type]
+
+    assert (await handler.handle(_request())).status_code == 201
+    second = await handler.handle(_request())  # a fresh client_id under lockdown
+    assert second.status_code == 400
+    assert b"invalid_client_metadata" in second.body
+
+
+async def test_register_writes_approval_before_client(tmp_path: Path) -> None:
+    # A crash between the two writes must never leave a client without an
+    # approvals.json (the legacy migration would auto-approve it on restart).
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    p = _provider(tmp_path, single_client=False)
+    order: list[str] = []
+    real_clients, real_approvals = p._clients.save, p._approvals.save
+    p._clients.save = lambda d: (order.append("clients"), real_clients(d))[1]  # type: ignore[method-assign]
+    p._approvals.save = lambda d: (order.append("approvals"), real_approvals(d))[1]  # type: ignore[method-assign]
+    await p.register_client(
+        OAuthClientInformationFull(client_id="c1", redirect_uris=["https://x/cb"])
+    )
+    assert order == ["approvals", "clients"]
+
+
+def test_store_save_uses_unique_private_temp_and_leaves_no_litter(tmp_path: Path) -> None:
+    from relay_shell.auth.oauth import _Store
+
+    store = _Store(tmp_path / "clients.json")
+    store.save({"a": 1})
+    store.save({"a": 2})
+    assert store.load() == {"a": 2}
+    assert sorted(f.name for f in tmp_path.iterdir()) == ["clients.json"]
+    assert stat.S_IMODE((tmp_path / "clients.json").stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0, reason="needs root")
+def test_store_save_as_root_keeps_state_dir_ownership(tmp_path: Path) -> None:
+    # The admin CLI run as root must not leave a root-owned file behind in a
+    # service-owned state dir (an unreadable store fails closed for everyone).
+    from relay_shell.auth.oauth import _Store
+
+    os.chown(tmp_path, 12345, 12345)
+    _Store(tmp_path / "approvals.json").save({"a": 1})
+    st = (tmp_path / "approvals.json").stat()
+    assert (st.st_uid, st.st_gid) == (12345, 12345)

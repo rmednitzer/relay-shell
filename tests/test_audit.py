@@ -612,3 +612,45 @@ def test_cef_header_escape_neutralizes_pipe_and_backslash() -> None:
     assert _cef_header_escape("a|b") == "a\\|b"
     assert _cef_header_escape("a\\b") == "a\\\\b"
     assert _cef_header_escape("a=b") == "a=b"
+
+
+def test_unicode_line_separators_do_not_fragment_a_record_or_reset_the_chain(
+    tmp_path: Path,
+) -> None:
+    # json.dumps(ensure_ascii=False) writes U+2028/U+2029/U+0085 raw; str.splitlines()
+    # splits on them, which made tail() return a fragment and reset the chain's
+    # seq to 0 on the next start (indistinguishable from tampering).
+    path = tmp_path / "audit.jsonl"
+    cmd_with_separators = "echo a" + chr(0x2028) + "b" + chr(0x2029) + "c" + chr(0x85) + "d"
+    log = AuditLogger(str(path), chain=True)
+    for cmd in ("echo one", cmd_with_separators):
+        log.record(tool="shell_exec", args={"command": cmd}, output="x", exit_code=0, tier=1)
+    last = json.loads(log.tail(1))
+    assert last["args"]["command"] == cmd_with_separators
+    log.record(tool="shell_exec", args={}, output="x", exit_code=0, tier=0)
+    restarted = AuditLogger(str(path), chain=True)
+    restarted.record(tool="shell_exec", args={}, output="x", exit_code=0, tier=0)
+    assert verify_chain(str(path)).ok
+
+
+def test_runtime_write_failure_marks_the_audit_sink_degraded(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    assert log.degraded is False
+    sink = log._log.handlers[0]
+
+    def _boom(_msg: str) -> None:
+        raise OSError(28, "No space left on device")
+
+    sink.stream.write = _boom  # type: ignore[method-assign]
+    log.record(tool="shell_exec", args={}, output="x", exit_code=0, tier=0)
+    assert log.degraded is True
+    assert "write failed" in log.degraded_reason
+
+
+def test_lone_surrogate_in_args_does_not_drop_the_record(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    log = AuditLogger(str(path))
+    log.record(tool="shell_exec", args={"command": "x\udc80y"}, output="", exit_code=0, tier=1)
+    rec = json.loads(path.read_text(encoding="utf-8").strip())
+    assert rec["tool"] == "shell_exec" and log.degraded is False

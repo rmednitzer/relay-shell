@@ -23,9 +23,9 @@ Each major section is a phase you can execute end-to-end on its own:
 | Enhance  | Designated cleanup window                            | 1-3 hours   |
 | Extend   | New tool / new transport / new posture               | 2-8 hours   |
 
-The backlog at the end of the runbook is the queue. The `.md` update plan is
-the inventory of what each documentation file should look like after the
-next pass, so the next contributor (human or agent) knows what "done" means.
+The backlog (§7) is the queue of ongoing work; `BACKLOG.md` is the register of
+audit-pass deferrals. §8 lists the documentation conventions that keep the
+`.md` files consistent with the code.
 
 ---
 
@@ -552,33 +552,10 @@ and clearer code, not to land a refactor for its own sake.
 
 ### 5.1 Consolidation candidates
 
-(All currently listed items closed. New entries land here when a
-consolidation opportunity shows up during an audit pass.)
-
-Closed (do not re-add):
-
-- **C-001** `SshPool` gained an idle reaper. `RELAY_SHELL_SSH_IDLE_TIMEOUT`
-  (default 1800s) drops a cached connection that has not been used for
-  that many seconds the next time `connect()` is consulted; mirrors the
-  shape of `SessionRegistry._sweep`. `0` disables idle eviction (closed
-  connections are still purged). `server_info.ssh` reports the live value.
-- **C-002** The four sources of truth (registered tools, `_EXPECTED`,
-  `docs/tools.md`, README capability tables) are pinned by tests in
-  `tests/test_server.py` — any drift fails a PR.
-- **C-003** `Relay.connect_kwargs` accepts an optional `connect_timeout`
-  keyword; `ssh_check` and `ssh_fanout` use it via the helper. Zero /
-  negative overlays drop the key so the pool's settings default fires.
-- **C-004** `_INSTRUCTIONS` is asserted to mention every registered tool
-  in `tests/test_server.py::test_server_instructions_mentions_every_tool`;
-  the test catches drift on add or rename.
-- **C-005** `Inventory` field naming resolved in PR #57. The constructor
-  takes `ssh_config` (matching `Settings.ssh_config`); `ssh_config_file`
-  is a *distinct* property — the resolved path iff the file exists on
-  disk, vs the raw input path — kept deliberately because the two names
-  mean different things (see the `Inventory.ssh_config_file` docstring).
-  There is no third name to settle. The code carries no `ssh_config_path`.
-  (Surfaced as F-005 in the 2026-06-01 ADR 0005 pass — this entry had gone
-  stale here after the rename landed.)
+None open. Closed items (C-001..C-005: SSH idle reaper, tool-contract drift
+tests, `connect_kwargs` timeout, `_INSTRUCTIONS` coverage test, `Inventory`
+naming) are recorded in `CHANGELOG.md` and pinned by tests; new entries land here
+when an audit pass finds a consolidation opportunity.
 
 ### 5.2 Refactor candidates
 
@@ -592,40 +569,17 @@ Closed (do not re-add):
   Redis-backed store without touching `FileOAuthProvider`. Only worth
   doing if a second store is genuinely on the roadmap.
 
-Closed (do not re-add):
-
-- **R-002** `policy_text` builders extracted: every tool with a non-empty
-  policy surface assembles its probe text through exactly one module-level
-  `_policy_text_<tool>` function in `server.py` (greppable contract:
-  "everything the executor sees, the policy sees"), pinned by
-  `tests/test_tool_wrappers.py::test_policy_text_builders_include_every_executor_visible_part`.
-- **R-003** Shared session registration: `Relay.register_session` is the
-  one registry-add path for `shell_spawn` / `ssh_spawn`. Implemented as a
-  `Relay` method rather than the suggested standalone factory module — ten
-  lines next to their only two callers beat a new architecture-table row.
-  Closing it also fixed a real leak: when `sessions.add` refused (session
-  limit), the already-spawned transport (local PTY child or SSH process)
-  was left running unsupervised; the shared path now closes the transport
-  before the error propagates
-  (`tests/test_sessions.py::test_register_session_closes_transport_when_registry_refuses`).
+Closed: **R-002** (one `_policy_text_<tool>` builder per tool, pinned by
+`tests/test_tool_wrappers.py::test_policy_text_builders_include_every_executor_visible_part`)
+and **R-003** (`Relay.register_session` is the single registry-add path and closes the
+transport when the registry refuses).
 
 ### 5.3 Tests to add (gap analysis)
 
-(All currently listed items closed. New entries land here when a gap
-shows up during an audit pass.)
-
-Closed (do not re-add):
-
-- **T-003** `tests/test_sessions.py::test_session_recv_ended_message_shape_with_exit`
-  and `..._without_exit` pin both branches of the closed-session
-  sentinel (`[session ... ended, exit=N]` and `[session ... ended]`).
-- **T-004** `tests/test_ssh_integration.py::test_close_forward_swallows_listener_close_exception`
-  injects a listener whose `close()` / `wait_closed()` raise; the
-  pool's `contextlib.suppress(Exception)` swallows the failure and the
-  tool still returns `closed forward {fid}`.
-- **T-005** `tests/test_util.py` carries four hypothesis-driven
-  properties for `truncate`: valid UTF-8 output, passthrough below the
-  byte budget, marker presence above it, and bytewise prefix safety.
+None open from the runbook. The 2026-10-14 pass records its remaining coverage gaps
+(auth expiry / `client_id` mismatch branches, `verify_chain` `prev` mismatch,
+`session_kill` signal parsing, `ssh_spawn` / transfer success wrappers) in
+`BACKLOG.md`.
 
 ---
 
@@ -835,9 +789,10 @@ commitment.
 
 ### 7.1a 2026-10-04 audit pass (register)
 
-Evidence and reproducers: the audit report of this pass (H = high, M = medium,
-L = low). Every finding below was reproduced by running code before it was fixed;
-each fix landed with paired tests that fail against the old code.
+Evidence: the PR descriptions of #189-#197 (no `audit/` pack was archived for this
+pass; H = high, M = medium, L = low). Every finding below was reproduced by running
+code before it was fixed; each fix landed with paired tests that fail against the old
+code. The 2026-10-14 pass is recorded in `BACKLOG.md` and `audit/2026-10-14-engagement.md`.
 
 | ID | Finding | Status |
 |----|---------|--------|
@@ -1045,9 +1000,12 @@ closed three MEDIUM defence-in-depth / correctness gaps in the engagement PR
   pack's deferred **P2-3**), and **required_status_checks** — exactly
   `check (py3.12)`, `check (py3.13)`, `check (py3.14)`, and
   `gitleaks (secret scan)` (the precise check-run names), all bound to
-  GitHub Actions, strict=false. pip-audit / dependency-review / CodeQL
-  stay advisory by operator choice (an upstream CVE disclosure must not
-  block unrelated merges). Enumerated and applied via the operator's
+  GitHub Actions, strict=false. At that date pip-audit / dependency-review /
+  CodeQL were advisory by operator choice (an upstream CVE disclosure must not
+  block unrelated merges). `.github/workflows/ci-gate.yml` has since added a
+  `ci-success` aggregate that waits for them too; whether `ci-success` is itself a
+  required status in the ruleset is repository state not visible in-tree, so verify
+  it with `GET /repos/rmednitzer/relay-shell/rules/branches/main`. Enumerated and applied via the operator's
   Vertex-held `gh` credential with explicit T3 confirmation; verified
   effective after the change via
   `GET /repos/rmednitzer/relay-shell/rules/branches/main`.
@@ -1082,328 +1040,54 @@ closed three MEDIUM defence-in-depth / correctness gaps in the engagement PR
   path; body length-bounded), and the two doc overclaims **DOC-1**
   (`SECURITY.md` keyless-chain / off-host caveat) and **DOC-2**
   (`docs/deployment.md` deny-list defence-in-depth + probe-format footgun).
-  `PATTERNS_VERSION` 5→6. Open MEDIUM/LOW deferrals (AUTH-2, SSH-1/2/3,
-  SSRF-1, RED-3/4/5, CFG-1, OBS-1, DEP-1/2, EDGE-1/2) and the BY-DESIGN
-  challenge results are in `BACKLOG.md`. No P0/critical, no
+  `PATTERNS_VERSION` 5→6. The MEDIUM/LOW deferrals (AUTH-2, SSH-1/2/3,
+  SSRF-1, RED-3/4/5, CFG-1, OBS-1, DEP-1/2, EDGE-1/2) were all closed in follow-up PRs;
+  their resolutions and the BY-DESIGN challenge results are in `BACKLOG.md`. No P0/critical, no
   remote-unauthenticated RCE, no auth-bypass-without-a-secret.
 
 ---
 
-## 8. `.md` update run (per-file)
+## 8. Documentation conventions
 
-A single-pass cleanup of every Markdown file in the tree. Each entry below
-lists what to add, what to keep, and what to remove. The intent is one PR
-per file (or one PR for the whole batch if no behavior changes), reviewed
-by the same checklist.
+The per-file cross-checks that keep the Markdown consistent with the code. Label
+numbers (8.9, 8.12a, 8.18, 8.20, 8.21, 8.23) are kept because ADRs and the changelog
+cite them.
 
-### 8.1 `README.md`
-
-- Keep: title, DeepWiki badge, Why, Capabilities tables (local shell,
-  SSH, sessions, diagnostics, resources), Quickstart, Security posture
-  summary, Layout, Development, AI contributor guidance, License.
-- Done (do not re-add):
-  - Runbook link under "AI contributor guidance".
-  - `/metrics` paragraph under Diagnostics.
-  - Resources subsection.
-  - Prompts subsection (the `operating_guide` prompt, audited like a
-    resource read; ADR 0008).
-  - Status line under the title (version, Python matrix, transports,
-    last validation date with ADR pointer).
-  - Compatibility matrix block (Python / host OS / transport / SDK /
-    SSH library), refreshed on every validation pass.
-- Cross-checks: capability tables must match `docs/tools.md` and
-  `tests/test_server.py::_EXPECTED`. The Status line's "last
-  validated" date must match the most recent ADR 0005 outcome
-  paragraph.
-
-### 8.2 `SECURITY.md`
-
-- Keep: Model, Trust boundary, Deployment requirements, Residual risk,
-  Reporting, Scope sections - they are accurate and pithy.
-- Done (do not re-add):
-  - "Disclosure timeline" subsection under "Reporting a vulnerability"
-    (acknowledge in 7 days, fix or mitigation plan in 30, public
-    advisory + credit when shipped).
-  - "Supported versions" table (added once the project tagged a second
-    release). It lists the latest minor as supported and older minors as
-    unsupported; refresh the table's rows each release so the current
-    `0.x` minor is the supported one.
-- Add (still open): nothing.
-- Remove: nothing.
-
-### 8.3 `CHANGELOG.md`
-
-- Keep: Keep-a-Changelog format and the `[Unreleased]` section structure.
-  Consolidate to one `### Added` / `### Changed` / `### Fixed` /
-  `### Security` block per release - duplicated category headers under
-  the same release confuse readers and break Keep-a-Changelog tooling.
-- Update on every release: cut the `[Unreleased]` block, stamp the
-  version + date, link diffs.
-
-### 8.4 `AGENTS.md`
-
-- Keep: Mission, Non-negotiables, References, Implementation standards,
-  Change workflow, Repo map, Definition of done.
-- Done (do not re-add):
-  - Section 5 runbook pointer.
-  - Section 6 canonical-tool-list note pointing at
-    `tests/test_server.py::_EXPECTED`.
-  - Section 6 entries for `patterns.py`, `metrics.py`, `verifier.py`.
-- Remove: nothing.
-
-### 8.5 `CLAUDE.md`
-
-- Keep: Objective, Core behavior expectations, Required development loop,
-  Coding guidance, GitHub optimization checklist, Trusted references.
-- Done (do not re-add):
-  - The runbook §2 note under "Required development loop".
-  - The backlog-preference bullet under "When uncertain".
-- Remove: nothing.
-
-### 8.6 `docs/architecture.md`
-
-- Keep: the diagram, request-lifecycle prose, module table (now
-  including `metrics` and `verifier`), concurrency notes, transport
-  notes (including the `/metrics` route on HTTP), security-model link.
-- Done (do not re-add):
-  - "Where the lifecycle maps in code" appendix linking each step to
-    the exact `server.py` / `audit.py` / `util.py` call site.
-  - `metrics`, `verifier` rows in the module table.
-  - Pointer to `docs/runbook.md` §2 and ADR 0005 in the security-model
-    section.
-- Remove: nothing.
-
-### 8.7 `docs/tools.md`
-
-- Keep: the per-tool tables, the conventions header, the Tier reference
-  sidebar (now present at the top), the Resources section, the
-  interactive pattern example, the error grammar.
-- Done (do not re-add):
-  - Tier reference sidebar at the top of the file.
-  - Resources section listing the three `relay-shell://...` URIs and
-    the stable audit `tool` names.
-  - Prompts section listing the `operating_guide` prompt and its stable
-    audit `tool` name (`prompt:operating_guide`); ADR 0008.
-  - Per-tool "Tests: ..." line giving the test file(s) that exercise
-    each tool (file paths only - lines drift).
-- Remove: nothing.
-- Cross-checks: the set of tools listed here must equal
-  `tests/test_server.py::_EXPECTED`. The default-tier note for each tool
-  must match `policy._READ_ONLY_TOOLS` / `policy._MUTATING_TOOLS` / the
-  `classify` function. Each tool's "Tests: ..." line must reference a
-  file that actually exists under `tests/`.
-
-### 8.8 `docs/deployment.md`
-
-- Keep: every section. The deployment guide is accurate and
-  worked-example heavy.
-- Done (do not re-add):
-  - §0 "Pre-flight checklist" (service account name, audit dir
-    writable + append-only-capable filesystem, DNS A/AAAA resolves
-    for the edge domain, ports 80/443 reachable, SSH service account
-    keypair, off-host audit shipper ready).
-  - §11 "Backup and restore" (`clients.json` / `codes.json` /
-    `tokens.json` under the OAuth state dir, the
-    `/etc/relay-shell/` EnvironmentFile, the audit log + rotations).
-  - Link to `docs/runbook.md` §4.6 for the manual HTTP smoke in §9.
-- Remove: nothing.
-
-### 8.9 `docs/adr/0001-runtime-and-sdk.md`
-
-- Keep: as is. The pin and the rejection of alternatives are still valid.
-- Add: nothing now. When `mcp` is next bumped, add a one-line Consequences
-  entry stating the pin moved and the test suite was used to validate it.
-
-### 8.10 `docs/adr/0002-no-sandbox-full-access.md`
-
-- Keep: as is. The posture has not changed.
-- Add: nothing.
-
-### 8.11 `docs/adr/0003-tiered-authority.md`
-
-- Keep: as is.
-- Add: nothing now. Update if `TIER2_PATTERN` / `TIER3_PATTERN` (in
-  `src/relay_shell/patterns.py`) gain a new *category* (not just
-  another verb) - new entries are heuristic improvements, not policy
-  changes.
-
-### 8.12 `docs/adr/0004-edge-tls-automation.md`
-
-- Keep: as is. It accurately reflects what `install-edge.sh` does today.
-- Done (do not re-add):
-  - "Operational notes" appendix listing the `journalctl -u caddy`
-    invocation for cert issuance troubleshooting and the
-    `caddy validate --config /etc/caddy/Caddyfile` invocation for
-    drift detection.
-
-### 8.12a `docs/adr/0005-codebase-validation.md`
-
-- Keep: the validation methodology (steps 1-4), every dated outcome
-  paragraph (2026-05-24, 2026-05-31, ...), and the rejected-alternatives
-  section.
-- Add on each subsequent validation pass: a new outcome paragraph
-  + findings table dated to the pass. Do not overwrite prior dates;
-  the ADR is a running record of validation events. Refresh the ADR
-  index subject in `docs/adr/README.md` so it names every pass.
-- Cross-checks: every finding row must reference the file + line the
-  drift lived at and the same PR's resolution (so the audit trail is
-  recoverable without `git blame`).
-
-### 8.13 `NOTICE`
-
-- Keep: as is.
-- Add: nothing.
-
-### 8.14 New `.md` files to create (tracked by the backlog)
-
-(The queue is currently empty. New entries are added here when a
-backlog item references a not-yet-created file so the maintenance
-plan lands in the same PR.)
-
-### 8.15 `CONTRIBUTING.md`
-
-- Keep: scope (what changes we accept), branch naming, the local-loop
-  recipe, the documentation-moves-with-code table, the
-  security-sensitive-PR section, the architecturally-significant
-  paragraph, and the license note.
-- Add: an entry to the docs-moves-with-code table whenever a new
-  cross-reference becomes routine (e.g. a new "if you change X" row).
-- Cross-checks: the local-loop recipe must match section 4.1 of this
-  runbook. If section 3.1 or 3.3 changes, update `CONTRIBUTING.md` and
-  `.github/PULL_REQUEST_TEMPLATE.md` together.
-
-### 8.16 `.github/PULL_REQUEST_TEMPLATE.md` and `.github/ISSUE_TEMPLATE/*.md`
-
-- Keep: the section 3.1 cross-reference checklist in the PR template,
-  and the security-sensitive-diff confirmations from section 3.3. Both
-  the bug and the security issue templates point to `SECURITY.md` for
-  the disclosure process so the trust-boundary text has one home.
-- Add: a row to the PR-template "type of change" list whenever a new
-  category of change becomes routine (e.g. new transport, new auth
-  provider) - keep the list short or it stops being read.
-- Cross-checks: if section 3.1 or 3.3 of this runbook changes, mirror
-  the change in `.github/PULL_REQUEST_TEMPLATE.md`.
-
-### 8.17 `docs/audit-shipper.md`
-
-- Keep: the three worked examples (Vector, Fluent Bit, journal-remote),
-  the §0 "common requirements" preamble (append-only preserved, no
-  re-encoding, rotation-safe, observable, TLS to remote), and the
-  picking-one matrix at the end.
-- Add: a fourth recipe only when a fourth deployment shape is in
-  production and demonstrably different (e.g. an S3 object-lock sink
-  with an event-driven Lambda processor). Resist adding shapes that
-  reduce to "configure your aggregator's file input"; the three here
-  cover the structural choices.
-- Cross-checks: every example must still preserve the rotation
-  posture documented in `deploy/logrotate/relay-shell` and the
-  append-only attribute documented in `docs/deployment.md` §6. If
-  either of those changes, the recipes here change with them.
-
-### 8.18 `docs/adr/README.md`
-
-- Keep: the status-vocabulary table, the indexed ADR list (number /
-  title / status / date / one-line subject), the "when to write an
-  ADR" criteria, the next-free-number marker (currently **0012**),
-  and the cross-references to `docs/architecture.md` and
-  `docs/runbook.md` §6.
-- Add: a row to the index table whenever a new ADR lands. Update the
-  status column when an ADR is superseded or deprecated. Bump the
-  next-free-number marker every time an ADR file is created.
-- Cross-checks: the index must list every file in `docs/adr/000*.md`;
-  any superseded ADR must carry a `Superseded by` line in its own
-  header so the chain is navigable from either direction.
-
-### 8.19 `CODE_OF_CONDUCT.md`
-
-- Keep: the upstream pointer to the canonical Contributor Covenant 2.1
-  URL (so wording changes track upstream automatically), the scope
-  paragraph, the enforcement-reporting channel (private GitHub
-  security advisory, same as vulnerability reports), and the
-  Community Impact Guidelines link.
-- Add: nothing. If the project ever moves to a different code-of-
-  conduct framework, replace the upstream pointer; do not maintain a
-  fork of the Contributor Covenant text in-tree.
-- Cross-checks: `README.md` and `CONTRIBUTING.md` both link to this
-  file; if its path changes, update both. The enforcement-reporting
-  channel must match `SECURITY.md`'s reporting channel so reporters
-  have a single trust path to remember.
-
-### 8.20 `audit/<date>-engagement.md` (assurance engagement packs)
-
-- Keep: each dated engagement pack as a **frozen, point-in-time
-  record**. It captures the repository at the HEAD it names
-  (`audit/2026-05-27-engagement.md` is pinned to `823bd743`), the
-  findings table, their disposition, and the PRs that closed them. Do
-  not retro-edit a landed pack to match later state — like the ADR 0005
-  outcome paragraphs, it records an *event*, not a living document.
-- Add: a new `audit/YYYY-MM-DD-engagement.md` per subsequent
-  engagement; do not overwrite a prior one. The pack is the broader
-  assurance counterpart to an ADR 0005 validation pass — ADR 0005
-  records the terse four-step upstream-surface check per pass, an
-  engagement pack records a full audit / review / harden engagement
-  (backlog disposition, findings by severity, cross-cutting standards
-  posture, execution log).
-- Remove: nothing.
-- Cross-checks: every finding marked fixed must name the PR that closed
-  it so the pack reconciles against the merged history without
-  `git blame`. Any finding left open (e.g. F-G2 branch protection on
-  `main`) must reappear in the next pack's outstanding-risks section
-  until it is closed.
-
-### 8.21 `BACKLOG.md`
-
-- Keep: the Closed table (resolutions with their PRs), the per-category
-  open tables with the audit-charter schema (ID, severity, effort,
-  rationale, approach, dependencies, owner role), and the pointer naming
-  this runbook §7 as the canonical living backlog.
-- Add: a row per finding an audit pass defers; move it to the Closed
-  table (never delete it) when the work lands, naming the closing PR.
-- Remove: nothing; like the engagement packs, closed rows are the audit
-  trail.
-- Cross-checks: every open row must trace to a findings-register ID in
-  the `audit/` pack that produced it; anything that belongs to the
-  *ongoing* queue (not an audit deferral) lives in §7 here, not in
-  `BACKLOG.md` — when an item is recorded in both (e.g. SEC-1), the two
-  entries must name the same closing PR.
-
-### 8.22 `docs/auth.md`
-
-- Keep: the opt-in-by-default statement (the master switch
-  `RELAY_SHELL_AUTH_ENABLED` defaults `false`, HTTP transport only), the
-  end-to-end lifecycle (register → PKCE authorize → token issue → refresh
-  rotation → lazy expiry → restart persistence → re-auth ceiling →
-  revocation), the single-client-lockdown section, and the defaults table.
-- Add: a row to the defaults table and a lifecycle note whenever an
-  `auth_*` setting or a token-handling behavior changes.
-- Cross-checks: the TTL defaults and env-var names must match
-  `config.py`'s `auth_*` fields and `deployment.md` §5; the lifecycle
-  steps must match `auth/oauth.py` (`register_client`, `authorize`,
-  `_issue`, `load_access_token`, `exchange_refresh_token`, `revoke_token`).
-  If an `auth_*` default or the rotation/expiry behavior changes, update
-  `docs/auth.md`, `deployment.md` §5, `SECURITY.md`, and the README OAuth
-  bullet together.
-
-### 8.23 Documentation site (MkDocs Material + GitHub Pages)
-
-- Stack: the docs site is built with MkDocs + the Material theme from the
-  `docs/` folder, configured by `mkdocs.yml` (repo root) and published to
-  GitHub Pages by `.github/workflows/docs.yml`. Build deps are pinned in
-  `requirements-docs.txt`. Site: `https://rmednitzer.github.io/relay-shell/`.
-- Enable (one-time, repo settings): Settings → Pages → Build and deployment →
-  Source → "GitHub Actions". This supersedes the former Jekyll "Deploy from a
-  branch" source; `docs/_config.yml` is kept only so that legacy source keeps
-  serving during the switch, and can be removed once Pages runs on Actions.
-- Keep: `index.md` as the landing page (links every guide plus the ADR index);
-  `mkdocs.yml` `nav:` as the single source of navigation order.
-- Add: when a new guide lands under `docs/`, add it to `mkdocs.yml` `nav:` and
-  to the `index.md` guide list (keep both in step with the README).
-- Local preview: `pip install -r requirements-docs.txt && mkdocs serve`.
-- Cross-checks: every file in `nav:` must exist under `docs/`; inter-doc links
-  use relative `.md` paths (MkDocs resolves them to the built pages). The
-  workflow runs `mkdocs build --strict`, so a broken link or missing nav
-  target fails CI before anything deploys. MkDocs does not run a Liquid-style
-  templating pass over the Markdown, so the Jekyll-era raw guards are gone.
+- **Capability tables.** The tool set in `README.md`, `docs/tools.md`, the server
+  `_INSTRUCTIONS` and `tests/test_server.py::_EXPECTED` must agree (pinned by tests).
+  Each tool's default-tier note must match `policy.py`; each "Tests:" line must name a
+  file under `tests/`. The README status line must name the real version, Python
+  matrix and a validation date that exists in ADR 0005.
+- **Settings.** An added or removed `RELAY_SHELL_*` setting changes `Settings`,
+  `.env.example` and `docs/deployment.md` together; `auth_*` settings also change
+  `docs/auth.md` and `SECURITY.md`. The OAuth state files are `clients.json`,
+  `approvals.json`, `codes.json`, `tokens.json`; list all four wherever state is described.
+- **`SECURITY.md`.** Refresh the supported-versions table each release.
+- **`CHANGELOG.md`.** Keep-a-Changelog; one block per category per release; cut
+  `[Unreleased]` at release time.
+- **8.9 ADR 0001 pin movement.** When `mcp` or `asyncssh` is bumped, add a one-line
+  Consequences entry to ADR 0001 and sync the README compatibility matrix and
+  `docs/architecture.md`.
+- **8.12a ADR 0005 validation record.** Append a dated outcome paragraph and findings
+  table per validation pass (file + line of each drift, the resolving PR); never overwrite
+  an earlier date; refresh the ADR index subject.
+- **8.18 ADR index.** `docs/adr/README.md` lists every ADR (number, title, status, date,
+  one-line subject) and the next free number; a superseded ADR carries a `Superseded by`
+  line.
+- **8.20 Engagement packs.** `audit/<date>-engagement.md` is a frozen point-in-time
+  record: never retro-edit a landed pack; add a new one per engagement; every fixed
+  finding names its closing PR; findings left open reappear in the next pack.
+- **8.21 `BACKLOG.md`.** The register of audit-pass deferrals. Add a row per deferred
+  finding; close rows by naming the PR, never delete them. Ongoing queue items live in
+  §7 here.
+- **8.23 Docs site.** MkDocs Material from `docs/`, configured by `mkdocs.yml` (the `nav:`
+  is the single navigation source; add a new guide to `nav:` and `docs/index.md`),
+  published by `.github/workflows/docs.yml` with `mkdocs build --strict`. Pages must be
+  set to the "GitHub Actions" source; the legacy `docs/_config.yml` can then be removed.
+  Preview with `pip install -r requirements-docs.txt && mkdocs serve`.
+- **Mirrored checklists.** If §3.1 or §3.3 of this runbook changes, mirror it in
+  `CONTRIBUTING.md` and `.github/PULL_REQUEST_TEMPLATE.md`. The local loop in
+  `CONTRIBUTING.md` must match §4.1.
 
 ---
 
@@ -1438,7 +1122,7 @@ RELAY_SHELL_EDGE_DOMAIN=example.test RELAY_SHELL_EDGE_ACME_EMAIL=x@x \
   RELAY_SHELL_EDGE_DRY_RUN=1 sudo -E deploy/install-edge.sh
 ```
 
-## OAuth resource binding migration
+## 10. OAuth resource binding migration
 
 Bearer/resource validation is enabled explicitly. New authorization codes, access tokens and refresh tokens preserve the configured resource; code/refresh exchange uses the stored grant, never caller-supplied scopes or audience. The token endpoint also rejects explicit foreign or duplicate resource parameters, because the SDK token handler does not pass that field to the provider. Missing request parameters select this server's sole configured resource; missing stored bindings fail closed.
 

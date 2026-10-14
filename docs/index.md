@@ -23,6 +23,7 @@ and supported versions see
 - [Deployment](deployment.md) — service account, network edge (Caddy + ACME), OAuth, and audit shipping.
 - [Authentication](auth.md) — the OAuth 2.1 lifecycle and the opt-in-by-default posture.
 - [Audit shipping](audit-shipper.md) — Vector, Fluent Bit, and `systemd-journal-remote` recipes.
+- [Release trust](release-trust.md) — what the release signature and attestations do and do not establish.
 - [Maintenance runbook](runbook.md) — the audit / review / validate / enhance / extend procedures and the backlog.
 
 ## Architecture Decision Records

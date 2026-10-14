@@ -239,3 +239,25 @@ async def test_register_session_closes_transport_when_registry_refuses(tmp_path:
         await app.sessions.shutdown()
     assert second.closed, "refused transport must be closed, not leaked"
     assert first.closed  # closed by the registry shutdown, not the failure path
+
+
+async def test_oversized_winsize_is_clamped_not_leaked(monkeypatch: pytest.MonkeyPatch) -> None:
+    # struct.pack("H") raises struct.error above 65535, which is not an OSError and
+    # used to escape _set_winsize, leaking the pty fds in LocalPtyTransport.spawn.
+    import fcntl
+    import os
+
+    from relay_shell import sessions
+
+    seen: list[bytes] = []
+    monkeypatch.setattr(fcntl, "ioctl", lambda _fd, _op, packed: seen.append(packed))
+    sessions._set_winsize(0, cols=70000, rows=99999)
+    assert seen and seen[0][:4] == b"\xff\xff\xff\xff"
+    before = len(os.listdir("/proc/self/fd")) if os.path.isdir("/proc/self/fd") else None
+    for _ in range(3):
+        tr = await sessions.LocalPtyTransport.spawn(
+            ["/bin/sh", "-c", "exit 0"], cwd=None, env=dict(os.environ), cols=70000, rows=70000
+        )
+        await tr.aclose()
+    if before is not None:
+        assert len(os.listdir("/proc/self/fd")) <= before + 1

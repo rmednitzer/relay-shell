@@ -43,6 +43,11 @@ def _expand(path: str) -> Path:
     return Path(path).expanduser()
 
 
+def _ascii_port(value: str) -> int | None:
+    # str.isdigit() is true for non-ASCII digits such as "²", which int() rejects.
+    return int(value) if value.isascii() and value.isdigit() else None
+
+
 def _proxyjump(value: str | None) -> str | None:
     """``ProxyJump none`` means "no jump host", not a host called ``none``."""
     return None if value is None or value.strip().lower() == "none" else value
@@ -69,7 +74,7 @@ def _parse_ssh_config(path: Path) -> dict[str, HostSpec]:
                 name=alias,
                 hostname=cur.get("hostname", alias),
                 user=cur.get("user"),
-                port=int(cur["port"]) if cur.get("port", "").isdigit() else None,
+                port=_ascii_port(cur.get("port", "")),
                 identity_file=cur.get("identityfile"),
                 jump=_proxyjump(cur.get("proxyjump")),
                 source="ssh_config",
@@ -95,6 +100,12 @@ def _parse_ssh_config(path: Path) -> dict[str, HostSpec]:
         if key == "host":
             _flush()
             aliases = val.split()
+            cur = {}
+        elif key == "match":
+            # A Match block is conditional and is not part of the preceding Host, so
+            # stop attributing its keywords to that Host.
+            _flush()
+            aliases = []
             cur = {}
         elif key in {"hostname", "user", "port", "identityfile", "proxyjump"}:
             cur.setdefault(key, val)

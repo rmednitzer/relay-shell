@@ -2,19 +2,56 @@
 
 This file is the running deferral register for the project's full and
 adversarial audit passes, beginning with the 2026-06-12 full audit pass and
-extended by each subsequent pass (through 2026-08-04). Each item is a finding
+extended by each subsequent pass (through 2026-10-14). Each item is a finding
 that was **not** fixed in its pass — the initial entries come from
 `audit/02-security-findings.md`, later ones from the dated `audit/*.md`
 engagement records — recorded with the schema the audit charter requires.
 
 The project's **canonical, living backlog** is [`docs/runbook.md`](docs/runbook.md)
-§7 (and the §8 per-file docs plan). This file does not replace it; it records
+§7 (and the §8 documentation conventions). This file does not replace it; it records
 the audit-pass-specific deferrals and points into §7 where an item belongs in
 the ongoing queue. When an item here is actioned, close it in the same place
-its kind is tracked (runbook §7 for capability/quality/ops/security-hardening,
-§8 for docs).
+its kind is tracked (runbook §7 for capability/quality/ops/security-hardening).
 
 Severity order within each section: low before info; smaller effort first.
+
+## 2026-10-14 audit pass
+
+Full audit and streamlining pass ([`audit/2026-10-14-engagement.md`](audit/2026-10-14-engagement.md),
+PR #211). The reproduced findings were fixed in the pass (IDs `A14-*`, listed there). Everything
+below was **not** fixed, with the reason. `[V]` = reproduced by running code, `[R]` = verified by
+reading, `[S]` = suspected only.
+
+| ID | Sev | Item | Effort | Why deferred / approach | Owner role |
+|----|-----|------|--------|-------------------------|------------|
+| A14-D3 | MED | Evidence verifier requires the oldest retained segment to start at genesis, so after `rotate 90` (about 90 days) the verifier fails permanently and `relay-audit-evidence-sync` stops publishing off-host (`deploy/evidence/relay-audit-evidence.py` around line 234) `[V]` | M | Needs a design: accept a non-genesis head whose `(seq, prev)` matches a stored anchor (as the reset ledger does), or retain archives off the log directory. Touches the anti-tail-truncation control (ADR 0007), so it needs review rather than a quick patch | maintainer |
+| A14-A2 | MED | An approved public OAuth client (`token_endpoint_auth_method=none`) obtains tokens with only its `client_id` and the registered redirect URI: `/authorize` is outside the CIDR gate and has no login step `[V]` | S | Deployment decision: move `/authorize` below the `@blocked` gate (browser IP must be allowlisted) or refuse `none` registrations unless a setting allows them | repo owner |
+| A14-R3 | MED | Any MCP caller can pass `known_hosts=ignore` and override a `strict` server default; the policy layer never sees it; the audit records `known_hosts or settings.ssh_known_hosts`, which ignores an inventory per-host override `[V]` | S | Policy decision: a setting that bars per-call `ignore`/`accept-new` when the server default is `strict`, and audit the effective mode | maintainer |
+| A14-R4 | MED | With `RELAY_SHELL_SECCOMP_NOTIFY` on, `stop()` closes the notify listener when the call ends, so surviving filtered processes (a `nohup` background job) fail notified syscalls with ENOSYS; contradicts ADR 0006 "falls back to ALLOW" `[V]` (root + CAP_SYS_ADMIN only) | M | Keep draining and answering CONTINUE until POLLHUP; supervisor thread owns the fd close. Needs a privileged host to verify (same constraint as L4 in runbook §7.1a) | maintainer |
+| A14-R8b | LOW-MED | An SSH `[TIMEOUT after Ns]` still does not guarantee the remote command stopped, and the text does not say the outcome is unknown `[V]` | S | Reword to outcome-unknown (AGENTS.md: reconcile before retrying mutations); changes a documented string, so it needs the docs and tests updated together | maintainer |
+| A14-R10 | LOW | Cancellation can leak sessions: `_sweep` pops all doomed sessions before tearing them down; `close()` has no SIGKILL on `CancelledError` `[V]` | S | Shield the teardown or collect failures; send SIGKILL in a `finally` | maintainer |
+| A14-RS | LOW | Suspected: seccomp drain loop ends on a non-ENOENT `RECV` error with the listener open; `on_degraded` never wired from `server.py`; cancellation windows in `open_process` / `add_forward`; no per-client session ownership (`session_list` shows every id under multi-client OAuth); `ProxyCommand` / `Match exec` in the operator's ssh_config spawns an unaudited local child `[S]` | M | Each needs a reproducer first | maintainer |
+| A14-C3b | LOW | `x=1 token=a;rm -rf /srv` (a glued `;rm`) is still audited as `token=[REDACTED] -rf /srv` `[V]` | S | Design call: stop the `\S+` value at `;` (risks truncating `;` inside real secrets) | maintainer |
+| A14-C8b | LOW | Remaining redaction misses: unterminated PEM header leaks up to 500 chars; `password := X` and `password => X`; `https://TOKEN@host` userinfo without a colon; `aws configure set aws_secret_access_key X`; short secret flags beyond the MySQL family (`redis-cli -a`, `unzip -P`, `ldapsearch -w`) `[V]` | M | Heuristic limits (ADR 0003); each new rule needs paired over/under-scrub tests and a version bump | maintainer |
+| A14-C9 | LOW | Classifier tuning: `rm \<newline>-rf`, `sudo -u root reboot`, `nice -n 10 reboot`, `timeout 5 reboot` under-classify; `systemctl start/enable`, `useradd`, `iptables -A`, `kubectl exec/drain`, `redis-cli FLUSHALL`, and `>`/`tee` outside `/etc` (including `~/.ssh/authorized_keys`) are Tier 1 and so permitted by `guarded`; read-only commands (`crontab -l`, `docker compose ps`, `grep sudo auth.log`) over-classify `[V]` | L | Heuristic (ADR 0003, runbook §6.4): do not claim containment; tune with a corpus and near-miss tests | maintainer |
+| A14-C10b | LOW | Confirmation tokens are not bound to `client_id`: another authenticated client issuing the identical call within the TTL consumes an armed token `[V]` | S | Extend the op key; ADR 0009 follow-up | maintainer |
+| A14-C11 | INFO | `default_timeout` is reported by `server_info` but never applied (tool signatures hardcode 60/120/30); unknown `RELAY_SHELL_*` variables (a typo like `POLICY_MOD`) are ignored and fall back to `open`; `RELAY_SHELL_POLICY_ALLOW` is an unanchored search over the whole probe `[R]` | S | Config hygiene: apply or remove the setting, warn on unknown prefixed variables, document the allow semantics | maintainer |
+| A14-A5 | LOW | `scripts/bind-legacy-oauth.py` can no longer bind records after the current version has started once (tokens are hashed and the `token` field dropped) `[V]` | XS | Remove with `tests/test_oauth_resource_migration.py` and runbook §10 after the migration window | maintainer |
+| A14-D6 | LOW | `install-edge.sh`: env values are not validated before Caddyfile substitution (a `}` in a domain or CIDR alters the config); a `0.0.0.0/0` CIDR gets no warning; the NUL test never fires `[R]` | S | Validate with a strict regex per variable | maintainer |
+| A14-D7 | MED-LOW | `release.yml` and `sbom.yml` install unpinned tooling (`build`, `twine`, `cyclonedx-bom`, `hatchling`, `pip install -e ".[dev]"` without `-c requirements.txt`) in jobs holding OIDC / `attestations: write` / `contents: write`; `workflow_dispatch` on `release.yml` has no ref guard `[R]` | M | Split build from attest; pinned, hashed installs; guard on `refs/heads/main`. Cannot be validated without running the workflows (see L8 in runbook §7.1a) | maintainer |
+| A14-D8 | LOW-MED | The SBOM installs the whole `requirements.txt` (dev tools included) and lists its own tooling; the header claims hashes that are absent `[R]` | S | Generate from the runtime resolve only | maintainer |
+| A14-D9 | LOW-MED | The evidence sync is a mirror, not append-only: a rewritten local chain that still verifies overwrites the remote copy; default `RSYNC_PATH="sudo -n /usr/bin/rsync"` gives the audited host root-equivalent write on the backup host `[R]` | M | Forced-command `rrsync -wo` without sudo, remote snapshots, and refuse an anchor whose `latest_seq` regresses | maintainer |
+| A14-D10 | LOW | Caddy access log records the `/authorize` 302 `Location` (code and state); public handles have no body-size or rate limit; the Caddy routing tests never run in CI `[R]` | S | `format filter` deleting `resp_headers>Location`; `request_body max_size`; install Caddy in CI | maintainer |
+| A14-A11b | LOW | OAuth: no refresh-token reuse detection (old access token valid until expiry); `client_secret` stored in plaintext (the SDK compares it raw); `_SECRET_RE` uses `$` (accepts a trailing newline); the constructor default `require_approval=False` is fail-open if the setting is absent `[R]` | M | Each is small; the reuse-detection design needs review | maintainer |
+| A14-D12 | LOW | `ci-gate.yml` runs from the PR head, so a PR can edit `REQUIRED_CHECKS`; `.gitleaks.toml` allowlists whole files for every rule; the `(missing)` branch of the gate is dead; no `persist-credentials: false` on 8 workflows; CodeQL does not scan the Actions workflows; CODEOWNERS enforcement depends on repo settings `[R]` | M | Scope the gitleaks allowlist by regex/stopword; verify ruleset enforcement | repo owner |
+| A14-D13 | LOW | `.claude/settings.json` allows `python:*`, `uvx`, `pipx run`, `just`, `bats`, which run arbitrary code or fetch from the network and conflict with the AGENTS.md rule on unreviewed downloads; `just`, `bats` and `uv` are not used in the repo `[R]` | XS | Not changed here (agent configuration is the owner's to change); trim the entries | repo owner |
+| A14-D14 | LOW | Dependency metadata: the `[http]` extra (`PyJWT`, `cryptography`) is redundant with `mcp>=2`'s own dependencies; declared floors (`pydantic>=2.11`, `anyio>=4.6`) are below what `mcp` requires and are never tested; `install.sh` and the deployment docs install without constraints; `nightly-fuzz.yml` installs without `-c requirements.txt`; the external Renovate preset was not reviewed `[R]` | M | Raise floors to the real minimums; keep an empty `http` alias for docs compatibility | maintainer |
+| A14-D15 | LOW | Packaging and ops: the wheel force-includes all of `deploy/` (host-specific Tailscale IPs and topology text under `monitoring/`, plus `evidence/`) though `verifier.py` uses 4 templates; logrotate `prerotate` can leave archives without `+a`; `relay-health-metrics.py` writes a `*.prom` temp file that node_exporter can read half-written; the monitoring probe may see 403 from the host itself; `install.sh` overwrites local edits to the unit and `hardening.conf` `[R]` | M | Narrow `force-include`; use a non-`.prom` temp suffix | maintainer |
+| A14-T1 | LOW | Test gaps: OAuth expired-code / expired-refresh / `client_id`-mismatch branches; `verify_chain` `prev` mismatch; `session_kill` signal parsing; `ssh_spawn`, `ssh_upload`, `ssh_download`, `ssh_forward` wrapper success paths; `AUDIT_STDERR`; `branch = true` is off so branch gaps are hidden; the seccomp live tests do not run in CI (no `CAP_SYS_ADMIN`) | M | Add targeted tests; consider `branch = true` for `policy`, `redaction`, `audit`, `broker`, `oauth` | maintainer |
+| A14-T2 | INFO | Brittle drift-guard tests pin exact values (`MemoryMax=1024M`, `CPUQuota=80%`, `ci-gate.yml` indentation) | S | Deliberate guards; revisit if they cause churn | maintainer |
+| A14-X1 | INFO | `.env.example:71` mentions `--require-genesis`, which does not exist `[V]` | XS | This session could not edit `.env*` paths; remove the flag name | repo owner |
+| A14-X2 | INFO | `docs/_config.yml` (legacy Jekyll) can be deleted once Pages is on the Actions source (repo setting) | XS | Confirm the Pages source first | repo owner |
+| A14-X3 | INFO | Dead or duplicated code left in place: `sessions.py` `_thread_read_loop` and the `NotImplementedError` branch (POSIX-only module), per-session `asyncio.Lock`s, near-identical `sftp_put`/`sftp_get`, the repeated host-token split and `audit_args` blocks in `server.py` (runbook R-001), `metrics.py` triplicated metric tables, single-arch seccomp tables, `util.utf8_len` (tests only), `broker._Entry.tool` | M | Behaviour-neutral but touches security-sensitive modules; do under R-001, one PR per row | maintainer |
 
 ## 2026-09-13 audit pass
 
@@ -129,7 +166,7 @@ Open deferrals (severity order; smaller effort first):
 
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
-| DOC-5 | `CHANGELOG.md` lacks Keep-a-Changelog version-compare links | info | XS | Deferred until a second release is tagged ("omit rather than fake"). | maintainer |
+| DOC-5 | `CHANGELOG.md` lacks Keep-a-Changelog version-compare links | info | XS | **Closed** (verified 2026-10-14): the compare links for `[Unreleased]`, 0.3.0, 0.2.0 and 0.1.0 are at the foot of `CHANGELOG.md`. | maintainer |
 
 Accepted as-designed / operator discretion (no action): **SEC-5** (`/metrics`
 OAuth bypass) — operator decision (2026-06-21): keep the documented design
@@ -210,35 +247,11 @@ expose only Tier-0 host metadata); no injection in the non-shell tools
 (formatters escape `\n`/`\r`/`|`/`=`/`\t`; constant keys); empty `client_id` /
 PKCE / code-replay / refresh single-use / lazy expiry (PoC-confirmed safe).
 
-## Security
-
-(Empty — SEC-1 and SEC-2 closed in the follow-up work above.)
-
-## Reliability
-
-(Empty — REL-1 closed in the follow-up work above.)
-
-## Quality
-
-(Empty — QUAL-1 closed in the follow-up work above.)
-
-## Documentation
-
-(Closed in this pass — D-001/D-002/D-003 are reconciled. No open docs
-deferrals. The frozen ADR 0008 incidental `mcp==1.27.1` mention is
-deliberately left as-authored per the project's no-retro-edit-of-decision-
-records convention; see `audit/03-final-report.md`.)
-
-## Tooling
-
-(Empty — TOOL-1/TOOL-3 closed by the follow-up work and TOOL-2 closed as
-accepted-as-designed with Renovate evidence; see the Closed table above.)
-
 ## Carried forward from prior engagement packs (operator action)
 
 | ID | Item | Severity | Effort | Rationale | Owner role |
 |---|---|---|---|---|---|
-| F-G2 | Branch protection on `main` — **fully resolved** (rules enumerated and hardened) | high (governance), now closed | S (done) | Prior packs (`audit/2026-06-01-engagement.md` §7.1) carried this as an open HIGH item ("`main` accepts direct pushes"). Resolved in two steps. 2026-06-12 (audit pass): the branches API reports `protected: true` [V]. 2026-06-12 (follow-up, via the Vertex-held `gh` credential): protection comes from ruleset `main-protection` (id 17307996; classic protection is unset), which enforced pull_request (0 approvals), non_fast_forward, deletion, and required_linear_history [V]. With operator confirmation (a T3 change per the operator's `github-vertex.md` contract), the ruleset gained `required_status_checks` — `check (py3.12)` / `check (py3.13)` / `check (py3.14)` / `gitleaks (secret scan)`, all bound to GitHub Actions, strict=false — and `required_signatures` (closing the prior pack's deferred **P2-3**). Verified effective post-change via `GET /repos/rmednitzer/relay-shell/rules/branches/main` [V]. pip-audit / dependency-review / CodeQL stay advisory by operator choice. | repo owner (executed with operator confirmation) |
+| F-G2 | Branch protection on `main` — **fully resolved** (rules enumerated and hardened) | high (governance), now closed | S (done) | Prior packs (`audit/2026-06-01-engagement.md` §7.1) carried this as an open HIGH item ("`main` accepts direct pushes"). Resolved in two steps. 2026-06-12 (audit pass): the branches API reports `protected: true` [V]. 2026-06-12 (follow-up, via the Vertex-held `gh` credential): protection comes from ruleset `main-protection` (id 17307996; classic protection is unset), which enforced pull_request (0 approvals), non_fast_forward, deletion, and required_linear_history [V]. With operator confirmation (a T3 change per the operator's `github-vertex.md` contract), the ruleset gained `required_status_checks` — `check (py3.12)` / `check (py3.13)` / `check (py3.14)` / `gitleaks (secret scan)`, all bound to GitHub Actions, strict=false — and `required_signatures` (closing the prior pack's deferred **P2-3**). Verified effective post-change via `GET /repos/rmednitzer/relay-shell/rules/branches/main` [V]. pip-audit / dependency-review / CodeQL were advisory by operator choice at that date; `ci-gate.yml`'s `ci-success` aggregate has since added them, and whether `ci-success` is a required ruleset status must be verified against the live ruleset (not visible in-tree). | repo owner (executed with operator confirmation) |
 
 ## 2026-07-15 full audit + Vertex/Axiom comparison pass
 
@@ -264,14 +277,3 @@ Open deferrals (severity order; smaller effort first):
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
 | OPS-2 (L4) | `pip-audit` has no KEV/EPSS exploit prioritization | info | S | Lesson from the comparison: layer Known-Exploited / EPSS signal on top of the existing `pip-audit` gate for prioritization. Advisory only — `pip-audit` already fails closed. Low value for the small pinned set; revisit if the dependency set grows. | maintainer |
-
-## Notes on items NOT added here
-
-- No critical / high / medium **code** security findings were produced by
-  this pass, so there is no remediation backlog of that kind.
-- The structural refactor candidates (`R-001` table-driven tool registration,
-  `R-004` OAuth store `Protocol`) already live in runbook §5.2 and are not
-  duplicated here.
-- No destructive or irreversible operation was proposed by this pass
-  (no history rewrite, no dependency major bump, no schema change), so the
-  charter's "proposals, not executed" bucket is empty.

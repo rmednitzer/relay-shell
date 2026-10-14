@@ -16,8 +16,12 @@ If you add a pattern in ``patterns.py``, also add a pair here.
 from __future__ import annotations
 
 import re
+import time
+
+import pytest
 
 from relay_shell import patterns, policy, redaction
+from relay_shell.policy import Tier
 
 
 def _synth(prefix: str, body: str) -> str:
@@ -666,3 +670,76 @@ def test_pem_redaction_matches_and_is_redos_bounded() -> None:
     out = redaction.redact(blob)
     assert time.perf_counter() - t0 < 5.0
     assert "[REDACTED]" not in out  # no closing END -> no match
+
+
+# --- 2026-10-14 audit: ReDoS in the classifier and the CLI-flag redaction rule ---
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "\n" * 3000,
+        " " * 30000,
+        "\n \n " * 3000,
+        "dd " * 30000,
+        "; " * 20000,
+    ],
+    ids=["newlines", "spaces", "newline-space", "dd-repeat", "separators"],
+)
+def test_classifier_is_linear_on_whitespace_and_dd_runs(payload: str) -> None:
+    # The classifier runs before the deny list on every call, so super-linear
+    # backtracking here blocks the event loop for every connected session.
+    t0 = time.perf_counter()
+    policy.classify("shell_exec", payload)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 2.0, f"policy.classify() took {elapsed:.1f}s - possible ReDoS regression"
+
+
+def test_cli_flag_redaction_is_not_quadratic_on_hyphen_digit_runs() -> None:
+    t0 = time.perf_counter()
+    redaction.redact("-1" * 9000)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 2.0, f"redact() took {elapsed:.1f}s - possible ReDoS regression"
+
+
+def test_tier_still_detected_after_the_redos_rewrite() -> None:
+    assert policy.classify("shell_exec", "dd if=/dev/zero of=/dev/sda bs=1M") == Tier.IRREVERSIBLE
+    assert policy.classify("shell_exec", "ls\n\n   rm -rf /srv/data") == Tier.IRREVERSIBLE
+    assert policy.classify("shell_exec", "bash -c '   rm -rf /srv/data'") == Tier.IRREVERSIBLE
+    assert policy.classify("shell_exec", "FOO=1   sudo rm -rf /srv/data") == Tier.IRREVERSIBLE
+
+
+def test_authorization_redaction_does_not_swallow_following_commands() -> None:
+    # A bare-value Authorization used to consume the rest of the command line, so
+    # a destructive command after `;` vanished from the audit record.
+    out = redaction.redact("echo authorization: x; rm -rf /var/lib/db")
+    assert "x" not in out.split(";")[0].split("[REDACTED]")[-1]
+    assert "rm -rf /var/lib/db" in out
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "SECRET_KEY={v}",
+        "DJANGO_SECRET_KEY={v}",
+        "ENCRYPTION_KEY={v}",
+        "PRIVATE_KEY={v}",
+        "SECRET_KEY_BASE={v}",
+        'export SIGNING_KEY="{v}"',
+    ],
+)
+def test_compound_key_variable_names_are_redacted(line: str) -> None:
+    value = _synth("zx", "Q9pL3vT7mK2wR8")
+    out = redaction.redact(line.format(v=value))
+    assert value not in out and "[REDACTED]" in out
+
+
+def test_pgp_private_key_block_is_redacted() -> None:
+    body = _synth("lQdGBF", "abcdefghijklmnop")
+    block = f"-----BEGIN PGP PRIVATE KEY BLOCK-----\n{body}\n-----END PGP PRIVATE KEY BLOCK-----"
+    out = redaction.redact(f"gpg --import <<'EOF'\n{block}\nEOF")
+    assert body not in out
+
+
+def test_patterns_version_is_14() -> None:
+    assert patterns.PATTERNS_VERSION == "14"

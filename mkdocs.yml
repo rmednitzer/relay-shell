@@ -90,6 +90,7 @@ nav:
       - Deployment: deployment.md
       - Authentication: auth.md
       - Audit shipping: audit-shipper.md
+      - Release trust: release-trust.md
       - Maintenance runbook: runbook.md
   - Decision records:
       - Overview: adr/README.md
