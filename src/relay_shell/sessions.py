@@ -103,6 +103,12 @@ class Transport(Protocol):
     async def aclose(self) -> None: ...
 
 
+# Teardown signal schedule for a local PTY child: SIGTERM at 0, SIGHUP once
+# `_HANGUP_AFTER` has passed, SIGKILL at `_TERM_GRACE` (all seconds).
+_TERM_GRACE = 5.0
+_HANGUP_AFTER = 0.5
+
+
 def _set_winsize(fd: int, cols: int, rows: int) -> None:
     with contextlib.suppress(OSError):
         # Clamp to the unsigned-short range: struct.pack raises struct.error (not
@@ -242,7 +248,17 @@ class LocalPtyTransport:
         self._closed = True
         self.signal(signal.SIGTERM)
         try:
-            await asyncio.wait_for(self._proc.wait(), 5)
+            try:
+                await asyncio.wait_for(self._proc.wait(), _HANGUP_AFTER)
+            except TimeoutError:
+                # Interactive shells ignore SIGTERM, so without this every close of
+                # one sat out the whole grace period and ended in SIGKILL. SIGHUP is
+                # what a closing terminal sends and they exit on it. It follows
+                # SIGTERM only after a short grace so a daemon that traps SIGTERM
+                # for an orderly shutdown (and treats SIGHUP as "reload") is not
+                # hung up mid-shutdown.
+                self.signal(signal.SIGHUP)
+                await asyncio.wait_for(self._proc.wait(), _TERM_GRACE - _HANGUP_AFTER)
         except asyncio.CancelledError:
             # Cancelled during the SIGTERM grace wait: `_closed` is already set, so no
             # second aclose will follow. A child that ignores SIGTERM would outlive its

@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import signal
+import time
 from pathlib import Path
 
 import pytest
@@ -261,3 +262,44 @@ async def test_oversized_winsize_is_clamped_not_leaked(monkeypatch: pytest.Monke
         await tr.aclose()
     if before is not None:
         assert len(os.listdir("/proc/self/fd")) <= before + 1
+
+
+async def _timed_close(argv: list[str], settle: float = 0.4) -> tuple[float, int | None]:
+    tr = await LocalPtyTransport.spawn(argv, cwd=None, env=dict(os.environ), cols=80, rows=24)
+    await asyncio.sleep(settle)  # let the child install its traps / reach its prompt
+    start = time.monotonic()
+    await tr.aclose()
+    return time.monotonic() - start, tr.returncode
+
+
+@pytest.mark.parametrize("shell", ["/bin/sh", "/bin/bash"])
+async def test_closing_an_interactive_shell_does_not_wait_out_the_sigterm_grace(
+    shell: str,
+) -> None:
+    """Interactive shells ignore SIGTERM. Pre-fix every close of one slept the full 5 s
+    grace and ended in SIGKILL; SIGHUP, which a closing terminal sends, ends it at once."""
+    if not Path(shell).exists():
+        pytest.skip(f"{shell} not installed")
+    elapsed, rc = await _timed_close([shell, "-i"])
+    assert elapsed < 2.0, f"close took {elapsed:.2f}s"
+    assert rc == -signal.SIGHUP
+
+
+async def test_close_gives_sigterm_handlers_their_turn_before_hangup() -> None:
+    """A daemon that shuts down on SIGTERM but reloads on SIGHUP must see SIGTERM only."""
+    script = 'trap "exit 0" TERM; trap "exit 7" HUP; while :; do sleep 0.05; done'
+    elapsed, rc = await _timed_close(["/bin/bash", "-c", script])
+    assert elapsed < 2.0
+    assert rc == 0, "the child saw SIGHUP before its SIGTERM handler could finish"
+
+
+async def test_close_still_kills_a_child_that_ignores_term_and_hup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from relay_shell import sessions
+
+    monkeypatch.setattr(sessions, "_TERM_GRACE", 1.2)
+    script = 'trap "" TERM HUP; while :; do sleep 0.05; done'
+    elapsed, rc = await _timed_close(["/bin/sh", "-c", script])
+    assert 1.0 < elapsed < 4.0
+    assert rc == -signal.SIGKILL

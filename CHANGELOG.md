@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Closing an interactive shell session (`session_kill` with its default `close=true`, the idle
+  sweep, shutdown) no longer waits out the whole 5 s SIGTERM grace. Interactive shells ignore
+  SIGTERM, so every close ended in SIGKILL after 5.01 s. `LocalPtyTransport.aclose` now sends SIGHUP if the child is
+  still running 0.5 s after SIGTERM (5.01 s to under 1 s, measured on `sh -i` and `bash -i`);
+  SIGKILL at 5 s is unchanged. SSH session transports are unchanged. ADR 0012.
+
 ### Removed
 
 - `scripts/bind-legacy-oauth.py` and its test (A14-A5): it could no longer bind records once the
