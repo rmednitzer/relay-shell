@@ -38,7 +38,7 @@ import struct
 import termios
 import time
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 from . import patterns, seccomp
 from .errors import SessionError
@@ -263,6 +263,12 @@ class LocalPtyTransport:
         self.signal(signal.SIGTERM)
         try:
             await asyncio.wait_for(self._proc.wait(), 5)
+        except asyncio.CancelledError:
+            # Cancelled during the SIGTERM grace wait: `_closed` is already set, so no
+            # second aclose will follow. A child that ignores SIGTERM would outlive its
+            # session, so kill it before propagating.
+            self.signal(signal.SIGKILL)
+            raise
         except (TimeoutError, ProcessLookupError, RuntimeError):
             # RuntimeError: the process handle is bound to another (closed) event
             # loop, as in the shutdown path, so it cannot be awaited; still kill it.
@@ -320,6 +326,7 @@ class SessionRegistry:
     def __init__(self, max_sessions: int, idle_timeout: float, buffer_cap: int) -> None:
         self._sessions: dict[str, Session] = {}
         self._lock = asyncio.Lock()
+        self._teardowns: set[asyncio.Future[Any]] = set()
         self._max = max_sessions
         self._idle = idle_timeout
         self._cap = buffer_cap
@@ -464,7 +471,24 @@ class SessionRegistry:
             sess = self._sessions.pop(sid, None)
         if sess is None:
             raise SessionError(f"unknown session: {sid}")
-        await self._teardown(sess)
+        await self._teardown_unregistered([sess])
+
+    async def _teardown_unregistered(self, sessions: list[Session]) -> None:
+        """Tear down sessions that are already out of the registry, to completion.
+
+        Once popped, a session is reachable only from here, so a caller cancelled
+        part-way (client disconnect, MCP cancellation) must not abandon it: the
+        teardown runs as its own task and the caller merely stops waiting for it.
+        The sessions close concurrently, so one slow child does not delay the rest.
+        """
+        if not sessions:
+            return
+        task = asyncio.ensure_future(
+            asyncio.gather(*(self._teardown(s) for s in sessions), return_exceptions=True)
+        )
+        self._teardowns.add(task)  # the loop holds tasks weakly
+        task.add_done_callback(self._teardowns.discard)
+        await asyncio.shield(task)
 
     async def _teardown(self, sess: Session) -> None:
         if sess._reader is not None:
@@ -513,12 +537,10 @@ class SessionRegistry:
                 idle = now - sess.last_used
                 if (sess.closed and not sess.buffer and idle > 5) or idle > self._idle:
                     doomed.append(self._sessions.pop(sid))
-        for sess in doomed:
-            await self._teardown(sess)
+        await self._teardown_unregistered(doomed)
 
     async def shutdown(self) -> None:
         async with self._lock:
             sessions = list(self._sessions.values())
             self._sessions.clear()
-        for sess in sessions:
-            await self._teardown(sess)
+        await self._teardown_unregistered(sessions)

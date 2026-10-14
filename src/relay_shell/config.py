@@ -6,14 +6,21 @@ All settings are read from ``RELAY_SHELL_*`` environment variables (and an optio
 
 from __future__ import annotations
 
+import difflib
 import ipaddress
+import logging
+import os
 import re
+from collections.abc import Mapping
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__all__ = ["Settings", "get_settings"]
+__all__ = ["Settings", "get_settings", "unknown_settings_names"]
+
+_log = logging.getLogger("relay_shell.config")
 
 _TRANSPORTS = {"stdio", "http"}
 _POLICY_MODES = {"open", "guarded", "readonly"}
@@ -254,7 +261,45 @@ class Settings(BaseSettings):
         return self
 
 
+# Written by deploy/install-edge.sh into its own env file, so they can share a file with the
+# server's settings without being Settings fields.
+_FOREIGN_PREFIXES = ("RELAY_SHELL_EDGE_",)
+_PREFIX = "RELAY_SHELL_"
+_DOTENV_KEY_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+def unknown_settings_names(
+    environ: Mapping[str, str] | None = None, *, dotenv: Path | str = ".env"
+) -> list[tuple[str, str | None]]:
+    """``RELAY_SHELL_*`` names in the environment or ``.env`` that no setting reads.
+
+    ``Settings`` ignores unknown names (``extra="ignore"``), so a typo such as
+    ``RELAY_SHELL_POLICY_MOD`` would silently leave the default (``open``) in force.
+    Returns ``(name, closest known name or None)``, sorted by name.
+    """
+    known = {f"{_PREFIX}{name.upper()}" for name in Settings.model_fields}
+    names = set(os.environ if environ is None else environ)
+    try:
+        for line in Path(dotenv).read_text(encoding="utf-8").splitlines():
+            if (m := _DOTENV_KEY_RE.match(line)) is not None:
+                names.add(m.group(1))
+    except OSError:
+        pass
+    unknown: dict[str, str | None] = {}
+    for raw in names:
+        name = raw.upper()
+        if not name.startswith(_PREFIX) or name in known or name.startswith(_FOREIGN_PREFIXES):
+            continue
+        close = difflib.get_close_matches(name, known, n=1, cutoff=0.8)
+        unknown[name] = close[0] if close else None
+    return sorted(unknown.items())
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Process-wide cached settings instance."""
-    return Settings()
+    settings = Settings()
+    for name, close in unknown_settings_names():
+        hint = f" (did you mean {close}?)" if close else ""
+        _log.warning("ignoring unknown setting %s%s", name, hint)
+    return settings

@@ -17,6 +17,14 @@ Mode semantics: `open` permits all but still classifies; `guarded`
 refuses Tier 2+ unless `RELAY_SHELL_POLICY_ALLOW` matches; `readonly`
 permits only Tier 0. `RELAY_SHELL_POLICY_DENY` is always enforced first.
 
+`RELAY_SHELL_POLICY_DENY` and `RELAY_SHELL_POLICY_ALLOW` are Python `re.search` patterns,
+unanchored, run over the probe `<tool> <policy text>` (the tool name, a space, then the command
+with its stdin, script body and env overlay). A match anywhere in that text counts, so a
+pattern such as `systemctl restart` also matches when those words sit inside another
+command, an argument or a heredoc. An `ALLOW` match admits the whole call, whatever else it
+contains: anchor it (`^shell_exec systemctl restart nginx$`). Neither pattern is a
+containment boundary (`SECURITY.md`).
+
 Conventions:
 
 - `host` is an inventory / `ssh_config` alias or `user@host`. A host or user that is not an
@@ -70,7 +78,7 @@ Tests: `tests/test_shell.py`, `tests/test_tool_wrappers.py`.
 | param | type | default | notes |
 |-------|------|---------|-------|
 | `command` | str | - | the command |
-| `timeout` | int | 60 | clamped to `[1, RELAY_SHELL_MAX_TIMEOUT]` |
+| `timeout` | int | 0 | `0` = `RELAY_SHELL_DEFAULT_TIMEOUT` (60 s unless set); clamped to `[1, RELAY_SHELL_MAX_TIMEOUT]` |
 | `max_output` | int | 65536 | clamped to `[1024, RELAY_SHELL_MAX_OUTPUT_HARD]` |
 | `cwd` | str | "" | working directory |
 | `stdin` | str | "" | written to the process stdin |
@@ -99,7 +107,7 @@ Tests: `tests/test_sessions.py`, `tests/test_tool_wrappers.py`.
 
 ### `ssh_exec`
 Run a command on a remote host; returns `[exit N]` + combined output. Params:
-`host`, `command`, `timeout=60`, `user`, `port`, `key_path`, `known_hosts`,
+`host`, `command`, `timeout=0` (`0` = `RELAY_SHELL_DEFAULT_TIMEOUT`), `user`, `port`, `key_path`, `known_hosts`,
 `jump`. Tier: heuristic from the command.
 
 Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
