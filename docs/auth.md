@@ -170,6 +170,32 @@ register. The server logs each refused authorization with the command to run.
   behavior. Do that only where the edge itself authenticates the caller (a client
   certificate or an identity-aware proxy in front of `/register` and `/authorize`).
 
+### Residual: approval gates the client, not each authorization
+
+Approval is a one-time decision about a *client*. For an approved client the
+authorization endpoint still has no login step, and the Caddy template leaves `/authorize`,
+`/register`, `/token` and `/revoke` public (EDGE-1) so remote connectors can onboard. Anyone
+who can reach `/authorize` and presents the `client_id`, a PKCE challenge and the exact
+registered `redirect_uri` receives a code, and `/token` redeems it. A confidential client
+(`client_secret_*`) additionally needs its secret. A *public* client
+(`token_endpoint_auth_method=none`) with a loopback redirect such as
+`http://localhost:PORT/cb` is the weak case: whoever holds its `client_id` can run their own
+listener on that port and obtain a token. A `client_id` is not a secret; it appears in
+authorize URLs and in the edge access log.
+
+What bounds this (accepted, 2026-10-14, A14-A2): the MCP endpoint and every other operational
+path stay behind the edge CIDR gate (`RELAY_SHELL_EDGE_CLIENT_CIDRS`), so a token minted from
+outside the allowlist cannot be used from there. The exposure that remains is hosts *inside*
+the allowlist, and any deployment whose allowlist is broad (a whole VPN range, or
+`0.0.0.0/0`), where the approval gate is then the only control. Therefore:
+
+- keep `RELAY_SHELL_EDGE_CLIENT_CIDRS` to the specific hosts that run MCP clients;
+- approve only clients you recognise, and `--auth-reject` anything else (it also revokes its
+  codes and tokens);
+- for a machine-only deployment with no browser flow, move the `/authorize` handle below
+  `@blocked` in the Caddyfile (see the EDGE-1 comment) so it is CIDR-gated too;
+- treat the `client_id` of a loopback-redirect public client as sensitive.
+
 ## Single-client lockdown
 
 With `RELAY_SHELL_AUTH_SINGLE_CLIENT=true` (**the default**), DCR is frozen

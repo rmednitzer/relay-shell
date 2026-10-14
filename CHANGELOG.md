@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed (audit follow-up 2026-10-14)
+
+- **Audit-evidence verifier tolerates logrotate pruning** (A14-D3). After `rotate 90` deleted
+  the oldest segment the verifier required genesis-anchoring and failed permanently, so
+  `relay-audit-evidence-sync` silently stopped publishing off-host. It now also accepts a
+  retained history whose oldest record continues a record checkpointed by an earlier valid run
+  (`retained-checkpoints.json`) while at least `RELAY_AUDIT_RETAIN_SEGMENTS` (default 90)
+  rotated segments remain, so deleting an extra segment still fails; hosts already past the
+  window bootstrap with an exact `approved_heads` entry in the root-owned ledger. New anchor
+  fields `retention_pruned_head` and `first_retained_seq`; the sync also ships the checkpoint
+  file. See `deploy/evidence/README.md` ("Retention and pruning").
+- **OAuth residual risk documented** (A14-A2, accepted): approval gates a client, not each
+  authorization; `docs/auth.md` and `SECURITY.md` state what the edge CIDR gate does and does
+  not bound. No behaviour change.
+
 ### Fixed (audit 2026-10-14)
 
 - An SSH command that hits its timeout now also closes its channel (not just SIGTERM).

@@ -156,6 +156,12 @@ credentials reach. In privileged posture, this is effectively root-level host
 control. Scope accounts/keys accordingly and isolate the host. This is stated
 plainly so it can be designed around rather than discovered.
 
+OAuth operator approval gates a *client*, not each authorization: with the shipped edge
+template `/authorize` is public and has no login step, so a host that knows an approved public
+client's `client_id` can obtain a token. The edge CIDR gate keeps that token unusable outside
+the allowlist, so a broad allowlist removes the protection. See the residual-risk subsection in
+`docs/auth.md` ("Operator approval").
+
 ## Supported versions and response targets
 
 The latest released pre-1.0 minor receives security patches; older minors are not

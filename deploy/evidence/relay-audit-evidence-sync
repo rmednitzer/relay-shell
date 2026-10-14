@@ -23,6 +23,7 @@ verify_status=$?
   "$@" \
   --include='audit.jsonl*' \
   --include='chain-verification.jsonl' \
+  --include='retained-checkpoints.json' \
   --exclude='*' \
   --rsync-path="$RELAY_AUDIT_RSYNC_PATH" \
   -e "/usr/bin/ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RELAY_AUDIT_SSH_KNOWN_HOSTS -o ControlMaster=no -o ControlPath=none" \
