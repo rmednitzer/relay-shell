@@ -12,7 +12,6 @@ __all__ = [
     "now_iso",
     "sha256_hex",
     "truncate",
-    "utf8_len",
 ]
 
 
@@ -26,11 +25,6 @@ def sha256_hex(data: str | bytes) -> str:
     if isinstance(data, str):
         data = data.encode("utf-8", "replace")
     return hashlib.sha256(data).hexdigest()
-
-
-def utf8_len(text: str) -> int:
-    """Length of ``text`` in UTF-8 bytes."""
-    return len(text.encode("utf-8", "replace"))
 
 
 def clamp(value: int, lo: int, hi: int) -> int:

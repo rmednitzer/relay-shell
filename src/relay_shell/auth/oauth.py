@@ -64,7 +64,17 @@ _HASH_PREFIX = "sha256:"
 # What `secrets.token_urlsafe` can produce. A presented secret outside this set is
 # never looked up: it could otherwise be a *stored key* (`sha256:<hex>`,
 # `refresh:...`) replayed as if it were the secret.
-_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{1,512}$")
+# `\Z`, not `$`: `$` also matches before a trailing newline, so `"token\n"` would pass.
+_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{1,512}\Z")
+# Marker left when a refresh token is rotated away (A14-A11b). Keyed like a hashed record
+# (`sha256:spent:<hash>`), so the legacy-record migration leaves it alone, and it carries the
+# spent token's own `expires_at`, so the ordinary expiry purge removes it.
+_SPENT_PREFIX = _HASH_PREFIX + "spent:"
+# A rotated-out refresh token presented again within this many seconds is treated as a
+# benign race (two requests loaded the same token, or a retry crossed the rotation) and
+# only refused; later it is treated as theft of a rotated token and revokes the client.
+_REUSE_GRACE_SECONDS = 10
+_MAX_SPENT_PER_CLIENT = 64
 
 
 def _hashed(secret: str) -> str:
@@ -200,7 +210,7 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         refresh_ttl: int,
         code_ttl: int,
         resource_url: str = "https://localhost:8080",
-        require_approval: bool = False,
+        require_approval: bool = True,
     ) -> None:
         self._resource = normalize_resource(resource_url)
         base = Path(state_dir).expanduser()
@@ -545,6 +555,9 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             rec = records.get(_REFRESH_PREFIX + _hashed(refresh_token))
             if rec is None:
                 rec = records.get(_REFRESH_PREFIX + refresh_token)  # pre-hashing record
+            if rec is None:
+                self._detect_refresh_reuse(records, refresh_token, client.client_id or "")
+                return None
             if not rec or rec.get("client_id") != (client.client_id or ""):
                 return None
             if int(rec.get("expires_at", 0)) < _now():
@@ -559,6 +572,30 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                 )
             except Exception:  # noqa: BLE001
                 return None
+
+    def _detect_refresh_reuse(self, records: dict[str, Any], raw: str, client_id: str) -> None:
+        """Revoke a client's tokens when a rotated-out refresh token comes back.
+
+        Rotation makes every refresh token single-use, so a spent one reappearing later
+        means two parties hold it: the legitimate client and whoever copied it. The
+        previous access token would otherwise stay valid until it expires. Called with the
+        provider lock held and the token store already loaded.
+        """
+        spent = records.get(_SPENT_PREFIX + sha256_hex(raw))
+        if not isinstance(spent, dict) or spent.get("client_id") != client_id:
+            return
+        if _now() - int(spent.get("spent_at", 0)) <= _REUSE_GRACE_SECONDS:
+            return
+        kept = {
+            k: v
+            for k, v in records.items()
+            if not (isinstance(v, dict) and v.get("client_id") == client_id)
+        }
+        self._tokens.save(kept)
+        _log.warning(
+            "refresh token reuse for client %s: its access and refresh tokens were revoked",
+            client_id,
+        )
 
     async def exchange_refresh_token(
         self,
@@ -599,6 +636,33 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                     error="invalid_grant",
                     error_description="refresh token already used or expired",
                 )
+            # Remember the spent token so a later replay is recognised (A14-A11b).
+            # The marker must outlive every descendant of the spent token: a thief who
+            # rotates first holds a fresh full-TTL family, so the consumed grant's own
+            # expiry is too early. Extend this client's markers to the new family's
+            # lifetime and keep the newest few, so the store stays bounded.
+            client_id = client.client_id or ""
+            family_expiry = _now() + self._refresh_ttl
+            tokens[_SPENT_PREFIX + sha256_hex(raw)] = {
+                "client_id": client_id,
+                "spent_at": _now(),
+                "expires_at": family_expiry,
+            }
+            markers = sorted(
+                (
+                    (k, v)
+                    for k, v in tokens.items()
+                    if k.startswith(_SPENT_PREFIX)
+                    and isinstance(v, dict)
+                    and v.get("client_id") == client_id
+                ),
+                key=lambda kv: int(kv[1].get("spent_at", 0)),
+                reverse=True,
+            )
+            for _key, marker in markers[:_MAX_SPENT_PER_CLIENT]:
+                marker["expires_at"] = max(int(marker.get("expires_at", 0)), family_expiry)
+            for key, _marker in markers[_MAX_SPENT_PER_CLIENT:]:
+                tokens.pop(key, None)
             self._tokens.save(tokens)
             resource = self._checked_resource(record.get("resource"))
             granted = list(record["scopes"])
@@ -643,5 +707,6 @@ def make_oauth_provider(settings: Any) -> FileOAuthProvider:
         refresh_ttl=settings.auth_refresh_ttl,
         code_ttl=settings.auth_code_ttl,
         resource_url=getattr(settings, "auth_resource_url", "") or settings.auth_issuer,
-        require_approval=bool(getattr(settings, "auth_require_approval", False)),
+        # Fail closed: a settings object without the field still gates new clients.
+        require_approval=bool(getattr(settings, "auth_require_approval", True)),
     )

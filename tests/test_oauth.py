@@ -24,6 +24,7 @@ def _provider(tmp_path: Path, **kw: object) -> FileOAuthProvider:
         access_ttl=int(kw.get("access_ttl", 3600)),  # type: ignore[arg-type]
         refresh_ttl=int(kw.get("refresh_ttl", 86400)),  # type: ignore[arg-type]
         code_ttl=int(kw.get("code_ttl", 300)),  # type: ignore[arg-type]
+        require_approval=bool(kw.get("require_approval", False)),
     )
 
 

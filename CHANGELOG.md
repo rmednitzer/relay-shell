@@ -33,6 +33,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Packaging and dependency metadata (A14-D14, A14-D15).** The wheel ships only the four
+  templates the verifier compares (not the installers, evidence tooling or monitoring
+  package); `pydantic>=2.12` and `anyio>=4.10` match what `mcp` requires; the `http` extra is
+  an empty alias; `nightly-fuzz.yml` installs with the constraints file. Tests keep the floors
+  and the wheel list honest.
+- **Removed dead code (A14-X3, part).** The thread-based PTY reader fallback, `utf8_len` and
+  an unused broker field.
 - **Seccomp-notify no longer breaks backgrounded jobs when the call ends** (A14-R4). `stop()`
   closed the notify listener as soon as the call returned (or a PTY session closed); a
   `nohup`/`&` job still carrying the filter then got `ENOSYS` for every notified syscall,
@@ -121,6 +128,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Smaller fixes from the audit backlog.** `session_kill` rejects an unknown signal name
+  instead of sending TERM (and no longer resolves `SIG_IGN`/`SIG_DFL`); the health collector
+  writes its temp file as `.tmp` so node_exporter cannot read a half-written `.prom`; the CI
+  gate reports a missing required check as `(missing)`; every workflow checkout drops its
+  token (`persist-credentials: false`); `install.sh` keeps a copy of a unit, drop-in or
+  logrotate file it replaces and installs against `requirements.txt`.
 - **Cancelling a session close no longer strands the session (A14-R10).** `close`, the idle
   sweep and shutdown unregistered sessions before tearing them down, so a cancel part-way
   left the rest running with no owner; teardown now runs as its own shielded task, and a
@@ -221,6 +234,23 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **Refresh-token reuse is detected and fails closed (A14-A11b).** A rotated-out refresh
+  token presented again more than 10 s after its rotation revokes all of that client's
+  access and refresh tokens (and is logged); inside the window it is only refused. Secrets
+  with a trailing newline no longer pass the format check, and `FileOAuthProvider` and
+  `make_oauth_provider` default `require_approval` to true instead of false. STPA trace in
+  `docs/auth.md`.
+- **The edge installer validates its inputs (A14-D6).** Domain, email, ACME URL, upstream and
+  client CIDRs must have a strict shape before they reach the Caddyfile or the systemd
+  environment file; `0.0.0.0/0` and `::/0` are warned about; `RELAY_SHELL_EDGE_VALIDATE_ONLY=1`
+  checks the values without root.
+- **The evidence sync will not roll the off-host copy back (A14-D9).** It pulls the remote
+  anchor first and refuses a local chain that is behind it or has forked at the same
+  sequence (`RELAY_AUDIT_REMOTE_CHECK`, default `pull`, only `pull` or `off` accepted); the pull
+  is size-capped and fails closed on anything but a missing first-sync anchor; the README
+  documents a forced-command `rrsync -wo` destination. Refresh-token spent markers now live one
+  refresh lifetime past the latest rotation (at most 64 per client), and the edge preflight
+  parses IPv6 addresses instead of checking their characters.
 - **Classifier tuning, both directions (A14-C9, `PATTERNS_VERSION` 16).** Now escalated:
   `rm \<newline>-rf`, `sudo -u root reboot`, `nice -n 10 reboot`, `timeout 5 reboot` and
   `redis-cli FLUSHALL` (Tier 3); `systemctl start|enable|reload`, `useradd`, `iptables -A`,

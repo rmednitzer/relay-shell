@@ -270,7 +270,9 @@ def main() -> int:
             encoding="utf-8",
             dir=output_path.parent,
             prefix=".relay.",
-            suffix=".prom",
+            # Not `.prom`: node_exporter globs `*.prom`, so a `.prom` temp file could be
+            # collected half-written. Only the final rename produces a collectable name.
+            suffix=".tmp",
             delete=False,
         ) as handle:
             temporary = handle.name

@@ -24,16 +24,19 @@ classifiers = [
 ]
 dependencies = [
   "mcp>=2,<3",
-  "pydantic>=2.11,<3",
+  "pydantic>=2.12,<3",
   "pydantic-settings>=2.14.2,<3",
   "asyncssh>=2.23.0,<3",
   "uvicorn>=0.34,<1",
   "starlette>=1.3.0,<2",
-  "anyio>=4.6,<5",
+  "anyio>=4.10,<5",
 ]
 
 [project.optional-dependencies]
-http = ["PyJWT>=2.13.0,<3", "cryptography>=48.0.1,<51"]
+# Kept as an empty alias so `pip install "relay-shell[http]"` in older notes still works:
+# `mcp>=2` already depends on PyJWT[crypto] and asyncssh on cryptography, and nothing in
+# `src/` imports either directly.
+http = []
 dev = [
   "pytest>=8.3,<10",
   "pytest-asyncio>=0.24,<2",
@@ -68,8 +71,14 @@ packages = ["src/relay_shell"]
 # can locate them via `importlib.resources` regardless of whether the
 # operator installed from a wheel, a sdist, or the source tree. The
 # source-tree (editable) fallback in `verifier.py` covers `pip install -e .`.
+# Only the files the verifier compares are shipped (not the installers, the evidence
+# tooling or the monitoring package, which hold host-specific topology text). A test
+# keeps this list equal to the verifier's pairs.
 [tool.hatch.build.targets.wheel.force-include]
-"deploy" = "relay_shell/_deploy"
+"deploy/Caddyfile" = "relay_shell/_deploy/Caddyfile"
+"deploy/logrotate/relay-shell" = "relay_shell/_deploy/logrotate/relay-shell"
+"deploy/systemd/relay-shell.service" = "relay_shell/_deploy/systemd/relay-shell.service"
+"deploy/systemd/relay-shell.service.d/hardening.conf" = "relay_shell/_deploy/systemd/relay-shell.service.d/hardening.conf"
 
 [tool.ruff]
 line-length = 100

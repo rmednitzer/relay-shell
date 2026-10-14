@@ -31,6 +31,7 @@ def _provider(tmp_path: Path) -> FileOAuthProvider:
         access_ttl=3600,
         refresh_ttl=86400,
         code_ttl=300,
+        require_approval=False,
         resource_url=RESOURCE,
     )
 

@@ -33,6 +33,7 @@ def provider(path: Path) -> FileOAuthProvider:
         access_ttl=3600,
         refresh_ttl=7200,
         code_ttl=300,
+        require_approval=False,
         resource_url=RESOURCE,
     )
 

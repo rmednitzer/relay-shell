@@ -144,5 +144,34 @@ The anchor is therefore the commit marker for the off-host generation: consumers
 must reject stale or invalid anchors and must not infer completeness from a
 partially transferred payload.
 
+### Rollback check and the shape of the destination
+
+The sync is a mirror, so a local chain that was rewritten and still verifies would overwrite
+the off-host copy. Before publishing, the wrapper therefore pulls the remote
+`latest-anchor.json` and runs `relay-audit-evidence --check-remote-anchor` on it
+(`RELAY_AUDIT_REMOTE_CHECK=pull`, the default). Within one chain epoch it refuses (exit 4) a
+local anchor whose `latest_seq` is behind the remote one, or whose `latest_chain` differs at
+the same sequence. A different epoch (an approved genesis reset) is not compared. If the
+remote anchor does not exist yet (first sync: rsync reports only a missing source file) the
+check is skipped with a message. Every other pull failure stops the run, including a generic
+rsync exit 23 for a permission or I/O error, an oversized anchor (the pull is capped at 64 KiB
+and the parser at the same size) and an unknown `RELAY_AUDIT_REMOTE_CHECK` value (only `pull`
+and `off` are accepted). A write-only destination cannot be read back, so it needs
+`RELAY_AUDIT_REMOTE_CHECK=off` set explicitly. A local chain that is ahead is accepted without
+proving that the remote anchor is its ancestor. This check
+protects the history that is already off-host; it does not make the destination append-only.
+
+Harden the destination as well:
+
+- Use a dedicated backup account and an SSH key restricted on the backup host with a forced
+  command, for example `command="rrsync -wo /var/backups/relay-shell",restrict ssh-ed25519
+  AAAA...` (`rrsync -wo` allows writing only). Then set `RELAY_AUDIT_RSYNC_PATH=rsync` and
+  `RELAY_AUDIT_REMOTE_CHECK=off`, or keep the check by allowing read access.
+- The default `RELAY_AUDIT_RSYNC_PATH="sudo -n /usr/bin/rsync"` runs rsync as root on the
+  backup host, so a compromised audited host gets root-equivalent write there. Replace it
+  with the forced command above unless the destination needs root-owned files.
+- Keep snapshots or a second immutable copy on the backup host (ZFS/btrfs snapshots, object
+  lock): the mirror will faithfully replicate whatever an attacker with the key writes.
+
 The off-host copy remains authoritative for tail-truncation detection. This
 verifier cannot prove that a locally removed newest record never existed.

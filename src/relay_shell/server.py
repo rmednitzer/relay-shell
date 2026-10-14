@@ -1126,13 +1126,15 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         """Signal a session and (by default) close and reap it."""
 
         async def _work() -> tuple[str, int | None]:
-            name = signal_name.upper()
+            name = signal_name.strip().upper()
             if name.startswith("SIG"):
                 name = name[3:]
+            # Only real signals: `getattr(signal, ...)` also resolved SIG_IGN / SIG_DFL
+            # (sent as signals 1 and 0) and silently fell back to TERM for a typo.
             try:
-                sig = int(getattr(signal, f"SIG{name}"))
-            except (AttributeError, ValueError):
-                sig = int(signal.SIGTERM)
+                sig = int(signal.Signals[f"SIG{name}"])
+            except KeyError:
+                raise RelayError(f"unknown signal: {signal_name[:32]!r}") from None
             await app.sessions.kill(session_id, sig)
             if close:
                 await app.sessions.close(session_id)
