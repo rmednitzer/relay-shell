@@ -1,15 +1,23 @@
 name: release
 
 # Build + publish on a signed `v*` tag using PyPI trusted publishing
-# (OIDC, no long-lived token). The flow has three gated jobs:
+# (OIDC, no long-lived token). The flow has four gated jobs:
 #
 #   1. verify     - the tag is annotated, SSH-signed against the trusted key
 #                   in deploy/release-signing.pub, and matches the version
 #                   declared in pyproject.toml
-#   2. build      - dev install, full test suite on Python 3.14
-#                   (per-PR CI exercises the 3.12-3.14 matrix),
-#                   then `python -m build` to produce wheel + sdist
-#   3. publish    - downloads the dist artifact and uploads to PyPI via
+#   2. build      - dev install (direct pins from requirements.txt as
+#                   constraints), full test suite on Python 3.14 (per-PR CI
+#                   exercises the 3.12-3.14 matrix), then `python -m build`
+#                   to produce wheel + sdist. Build tooling comes from the
+#                   hash-locked requirements-build.txt and the build runs with
+#                   --no-isolation so no unpinned backend is fetched. This job
+#                   installs packages, so it holds NO OIDC or write token.
+#   3. attest     - downloads the dist artifact and signs a SLSA build
+#                   provenance attestation. It installs nothing, so the
+#                   id-token / attestations permissions never share a job
+#                   with third-party package installs (A14-D7).
+#   4. publish    - downloads the dist artifact and uploads to PyPI via
 #                   OIDC, gated on the `pypi` environment so a human can
 #                   require an approval click before the release goes live
 #
@@ -36,6 +44,10 @@ permissions:
 jobs:
   verify:
     name: Verify signed tag + version match
+    # A workflow_dispatch run executes the workflow file of the ref it was
+    # started from; only trust it from the protected default branch, never from
+    # an edited feature branch. Tag pushes (the normal path) are unaffected.
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -138,52 +150,39 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Installs third-party packages, so: read-only token, no OIDC, no
+    # attestation rights (those live in the `attest` job, which installs nothing).
     permissions:
-      # Sigstore OIDC + attestation publishing for the SLSA v1.2 Build
-      # Track L3 provenance attestation produced below. Job-level
-      # `permissions:` REPLACES the workflow-level `contents: read`
-      # default, so keep `contents: read` explicit (we don't need any
-      # broader write).
       contents: read
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           ref: ${{ needs.verify.outputs.release_commit }}
+          persist-credentials: false
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7
         with:
           python-version: "3.14"
-          cache: "pip"
+          # No pip cache on the release path: nothing restored from a shared
+          # cache may influence what is built and signed.
 
-      - name: Install package + build backend
+      - name: Install build tooling (hash-locked) and the package
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install build
+          # Build tooling first, from the hash-locked file, so the later
+          # --no-build-isolation installs and `python -m build` use these exact
+          # (not freshly resolved) hatchling/build/twine.
+          python -m pip install --require-hashes -r requirements-build.txt
+          # Direct dependency pins from requirements.txt act as constraints.
+          python -m pip install --no-build-isolation -c requirements.txt -e ".[dev]"
 
       - name: Run full test suite
         run: pytest -q
 
       - name: Build wheel + sdist
-        run: python -m build
+        run: python -m build --no-isolation
 
       - name: Check distributions
-        run: |
-          pip install twine
-          twine check dist/*
-
-      - name: Generate SLSA Build Provenance attestation
-        # Produces a Sigstore-signed in-toto attestation linking the
-        # workflow run + commit SHA to every artifact under dist/.
-        # Closes the SLSA v1.2 Build Track L3 gap (Phase-3 cross-check):
-        # PyPI OIDC trusted publishing already provides L2; this step
-        # adds a verifier-checkable provenance record in Sigstore's
-        # public transparency log.
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4
-        with:
-          subject-path: 'dist/*'
+        run: twine check dist/*
 
       - name: Upload artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
@@ -192,9 +191,40 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  attest:
+    name: Attest build provenance
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Sigstore OIDC + attestation publishing for the SLSA v1.2 Build Track
+      # L3 provenance attestation. Job-level `permissions:` REPLACES the
+      # workflow-level default, so keep `contents: read` explicit and add
+      # `actions: read` for the artifact download. This job runs no package
+      # installs and no repository code.
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
+        with:
+          name: dist-${{ needs.verify.outputs.version }}
+          path: dist/
+
+      - name: Generate SLSA Build Provenance attestation
+        # Produces a Sigstore-signed in-toto attestation linking the workflow
+        # run + commit SHA to every artifact under dist/ (the exact files the
+        # publish job uploads). PyPI OIDC trusted publishing already provides
+        # L2; this adds a verifier-checkable provenance record in Sigstore's
+        # public transparency log.
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4
+        with:
+          subject-path: 'dist/*'
+
   publish:
     name: Publish to PyPI (OIDC)
-    needs: [verify, build]
+    needs: [verify, build, attest]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:

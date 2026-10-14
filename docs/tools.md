@@ -23,7 +23,9 @@ Conventions:
 - `known_hosts` is `strict` | `accept-new` | `ignore` (default from
   `RELAY_SHELL_SSH_KNOWN_HOSTS`). `accept-new` is trust-on-first-use: an unknown
   host is accepted and recorded, a host with an existing entry is verified and a
-  changed key is refused. `ignore` never verifies.
+  changed key is refused. `ignore` never verifies. With
+  `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false` a mode weaker than the server
+  default is refused (`[ERROR: RelayError: known_hosts=... would weaken ...]`).
 - `jump` is an `ssh_config`-style `user@host[:port]` bastion (asyncssh
   `tunnel`); `ssh_config` `ProxyJump` is also honoured automatically.
 

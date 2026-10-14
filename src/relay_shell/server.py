@@ -652,6 +652,19 @@ class Relay:
                 await transport.aclose()
             raise
 
+    def effective_known_hosts(self, host: str, known_hosts: str) -> str:
+        """The verification mode ``SshPool.connect`` will actually use for ``host``.
+
+        Same precedence as the pool (per-call, then the inventory entry, then the
+        server default), so the audit record states what was enforced, including an
+        inventory override that the per-call argument alone would not show.
+        """
+        try:
+            inventory_mode = self.inventory.resolve(host).known_hosts
+        except Exception:  # noqa: BLE001 - audit helper must never fail the call
+            inventory_mode = None
+        return (known_hosts or inventory_mode or self.settings.ssh_known_hosts).lower()
+
     def connect_kwargs(
         self,
         user: str,
@@ -939,7 +952,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "port": port,
                 "key_path": key_path,
                 "jump": jump,
-                "known_hosts": known_hosts or app.settings.ssh_known_hosts,
+                "known_hosts": app.effective_known_hosts(host, known_hosts),
             },
             policy_text=_policy_text_ssh_exec(host, command, jump),
             max_output=65536,
@@ -1003,7 +1016,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "port": port,
                 "key_path": key_path,
                 "jump": jump,
-                "known_hosts": known_hosts or app.settings.ssh_known_hosts,
+                "known_hosts": app.effective_known_hosts(host, known_hosts),
             },
             policy_text=_policy_text_ssh_spawn(host, command, jump),
             max_output=4096,
@@ -1185,7 +1198,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "port": port,
                 "key_path": key_path,
                 "jump": jump,
-                "known_hosts": known_hosts or app.settings.ssh_known_hosts,
+                "known_hosts": app.effective_known_hosts(host, known_hosts),
             },
             policy_text=_policy_text_ssh_upload(host, local_path, remote_path, jump),
             max_output=2048,
@@ -1235,7 +1248,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "port": port,
                 "key_path": key_path,
                 "jump": jump,
-                "known_hosts": known_hosts or app.settings.ssh_known_hosts,
+                "known_hosts": app.effective_known_hosts(host, known_hosts),
             },
             policy_text=_policy_text_ssh_download(host, remote_path, local_path, jump),
             max_output=2048,
@@ -1278,7 +1291,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "port": port,
                 "key_path": key_path,
                 "jump": jump,
-                "known_hosts": known_hosts or app.settings.ssh_known_hosts,
+                "known_hosts": app.effective_known_hosts(host, known_hosts),
             },
             policy_text=_policy_text_ssh_forward(spec, host, jump),
             max_output=1024,
@@ -1684,6 +1697,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 },
                 "ssh": {
                     "known_hosts_default": cfg.ssh_known_hosts,
+                    "allow_weaker_known_hosts": cfg.ssh_allow_weaker_known_hosts,
                     "inventory_hosts": len(app.inventory.hosts()),
                     "ssh_config": app.inventory.ssh_config_file,
                     "connect_timeout": cfg.ssh_connect_timeout,

@@ -8,6 +8,30 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed (audit follow-up 2026-10-14)
 
+- **Release and SBOM jobs no longer install unpinned tooling while holding OIDC or write
+  tokens** (A14-D7, A14-D8). `release.yml` is now verify -> build -> attest -> publish: `build`
+  has a read-only token, installs tooling from the new hash-locked `requirements-build.txt`
+  (`build`, `twine`, `hatchling`), runs the dev install with `--no-build-isolation` and the
+  package build with `--no-isolation` (no unpinned backend is fetched), and uses no pip cache;
+  `attest` signs provenance from the downloaded artifact and installs nothing. `sbom.yml` is
+  split into a read-only `sbom` job and a `publish` job (contents: write + OIDC, no installs).
+  The SBOM now describes a runtime-only environment (`pip install -c requirements.txt .`; the dev
+  tools and the SBOM tool are not listed) built with the hash-locked `cyclonedx-bom`
+  (`requirements-sbom.txt`; the generator moves from 5.x to 7.x). `workflow_dispatch` runs of
+  both workflows are only trusted from `main`. `pip-audit.yml` also scans both lock files.
+  `tests/test_release_workflows.py` guards all of this. Residual: transitive runtime
+  dependencies of the package itself are still resolved at build time (runbook L8).
+
+- **Per-call `known_hosts` downgrade can be barred, and the audit states the mode used**
+  (A14-R3). New `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS` (default `true`, historical
+  behaviour). When `false`, `SshPool.connect` refuses a caller-supplied `known_hosts` weaker
+  than `RELAY_SHELL_SSH_KNOWN_HOSTS` (e.g. `ignore` against `strict`); a stronger mode and an
+  operator-written inventory entry are unaffected. The audited `known_hosts` is now the
+  effective mode (per call, inventory entry, then server default) instead of ignoring the
+  inventory override; `server_info.ssh` reports the setting. **`.env.example` was not updated
+  (outside the editing session's permissions): add
+  `# RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=true`.**
+
 - **Audit-evidence verifier tolerates logrotate pruning** (A14-D3). After `rotate 90` deleted
   the oldest segment the verifier required genesis-anchoring and failed permanently, so
   `relay-audit-evidence-sync` silently stopped publishing off-host. It now also accepts a

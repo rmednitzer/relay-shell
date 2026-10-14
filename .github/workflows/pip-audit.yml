@@ -51,3 +51,9 @@ jobs:
         # third-party dependency (incl. the [dev]/[http] extras) is on PyPI and
         # still audited, and pip-audit still exits non-zero on any CVE found.
         run: pip-audit --skip-editable
+
+      - name: Audit the hash-locked release and SBOM tooling
+        # requirements-build.txt / requirements-sbom.txt feed the jobs that build,
+        # sign and publish (A14-D7); they are not part of the package's own tree, so
+        # audit them explicitly. They are fully pinned, so no resolution is needed.
+        run: pip-audit --disable-pip --no-deps -r requirements-build.txt -r requirements-sbom.txt

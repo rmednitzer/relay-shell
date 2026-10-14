@@ -789,3 +789,118 @@ async def test_ssh_process_transport_refuses_unbounded_input_buffering() -> None
     with pytest.raises(SessionError, match="not reading input"):
         await SshProcessTransport(_Proc(stuck)).write(b"more\n")  # type: ignore[arg-type]
     assert stuck.written == []
+
+
+# --- A14-R3: a caller must not be able to downgrade host-key verification ---
+
+
+def _pool_with(tmp_path: Path, **overrides: object) -> SshPool:
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        ssh_config=str(tmp_path / "no_ssh_config"),
+        ssh_connect_timeout=5,
+        ssh_keepalive=0,
+        **overrides,  # type: ignore[arg-type]
+    )
+    inventory_file = tmp_path / "inventory.json"
+    inventory_file.write_text('{"lab": {"hostname": "lab.invalid", "known_hosts": "ignore"}}')
+    inv = Inventory(str(tmp_path / "no_ssh_config"), str(inventory_file)).load()
+    return SshPool(settings=settings, inventory=inv)
+
+
+@pytest.mark.parametrize(
+    ("server_default", "requested", "refused"),
+    [
+        ("strict", "ignore", True),
+        ("strict", "accept-new", True),
+        ("strict", "strict", False),
+        ("accept-new", "ignore", True),
+        ("accept-new", "strict", False),
+        ("ignore", "accept-new", False),
+    ],
+)
+async def test_per_call_downgrade_is_refused_when_weaker_is_disallowed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_default: str,
+    requested: str,
+    refused: bool,
+) -> None:
+    from relay_shell.errors import RelayError
+
+    async def fake_connect(*_a: object, **_k: object) -> _MockConn:
+        return _MockConn()
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    pool = _pool_with(tmp_path, ssh_known_hosts=server_default, ssh_allow_weaker_known_hosts=False)
+    if refused:
+        with pytest.raises(RelayError, match="would weaken the server default"):
+            await pool.connect("h1.example", known_hosts=requested)
+    else:
+        assert isinstance(await pool.connect("h1.example", known_hosts=requested), _MockConn)
+
+
+async def test_per_call_downgrade_is_allowed_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_connect(*_a: object, **_k: object) -> _MockConn:
+        return _MockConn()
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    pool = _pool_with(tmp_path, ssh_known_hosts="strict")  # flag left at its default
+    assert isinstance(await pool.connect("h1.example", known_hosts="ignore"), _MockConn)
+
+
+async def test_operator_inventory_override_is_not_a_caller_downgrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The inventory is operator-written; only the caller-supplied value is policed.
+    seen: dict[str, object] = {}
+
+    async def fake_connect(*_a: object, **kwargs: object) -> _MockConn:
+        seen.update(kwargs)
+        return _MockConn()
+
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+    pool = _pool_with(tmp_path, ssh_known_hosts="strict", ssh_allow_weaker_known_hosts=False)
+    assert isinstance(await pool.connect("lab"), _MockConn)
+    assert seen["known_hosts"] is None  # `ignore` mode
+
+
+async def test_audit_records_the_effective_known_hosts_mode(tmp_path: Path) -> None:
+    import json
+
+    from relay_shell.server import build_server
+
+    inventory_file = tmp_path / "inventory.json"
+    inventory_file.write_text('{"lab": {"hostname": "lab.invalid", "known_hosts": "ignore"}}')
+    settings = Settings(
+        transport="stdio",
+        audit_path=str(tmp_path / "audit.jsonl"),
+        policy_mode="open",
+        ssh_known_hosts="strict",
+        ssh_allow_weaker_known_hosts=False,
+        ssh_config=str(tmp_path / "no_ssh_config"),
+        inventory=str(inventory_file),
+        ssh_connect_timeout=1,
+    )
+    mcp = build_server(settings)
+    # Inventory override, nothing per call: the audit must say `ignore`, not `strict`.
+    await mcp.call_tool("ssh_exec", {"host": "lab", "command": "true", "timeout": 1})
+    # A refused per-call downgrade on an unrelated host.
+    out = (
+        await mcp.call_tool(
+            "ssh_exec",
+            {"host": "other.invalid", "command": "true", "known_hosts": "ignore", "timeout": 1},
+        )
+    ).content
+    text = "".join(getattr(b, "text", "") for b in out)
+    assert "would weaken the server default" in text
+    recs = [
+        json.loads(ln)
+        for ln in (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    modes = {r["args"]["host"]: r["args"]["known_hosts"] for r in recs if r["tool"] == "ssh_exec"}
+    assert modes == {"lab": "ignore", "other.invalid": "ignore"}
