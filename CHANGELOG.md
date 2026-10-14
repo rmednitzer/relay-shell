@@ -221,6 +221,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **A Tier-3 confirmation token now belongs to the client that received it (A14-C10b).**
+  Another authenticated OAuth client issuing the identical irreversible call inside the TTL
+  used to consume the token the first client had armed. `arm` and `consume` now require the
+  planning client's verified identity; unauthenticated deployments are unchanged.
+- **A command glued to a redacted value stays in the audit record (A14-C3b,
+  `PATTERNS_VERSION` 14 -> 15).** `token=a;rm -rf /srv` was recorded as `token=[REDACTED]
+  -rf /srv`. Unquoted values now stop at `;`, `&`, `&&`, `|` and `||`; an unquoted secret
+  that itself contains one of them is cut at the first (documented in `SECURITY.md`).
 - **SSH host, user and jump values are validated (A14-RS).** asyncssh substitutes them
   into an `ssh_config` `ProxyCommand` (`%h`, `%n`, `%r`) and splits the result into argv,
   so a host such as `x -oProxyCommand=...` added arguments to a local command, reachable

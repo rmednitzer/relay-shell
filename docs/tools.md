@@ -277,7 +277,8 @@ returns `[CONFIRM REQUIRED tier 3: … token="…" …]` and is audited with
 `action=confirm_plan` (no side effect). Pass that token to `operation_confirm`
 to arm it, then **re-issue the exact same call** to execute it (audited with
 `action=confirm_execute`). Tokens are single-use, bound to the exact operation
-(tool + every executor-visible byte), and expire after
+(tool + every executor-visible byte) and to the authenticated client that received
+them (another OAuth client can neither arm nor consume the token), and expire after
 `RELAY_SHELL_CONFIRM_TTL` seconds. The raw token is never written to the audit
 log (only a short fingerprint). When the broker is disabled, this reports so
 and changes nothing. Tier 0 (it arms ephemeral state and authorizes nothing on

@@ -167,12 +167,34 @@ __all__ = [
 #      (Tier 3); `kill -9`, `pkill`, `killall`, `truncate`, `docker|podman system|
 #      volume|image|container|network prune|rm`, `terraform|tofu apply`, `git clean
 #      -f`, `setenforce` (Tier 2). Classification stays heuristic (ADR 0003).
-PATTERNS_VERSION = "14"
+# v15: 2026-10-14 audit follow-up (A14-C3b; reproduced against v14). An unquoted
+#      redaction value ran on past a shell control operator, so a destructive command
+#      glued to a keyword assignment vanished from the audit record
+#      (`token=a;rm -rf /srv` was recorded as `token=[REDACTED] -rf /srv`). The
+#      keyword, AWS, CLI-flag, `ConvertTo-SecureString`, `curl -u`, `sshpass`,
+#      `docker login`, `openssl -pass` and MySQL compact `-p` values now stop at an
+#      unquoted `;`, `&`, `&&`, `|` or `||` and keep an escaped one; a keyword value
+#      closed by a quote with no whitespace between (`echo 'DB_PASSWORD=ab;cd'`) is
+#      still consumed whole. Behaviour without those characters is unchanged.
+#      Accepted limit: an unquoted secret that really contains one of them is cut at
+#      the first, leaving its tail visible (an unquoted `;` cannot be part of a shell
+#      word, and a quoted secret is handled by the quote-aware rules).
+PATTERNS_VERSION = "15"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
 
 # --- Redaction: structure-preserving (keep the prefix, replace the value) ---
+
+# Unquoted secret value (v15). In a shell command line an unquoted `;`, `&&`, `||`, `|`
+# or `&` ends the word, so a value that ran on past one (`token=a;rm -rf /srv`) hid the
+# next command from the audit record. The value now stops at those characters and keeps
+# an escaped one (`ab\;cd`). Exception: a value that is closed by a quote with no
+# whitespace in between (`echo 'DB_PASSWORD=ab;cd'`) sits inside a quoted string, where
+# the operator is data, so it is still consumed whole. The bounded possessive run keeps
+# the lookahead linear. Accepted limit: an unquoted secret that really contains one of
+# these characters is cut at the first one and its tail stays visible.
+_VALUE_RUN = r"""(?:[^\s"'\r\n]{1,256}+(?=["'])|(?:\\[;&|]|[^\s"'\r\n;&|])+)"""
 
 REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Authorization / Proxy-Authorization header value. Handles three
@@ -233,26 +255,20 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # shape `"password": "x"`). The separator tolerates an optional quote on
     # either side (`["']?`), mirroring the Authorization rule, so a JSON key
     # like `"password"` (a `"` sits between the keyword and the `:`) still
-    # anchors — RED-6. The value has two branches: a quoted value stops at its
-    # closing quote (so the trailing `",` / `"}` is preserved), otherwise the
-    # historical `\S+` (stop at whitespace) is used unchanged, so every
-    # pre-RED-6 unquoted case redacts byte-identically.
+    # anchors — RED-6. The value is `_VALUE_RUN`: a non-space, non-quote run. Stopping at a quote
+    # catches the JSON-quoted-key shape `"password": "x"` (the value ends at the
+    # closing quote, which is preserved) while keeping the historical single-token
+    # behaviour for the unquoted `password=x` / `token: x` forms (RED-6), and it now
+    # also stops at an unquoted shell control operator (v15). Linear: the one
+    # lookahead is behind a possessive run bounded at 256 characters and a run never
+    # crosses whitespace, unlike a `[^"'\r\n]+(?=["'])` form, which is O(n²) when the
+    # prefix recurs across a large quote-free argument (a ReDoS on the sync audit path).
     (
         re.compile(
             r"(?i)(?P<prefix>(?:api[_-]?key"
             r"|(?:secret|private|access|signing|encryption|master)[_-]?key(?:[_-]?base)?"
             r"|secret|token|password|passwd|pwd|credential)"
-            r"[\"']?\s*[:=]\s*[\"']?)"
-            # Value = non-space, non-quote run. Stopping at a quote catches the
-            # JSON-quoted-key shape `"password": "x"` (the value ends at the
-            # closing quote, which is preserved) while keeping the historical
-            # single-token behaviour for the unquoted `password=x` / `token: x`
-            # forms (RED-6). A single greedy char-class `+` with nothing after it
-            # cannot backtrack, so this is strictly linear — unlike a
-            # `[^"'\r\n]+(?=["'])` lookahead form, which is O(n²) when the prefix
-            # recurs across a large quote-free argument (a ReDoS on the sync
-            # audit path).
-            r"[^\s\"'\r\n]+"
+            r"[\"']?\s*[:=]\s*[\"']?)" + _VALUE_RUN
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -268,10 +284,7 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             r"(?i)(?P<prefix>(?:aws[_-]?)?secret[_-]?access[_-]?key"
-            r"[\"']?\s*[:=]\s*[\"']?)"
-            # Non-space, non-quote value run — quote-aware and linear, same as
-            # the generic rule above (RED-6).
-            r"[^\s\"'\r\n]+"
+            r"[\"']?\s*[:=]\s*[\"']?)" + _VALUE_RUN
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -330,10 +343,13 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
                                         # leak) in the genuinely-unterminated case,
                                         # matching the Authorization rule's tradeoff.
               | '[^\r\n]*                # unterminated single-quote (as above)
-              | (?:-(?!-)|(?!--))(?:\\.|\S)+
-                                        # bare value, treating \\<char> as one unit;
-                                        # allow single-dash-prefixed secrets (-abc)
-                                        # but still reject next long option (--host)
+              | (?:-(?!-)|(?!--))(?:\\.|[^\s;&|])+
+                                        # bare value, treating \\<char> as one unit
+                                        # (so an escaped `\;` stays inside it) and
+                                        # stopping at an unquoted shell control
+                                        # operator (v15); allow single-dash-prefixed
+                                        # secrets (-abc) but still reject the next
+                                        # long option (--host)
             )
             """,
         ),
@@ -358,7 +374,7 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             (?:
                 "(?:[^"\\]|\\.)*"          # double-quoted secret
               | '(?:[^'\\]|\\.)*'          # single-quoted secret
-              | (?![-$])\S+                # bare literal (not a switch, not a $var)
+              | (?![-$])[^\s;&|]+         # bare literal (not a switch, not a $var)
             )
             """,
         ),
@@ -379,7 +395,7 @@ COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(
             r"(?i)(?P<prefix>(?<![\w-])(?:curl|wget|xh|httpie)\b[^|;&\n]{0,512}?"
             r"(?<![A-Za-z0-9-])(?:-u|--user|--proxy-user)(?:=|\s+)[\"']?[^\s:\"']+:)"
-            r"[^\s\"']+"
+            r"[^\s\"';&|]+"
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -387,7 +403,7 @@ COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             r"(?i)(?P<prefix>\bsshpass\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-p[=\s]*)"
-            r"(?:'[^']*'|\"[^\"]*\"|\S+)"
+            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
         ),
         r"\g<prefix>[REDACTED]",
     ),
@@ -397,14 +413,14 @@ COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(
             r"(?i)(?P<prefix>\b(?:docker|podman|nerdctl|buildah|skopeo)\b[^|;&\n]{0,256}?"
             r"\blogin\b[^|;&\n]{0,256}?(?<![A-Za-z0-9-])-p[=\s]*)"
-            r"(?:'[^']*'|\"[^\"]*\"|\S+)"
+            r"(?:'[^']*'|\"[^\"]*\"|[^\s;&|]+)"
         ),
         r"\g<prefix>[REDACTED]",
     ),
     # openssl: `-pass pass:SECRET`, `-passin pass:...`, `-passout pass:...`
     # (`env:` / `file:` / `stdin` forms carry no secret and are left alone).
     (
-        re.compile(r"(?i)(?P<prefix>(?<![A-Za-z0-9])-pass(?:in|out)?\s+pass:)\S+"),
+        re.compile(r"(?i)(?P<prefix>(?<![A-Za-z0-9])-pass(?:in|out)?\s+pass:)[^\s;&|]+"),
         r"\g<prefix>[REDACTED]",
     ),
 )
@@ -517,7 +533,7 @@ URL_CREDS_PATTERN = re.compile(r"://[^/\s:@]+:[^\s/]+@")
 # --- Redaction: MySQL-family compact -p<value> (gated by family CLI) ---
 
 MYSQL_FAMILY_CLI_PATTERN = re.compile(r"\b(?:mysql\w*|mariadb\w*|mycli)\b", re.IGNORECASE)
-MYSQL_COMPACT_PASSWORD_PATTERN = re.compile(r"(?<![A-Za-z0-9-])(-p)[^\s=-]\S*")
+MYSQL_COMPACT_PASSWORD_PATTERN = re.compile(r"(?<![A-Za-z0-9-])(-p)[^\s=\-;&|][^\s;&|]*")
 
 
 # --- Policy: tier classification heuristics ---

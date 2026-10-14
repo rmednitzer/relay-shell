@@ -108,7 +108,11 @@ and redaction are heuristic; arbitrary shell execution is not a containment boun
   (`SECRET_KEY=`, `DJANGO_SECRET_KEY=`, `ENCRYPTION_KEY=`, `PRIVATE_KEY=`,
   `ACCESS_KEY=`, `SIGNING_KEY=`, `*_KEY_BASE=`) and PGP private-key blocks are covered;
   positional secrets with no keyword, `password := V` forms and URL user-info tokens with
-  no colon are not. **Input typed into a PTY
+  no colon are not. An unquoted value ends at a shell control operator (`;`, `&`, `&&`, `|`,
+  `||`), so a command glued to it (`token=a;rm -rf /srv`) stays visible in the record; the
+  consequence is that an unquoted secret that itself contains one of those characters is cut
+  at the first, and its tail is recorded (quote the value, which the quote-aware rules
+  consume whole). **Input typed into a PTY
   session** has no keyword for any of this to find, so `session_send` input is
   withheld from the audit record when the session is at a secret prompt (the last
   output line reads like one, or the terminal has echo off), and

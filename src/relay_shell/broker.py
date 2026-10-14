@@ -16,6 +16,11 @@ The flow, when enabled (every step lands on the normal audit stream):
 3. **execute** - re-issuing the *exact* same call finds the armed token,
    burns it (single-use), and proceeds to ``work()``.
 
+A token is also bound to the authenticated client that planned it (``client_id``,
+empty when no OAuth identity exists): another client can neither arm it nor consume it,
+so a second client issuing the identical call inside the TTL is challenged afresh
+instead of riding the first client's confirmation (A14-C10b).
+
 The binding is the operation's hash - the tool name plus a caller-supplied
 ``op_key`` that identifies the *exact* call - not a per-tool parameter. The
 runner builds that key from the command/content (the policy text) **and** the
@@ -79,6 +84,7 @@ class _Entry:
     op_hash: str
     tool: str
     expires_at: float  # monotonic-clock deadline
+    client_id: str = ""  # authenticated client that planned it ("" = no identity)
     armed: bool = False
 
 
@@ -125,8 +131,8 @@ class ConfirmationBroker:
             )[:overflow]:
                 del self._by_token[tok]
 
-    def plan(self, tool: str, op_key: str) -> Challenge:
-        """Mint a fresh single-use token for ``(tool, op_key)``.
+    def plan(self, tool: str, op_key: str, client_id: str = "") -> Challenge:
+        """Mint a fresh single-use token for ``(tool, op_key)`` owned by ``client_id``.
 
         Each call issues a new token; a prior un-armed token for the same
         operation is left to expire on its own (the sweep reclaims it). The
@@ -141,16 +147,18 @@ class ConfirmationBroker:
                 op_hash=_op_hash(tool, op_key),
                 tool=tool,
                 expires_at=now + self._ttl,
+                client_id=client_id,
             )
             self._sweep(now)  # re-bound after the insert
         return Challenge(token=token, ttl=self._ttl)
 
-    def arm(self, token: str) -> bool:
+    def arm(self, token: str, client_id: str = "") -> bool:
         """Arm a pending token (the ``operation_confirm`` step).
 
-        Returns ``True`` if the token exists and is unexpired (arming an
-        already-armed token is idempotent), ``False`` for an unknown or
-        expired token. Arming authorizes nothing on its own: the retried
+        Returns ``True`` if the token exists, is unexpired and was planned by
+        ``client_id`` (arming an already-armed token is idempotent), ``False`` for an
+        unknown, expired or foreign token (indistinguishable, so another client learns
+        nothing about a token it did not plan). Arming authorizes nothing on its own: the retried
         call is still re-classified and re-admitted by the policy layer
         before :meth:`consume` releases it.
         """
@@ -158,16 +166,16 @@ class ConfirmationBroker:
         with self._lock:
             self._sweep(now)
             entry = self._by_token.get(token)
-            if entry is None:
+            if entry is None or entry.client_id != client_id:
                 return False
             entry.armed = True
             return True
 
-    def consume(self, tool: str, op_key: str) -> bool:
-        """Burn an armed token matching ``(tool, op_key)``.
+    def consume(self, tool: str, op_key: str, client_id: str = "") -> bool:
+        """Burn an armed token matching ``(tool, op_key)`` that ``client_id`` planned.
 
         Returns ``True`` iff an unexpired *armed* token for this exact
-        operation existed; single-use, so the token is removed on success. A
+        operation and client existed; single-use, so the token is removed on success. A
         pending-but-not-armed token does not satisfy this (the caller falls
         through to :meth:`plan` and re-challenges).
         """
@@ -176,7 +184,11 @@ class ConfirmationBroker:
         with self._lock:
             self._sweep(now)
             match = next(
-                (tok for tok, e in self._by_token.items() if e.armed and e.op_hash == target),
+                (
+                    tok
+                    for tok, e in self._by_token.items()
+                    if e.armed and e.op_hash == target and e.client_id == client_id
+                ),
                 None,
             )
             if match is None:

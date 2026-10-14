@@ -218,3 +218,35 @@ outcome than the original scoping. Pinned by
 No change to policy admission, tier semantics, the no-sandbox posture, or any
 existing tool's response shape. This pass added a compensating control layered
 on ADR 0003's classification; it did not move the trust boundary.
+
+### 2026-10-14 follow-up: tokens bound to the planning client (A14-C10b)
+
+The binding covered the operation but not who asked. Under multi-client OAuth, client B
+issuing the identical call inside the TTL consumed the token that client A had planned and
+armed, so B executed an irreversible operation on A's confirmation. Reproduced against the
+previous code with two verified identities (`tests/test_broker_client_binding.py`).
+The broker now records the verified `client_id` (the identity the audit record carries,
+never request metadata; empty when there is none) when it plans a token. `arm` and
+`consume` accept only the same `client_id`: a foreign `arm` is indistinguishable from an
+unknown token, and a foreign `consume` neither executes nor burns the owner's token, so B
+is challenged afresh and gets its own token. Unauthenticated deployments (stdio, auth off)
+share the empty identity, so their behaviour is unchanged.
+
+STPA trace (authority handover; an approval click alone is not the argument):
+
+- L-1 An irreversible operation runs without the second step its issuer was shown.
+  H-1 A confirmation granted for one requester is spent by another. SC-1 A token is usable
+  only by the client it was issued to, for the operation it was issued for.
+- UCA-1 (provided unsafely) `consume` releases a token to a client other than the planner.
+  UCA-2 (provided unsafely) `arm` accepts a token from a client that did not plan it.
+  UCA-3 (not provided) a foreign `consume` burns the owner's armed token (denial of the
+  owner's confirmation); avoided because a mismatch leaves the entry untouched.
+- CS-1 (UCA-1) A and B issue the same `rm`; B retries inside A's armed window. Test:
+  `test_second_client_cannot_ride_the_first_clients_confirmation`. CS-2 (UCA-2) B obtains or
+  guesses A's token (128-bit, so only by leak) and arms it. Test:
+  `test_other_client_cannot_arm_a_token_it_did_not_plan`. CS-3 Feedback is stale across a
+  restart: tokens are in-memory and die with the process (unchanged).
+- Limits: this separates authenticated clients from each other; it does not stop one
+  client from confirming its own operation, and an unauthenticated deployment has a single
+  identity by construction. The broker remains a friction safeguard, not a sandbox
+  (ADR 0002).
