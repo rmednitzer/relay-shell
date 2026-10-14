@@ -1,4 +1,32 @@
-# Security Policy
+# Security policy: relay-shell
+
+## Reporting a vulnerability
+
+Use [GitHub private vulnerability reporting](https://github.com/rmednitzer/relay-shell/security/advisories/new).
+Do not post exploit payloads, secrets, personal data or sensitive operational
+details in public issues. If private reporting is unavailable, use an existing
+maintainer security contact where published; otherwise request a private channel
+with a minimal, non-sensitive issue. Do not assume an invented email address works.
+
+Include the affected revision/version and paths, prerequisites and trust boundary,
+expected versus actual behavior, a minimal sanitized reproduction, impact and any
+workaround. Use synthetic data. A dependency issue affecting this project is in
+scope: coordinate upstream as appropriate without delaying notification here.
+This policy does not authorize testing third-party or live deployments, service
+disruption, credential use, persistence or access to other people's data.
+
+Existing response targets are retained below as maintainer goals, not guaranteed
+service levels. Coordinate disclosure and advisory timing with the maintainer;
+urgent active exploitation or credential exposure should be identified immediately.
+
+## Contributor security requirements
+
+Follow [AGENTS.md](AGENTS.md) for secure coding, dependency/CI integrity, verification,
+STPA and threat-analysis requirements. Preserve deployment trust boundaries and
+document exceptions, residual risk and recovery. Never suppress a security finding
+merely to pass CI. For fixes, capture a reproducer, add a meaningful regression,
+check adjacent paths, assess affected versions and coordinate remediation/advisories.
+Code review and CI do not prove deployed configuration or legal compliance.
 
 ## Model
 
@@ -13,8 +41,8 @@ constraining the executor.
 
 The trust boundary is the MCP transport. Treat everything arriving over it as
 potentially attacker-influenced (prompt injection through tool results, file
-contents, or remote command output). The protections below are designed so
-that a persuaded model still cannot exceed the operator-defined envelope:
+contents, or remote command output). The controls below reduce risk within the deployment posture. Command classification
+and redaction are heuristic; arbitrary shell execution is not a containment boundary:
 
 - **Tiered authority** (`docs/adr/0003-tiered-authority.md`). Every call is
   classified Tier 0 (read-only) to Tier 3 (irreversible). `RELAY_SHELL_POLICY_MODE`:
@@ -128,56 +156,21 @@ credentials reach. In privileged posture, this is effectively root-level host
 control. Scope accounts/keys accordingly and isolate the host. This is stated
 plainly so it can be designed around rather than discovered.
 
-## Supported versions
+## Supported versions and response targets
 
-Security fixes land on the latest released minor. The project is pre-1.0, so
-only the most recent minor receives patches; older minors are not backported.
-Pin to the latest `0.x` minor and upgrade forward.
+The latest released pre-1.0 minor receives security patches; older minors are not
+backported. Check releases and pyproject.toml for the current version.
+Existing goals: acknowledge within 7 days; share a fix or mitigation plan within
+30 days of triage. Coordinate public advisory and credit when the fix ships.
 
-| Version | Supported          |
-|---------|--------------------|
-| 0.3.x   | :white_check_mark: |
-| 0.2.x   | :x:                |
-| 0.1.x   | :x:                |
+## Scope and resource admission
 
-## Reporting a vulnerability
+In scope: authentication/authorization or tier bypass, audit evasion, secret
+leakage, transport defects and privilege gain beyond the documented posture.
+Intended, authenticated, policy-permitted shell/SSH execution and the explicitly
+unsandboxed service-account posture are not themselves vulnerabilities.
+Relevant exploitable dependency issues remain in scope.
 
-Open a private security advisory on the GitHub repository, or open an issue
-without exploit detail and request a private channel. Please do not file
-public issues containing working exploit payloads.
-
-### Disclosure timeline
-
-The maintainer's intent for any confirmed vulnerability:
-
-| Stage                         | Target                                                                                                 |
-|-------------------------------|--------------------------------------------------------------------------------------------------------|
-| Acknowledge receipt           | within 7 days                                                                                          |
-| Fix or mitigation plan shared | within 30 days of triage (a workaround / configuration change while a code fix is in flight counts)    |
-| Public advisory + credit      | when the fix ships; reporter credited unless they ask to remain anonymous                              |
-
-A reporter who needs a faster window for a coordinated disclosure can say
-so in the initial report; the timeline above is a default, not a ceiling.
-Targets slip only with an explicit acknowledgement back to the reporter
-explaining why.
-
-## Scope
-
-In scope: authentication/authorization bypass, audit-trail evasion, policy
-(tier) bypass, secret leakage into logs, sandbox-escape-equivalent privilege
-gain *beyond the documented service-account posture*, transport handling.
-
-Out of scope: the documented unsandboxed full-access posture itself, and the
-ability of a correctly authenticated, policy-permitted caller to run
-commands - that is the intended function.
-
-### MCP resource reads — note on admission
-
-`relay-shell://inventory*` and `relay-shell://ssh-config` resource reads
-are audit-logged (tier 0, `tool="resource:<name>"`) but are NOT subject
-to `RELAY_SHELL_POLICY_MODE` or `RELAY_SHELL_POLICY_DENY`. The data they
-expose is the same `ssh_hosts` / `ssh_config_file` metadata a Tier-0
-tool already returns in any mode, so admission-controlling resources
-separately would be defense without depth. If a deployment needs to
-refuse the resource surface, restrict the MCP transport (e.g. tighter
-`RELAY_SHELL_EDGE_CLIENT_CIDRS`) rather than the policy layer.
+MCP inventory/ssh-config resource reads are audited but are not subject to tool
+policy mode/deny admission. Restrict transport/client access when that metadata
+must not be exposed. Verify resource and tool paths separately after changes.
