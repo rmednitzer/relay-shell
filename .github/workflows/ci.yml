@@ -46,6 +46,18 @@ jobs:
             pathlib.Path(site.getsitepackages()[0], 'coverage_subprocess.pth') \
               .write_text('import coverage; coverage.process_startup()\n')"
 
+      # A14-D10: the edge routing tests need a Caddy that understands `persist_config`
+      # (2.7+; the distro package is older). Built from the pinned module version, whose
+      # contents the Go checksum database verifies, on one matrix leg only.
+      - name: Install Caddy (edge routing tests)
+        if: matrix.python-version == '3.13'
+        env:
+          GOBIN: ${{ runner.temp }}/caddy-bin
+        run: |
+          command -v go
+          go install github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.7
+          echo "CADDY_BINARY=$GOBIN/caddy" >> "$GITHUB_ENV"
+
       - name: Lint (ruff)
         run: |
           ruff check .
@@ -62,3 +74,14 @@ jobs:
           coverage run -m pytest -q
           coverage combine
           coverage report
+
+      # A14-T1: the seccomp-notify end-to-end tests need CAP_SYS_ADMIN, which the unprivileged
+      # test step above lacks, so they auto-skip there. Run them once under sudo (last step, so
+      # root-owned files cannot affect the steps before it). They still skip themselves if the
+      # runner kernel does not support the notify channel; -rs prints that reason.
+      - name: Test (seccomp-notify end to end, privileged)
+        if: matrix.python-version == '3.13'
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          sudo -E "$(command -v python)" -m pytest -m seccomp -q -rs -p no:cacheprovider tests/test_seccomp.py

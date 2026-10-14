@@ -142,7 +142,7 @@ source = ["src/relay_shell"]
 # parallel + COVERAGE_PROCESS_START let the stdio e2e subprocess contribute;
 # without it server.py's wrappers register near-zero. See `docs/runbook.md` §4.3.
 parallel = true
-branch = false
+branch = true
 
 [tool.coverage.paths]
 # Normalise subprocess paths back onto the in-repo source so combine merges them.
@@ -155,7 +155,7 @@ source = ["src/relay_shell", "*/src/relay_shell"]
 # Remaining gaps are deep error-suppression branches in `sessions.py`
 # (OS-specific BlockingIOError / NotImplementedError paths) and
 # `auth/oauth.py` (HTTP transport only). Current measured baseline
-# with subprocess collection enabled: ~92%.
+# with subprocess collection enabled: ~96% by lines, ~95% with branches (2026-10-14).
 fail_under = 90
 show_missing = true
 skip_empty = true

@@ -32,6 +32,7 @@ top. Status values:
 | [0010](0010-rollback-verify-broker.md) | Rollback / verify pairing for the confirmation broker (BRK-2) | Proposed | 2026-07-15 | The other half of the sibling brokers deferred from ADR 0009: pairing a Tier-3 op with a bound `verify_command` / `rollback_command` and auto-rollback on verify failure. **Decision: defer** — specifies the design and the seven invariants any build must satisfy (chiefly: rollback/verify are themselves fully deny-list/tier-gated, never a policy-bypass channel; bound into the confirmation identity; three distinct audit records; bounded non-recursive loop), plus the concrete triggers (an autonomous/unattended deployment; operator-requested operation-bound remediation) that would move it to Accepted. Marginal value over a model sequencing verify/rollback itself is low until a trigger is real; no code. |
 | [0011](0011-windows-openssh-powershell.md) | Windows targets via OpenSSH + PowerShell 7 | Accepted | 2026-07-15 | Adopts Windows-over-OpenSSH-with-`pwsh` as a first-class target class. Execution + SFTP already work (asyncssh passes the raw command to the remote's own shell — no POSIX wrapping); the gap was that the tier classifier (`patterns.py`) was POSIX-only, so pwsh destructive cmdlets (`Remove-Item -Recurse -Force`, `Clear-Disk`, `Stop-Computer`, `Remove-Service`, …) under-classified as Tier 1 and escaped `guarded`/`readonly` mode and the ADR 0009 broker. Increments A (pwsh-aware Tier-2/3 + priv-esc patterns — same anchoring/ReDoS discipline, POSIX byte-identical, `PATTERNS_VERSION` 9→10, paired FP tests) + B (docs §8b) landed with this ADR; `-Credential`/`-AsPlainText` redaction (C) is a small follow-up; encoding/PTY (D/E) are documented caveats (pwsh is UTF-8). No translation layer, no new transport/tool. Classification stays heuristic. Tracked as WIN-1. |
 | [0012](0012-cancel-safe-session-teardown.md) | Cancel-safe session teardown | Accepted | 2026-10-14 | Sessions removed from the registry (`close`, idle sweep, `shutdown`) are torn down by their own shielded, concurrent task, and `LocalPtyTransport.aclose` SIGKILLs on cancel, so a cancelled caller can no longer strand a live child, PTY fd or monitor thread. Carries the STPA trace (losses, hazards, constraints, UCAs, causal scenarios, tests). Residuals: a child that leaves the process group, loop shutdown mid-teardown, no SIGKILL equivalent for SSH channels. Tracked as A14-R10. |
+| [0013](0013-open-by-default-with-unsafe-notices.md) | Open by default, with notices about what is unsafe | Accepted | 2026-10-14 | The default policy admits every command (pinned by tests); the caller is told, in a trailing `[NOTICE ...]` line, when an admitted call ran as Tier 2/3 or with host-key verification off, and `server_info` reports the permissive settings. Audit records are unchanged. Carries the STPA trace. Residual: the classifier is a heuristic, and a command without a notice is not thereby safe. |
 
 ## When to write an ADR
 
@@ -49,7 +50,7 @@ runbook §6 has recipes per case.
 
 ## How to write one
 
-1. Number sequentially. Next free number is **0012**.
+1. Number sequentially. Next free number is **0014**.
 2. Filename pattern: `NNNN-short-slug.md`.
 3. Required header:
 

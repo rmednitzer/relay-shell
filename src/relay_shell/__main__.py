@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .audit import verify_chain
 from .config import get_settings
+from .notices import config_warnings
 from .server import Relay, build_server, http_transport_kwargs
 from .verifier import Status, verify_deploy
 
@@ -207,6 +208,8 @@ def _check_config() -> int:
         )
         return 2
 
+    for warning in config_warnings(settings):
+        print(f"relay_shell: note: {warning}", file=sys.stderr)
     print(
         f"relay_shell: config OK "
         f"(transport={settings.transport}, "
@@ -441,6 +444,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"relay_shell: build_server failed: {exc}", file=sys.stderr)
         return 2
+    for warning in config_warnings(settings):
+        log.warning("unsafe setting: %s", warning)
     log.info(
         "relay_shell starting (transport=%s, policy=%s, audit=%s)",
         settings.transport,

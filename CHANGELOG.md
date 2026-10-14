@@ -6,8 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Removed
+
+- `scripts/bind-legacy-oauth.py` and its test (A14-A5): it could no longer bind records once the
+  current version had started, and the migration window is over. Legacy grants are reauthorized.
+- `docs/_config.yml` (the legacy Jekyll config; Pages deploys from Actions, A14-X2).
+
 ### Added
 
+- **Open by default, with notices about what is unsafe (ADR 0013).** The default policy
+  (`open`, no deny list, no confirmation step) already admitted every command; that is now a
+  tested contract (`tests/test_notices.py`) and the caller is told what is risky. An admitted
+  Tier 2 or Tier 3 call, or one that used SSH with `known_hosts=ignore`, ends with a
+  `[NOTICE ...]` line naming the tier and why (`policy.assess()` returns the basis). The audit
+  record is unchanged. `server_info.warnings`, the startup log and `--check-config` list the
+  permissive settings (running as root, open policy, `accept-new`/`ignore` host keys, per-call
+  weaker host keys, HTTP without OAuth, audit chain off). `RELAY_SHELL_UNSAFE_NOTICES=false`
+  turns the lines off. The classifier stays a heuristic: a call without a notice is not safe.
+  Clients that match a whole result against a fixed string must tolerate the suffix.
+- **Edge (A14-D10).** The access log drops the `/authorize` redirect `Location` (it carries the
+  authorization code); the public OAuth handles cap the request body at 64 KB. CI builds Caddy
+  2.11.7 on one leg so the routing tests run, and also runs the seccomp end-to-end tests under
+  `sudo`.
 - **`RELAY_SHELL_MAX_CONNS`** (default 256) — a hard ceiling on the live SSH
   connection cache (`SshPool._conns`), mirroring `max_sessions` / `max_forwards`
   for the cache that sits underneath them (CONN-1, 2026-08-04 audit pass). Idle
@@ -33,6 +53,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Evidence sync default (A14-D9).** `RELAY_AUDIT_RSYNC_PATH` defaults to plain `rsync`; the
+  previous `sudo -n /usr/bin/rsync` (root on the backup host) is opt-in. Installations that
+  relied on it set it explicitly.
+- **Logrotate (A14-D15).** Rotated audit archives stay append-only: `firstaction` drops `+a`
+  on the active file and every archive, `postrotate` restores it on the active file,
+  `lastaction` on every archive. Before, each archive lost `+a` at its first rotation.
+- **Monitoring (A14-D15).** The MCP probe counts the edge's 403 as a rejection and exports
+  `relay_mcp_probe_http_status`.
+- **Housekeeping (A14-X3, A14-T1, A14-D12).** `metrics.py` has one metric table; the SFTP
+  upload and download share a body; single-host SSH audit fields come from
+  `Relay.ssh_target_audit`; coverage measures branches; the gitleaks allowlist is scoped per
+  rule; CodeQL also scans the workflows (`Analyze (actions)`, not yet a required check).
 - **Packaging and dependency metadata (A14-D14, A14-D15).** The wheel ships only the four
   templates the verifier compares (not the installers, evidence tooling or monitoring
   package); `pydantic>=2.12` and `anyio>=4.10` match what `mcp` requires; the `http` extra is

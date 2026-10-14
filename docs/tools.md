@@ -13,7 +13,10 @@ effective decision also depends on `RELAY_SHELL_POLICY_MODE` and the deny/allow 
 | 2    | `STATEFUL`    | Visible impact a user or dependent notices.   |
 | 3    | `IRREVERSIBLE`| High blast; rollback expensive or impossible. |
 
-Mode semantics: `open` permits all but still classifies; `guarded`
+Mode semantics: `open` (the default) permits all but still classifies, and the result of an
+admitted Tier 2/3 call ends with a `[NOTICE ...]` line saying what is risky about it
+([ADR 0013](adr/0013-open-by-default-with-unsafe-notices.md); `RELAY_SHELL_UNSAFE_NOTICES=false`
+turns the lines off, the audit record never changes); `guarded`
 refuses Tier 2+ unless `RELAY_SHELL_POLICY_ALLOW` matches; `readonly`
 permits only Tier 0. `RELAY_SHELL_POLICY_DENY` is always enforced first.
 
@@ -180,6 +183,11 @@ the inventory, because that dials a caller-chosen address with the relay's keys,
 Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 
 ### `ssh_fanout`
+
+> The result is one JSON object. When the call is risky (Tier 2/3, or a target dialled with
+> `known_hosts=ignore`) the notices are in a `"notices"` array inside that object, not in
+> trailing `[NOTICE ...]` lines, so `json.loads` keeps working
+> ([ADR 0013](adr/0013-open-by-default-with-unsafe-notices.md)).
 Run `command` in parallel across `hosts` (comma/space list, or empty for
 the whole inventory). Returns one JSON object with per-host
 `exit_code` and (truncated) `output`. `concurrency` bounds how many SSH

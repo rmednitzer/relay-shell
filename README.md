@@ -6,32 +6,24 @@
 passes (latest 2026-06-21, before the `mcp` v2 move) in
 [ADR 0005](docs/adr/0005-codebase-validation.md).
 
-A highly reliable, maximally capable [Model Context Protocol](https://modelcontextprotocol.io)
-server for **complete shell and SSH mastery**.
+`relay-shell` is a [Model Context Protocol](https://modelcontextprotocol.io) server that
+gives an MCP client (Claude, or any MCP-compatible agent) the full reach of a shell: run any
+command on the local host, hold interactive PTY sessions, run scripts, operate a fleet over
+SSH, move files with SFTP and open port forwards.
 
-`relay-shell` gives an MCP client (Claude, or any MCP-compatible agent) a robust,
-auditable interface to operate a Linux host and a fleet of remote hosts over
-SSH: one-shot command execution, long-lived interactive PTY sessions, scripted
-runs, SFTP transfer, port forwarding, and host-inventory aware connectivity.
+It is **operator infrastructure for hosts you own and administer**, and it is **open by
+default**: nothing is refused because of what a command does. It runs with the privileges of
+its service account, with no sandbox ([ADR 0002](docs/adr/0002-no-sandbox-full-access.md)).
+What it adds is the record and the warning:
 
-It is designed as **operator infrastructure tooling for hosts you own and
-administer**. The default operating posture is native, full access (no
-sandbox), matching the way real administration is performed, paired with the
-defensive controls a production operator actually needs: an append-only,
-output-hashed audit trail; a tiered-authority policy layer; secret redaction;
-strict resource and timeout bounds; and an optional OAuth 2.1 edge.
-
-The architecture, security model, and deployment patterns are modeled on a
-mature production MCP gateway and on established operational best practices.
-
-## Why
-
-Engineers SSH into hosts and run commands from memory, with no structured
-reasoning trail and no pre-execution review. A well-built MCP relay improves
-on that baseline: every action is captured with arguments, an output hash, an
-exit code, and a tier classification; limits and timeouts are enforced
-centrally; failure paths never crash the transport. The reasoning layer sits
-*inside* the loop and can assess blast radius before acting.
+- **Every call is audited.** One JSON line with the redacted arguments, a hash and length of
+  the output (never the body), the exit code, the client and the assessed tier.
+- **Every risky call says so.** A call that ran as Tier 2 (changes state) or Tier 3
+  (irreversible), or that used SSH with host-key checking off, gets a trailing `[NOTICE ...]`
+  line. `server_info` lists the standing unsafe settings. See
+  [ADR 0013](docs/adr/0013-open-by-default-with-unsafe-notices.md).
+- **Refusal is opt-in.** `guarded` and `readonly` modes, a deny list and a Tier-3
+  confirmation step exist for deployments that want a gate. None is on by default.
 
 ## Capabilities
 
@@ -123,7 +115,7 @@ relay-shell
 # HTTP transport (streamable-http on 127.0.0.1:8080)
 RELAY_SHELL_TRANSPORT=http relay-shell
 
-# Validate config without starting the transport (useful for image bakes)
+# Validate config without starting the transport; prints the unsafe-setting notes
 relay-shell --check-config
 
 # Drift-detect shipped templates against /etc/... (useful in production cron)
@@ -136,8 +128,52 @@ Register with an MCP client (stdio):
 { "mcpServers": { "relay-shell": { "command": "relay-shell" } } }
 ```
 
-Configuration is environment-driven; see [`.env.example`](.env.example) and
-[`docs/deployment.md`](docs/deployment.md).
+Configuration is environment-driven (`RELAY_SHELL_*`, optionally a `.env`); see
+[`.env.example`](.env.example) and [`docs/deployment.md`](docs/deployment.md).
+
+## What is and is not blocked
+
+With the default configuration the policy layer admits every command on every tool,
+including `rm -rf /`, `mkfs`, `dd` to a block device, `shutdown`, `curl | sh` and `sudo`.
+`tests/test_notices.py` pins this. The call is classified and audited, and if it is risky
+the result ends with a notice:
+
+```text
+[exit 0]
+...command output...
+[NOTICE tier 3 (IRREVERSIBLE), matched an irreversible-operation pattern. It may not be
+undoable and ran with no confirmation step; verify the target and take a backup or snapshot
+first. Classification is a heuristic, not a boundary]
+```
+
+The classifier is a regex heuristic over the command text, not a parse of the shell
+language. **A call without a notice is not thereby safe**, and a notice is not a block.
+
+What does still refuse a call are resource bounds and one startup check, each with a
+setting, none of them about what the command does:
+
+| Bound | Setting | Behaviour |
+|-------|---------|-----------|
+| Input size (command + stdin + script + env) | `RELAY_SHELL_MAX_INPUT` (2 MiB) | refused, because the policy scan is synchronous |
+| Wall-clock per call | `RELAY_SHELL_MAX_TIMEOUT` (900 s) | killed; use `shell_spawn` / `ssh_spawn` for longer work |
+| Live sessions / forwards | `RELAY_SHELL_MAX_SESSIONS` (64), `RELAY_SHELL_MAX_FORWARDS` (64) | a new one is refused at the cap |
+| Output returned | `RELAY_SHELL_MAX_OUTPUT` (64 KiB) | truncated, not refused |
+| HTTP listener without OAuth on a non-loopback address | `RELAY_SHELL_ALLOW_UNAUTH_NETWORK` | refused at startup unless set |
+
+### Making it stricter
+
+Each of these is opt-in; combine them as the deployment needs.
+
+| Want | Setting |
+|------|---------|
+| Refuse state-changing calls unless allow-listed | `RELAY_SHELL_POLICY_MODE=guarded` + `RELAY_SHELL_POLICY_ALLOW` |
+| Observe only | `RELAY_SHELL_POLICY_MODE=readonly` |
+| Refuse specific text (always enforced first, in every mode) | `RELAY_SHELL_POLICY_DENY` |
+| Two-step confirmation for Tier-3 calls | `RELAY_SHELL_CONFIRM_TIER3=true` |
+| Verified SSH host keys, no per-call downgrade | `RELAY_SHELL_SSH_KNOWN_HOSTS=strict`, `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false` |
+| Tamper-evident audit | `RELAY_SHELL_AUDIT_CHAIN=true`, plus the off-host sync in `deploy/evidence/` |
+| Authenticated HTTP transport | `RELAY_SHELL_AUTH_ENABLED=true` (OAuth 2.1) behind the Caddy edge |
+| Silence the `[NOTICE]` lines | `RELAY_SHELL_UNSAFE_NOTICES=false` |
 
 ## Compatibility matrix
 
@@ -146,59 +182,46 @@ Configuration is environment-driven; see [`.env.example`](.env.example) and
 | Python            | 3.12 / 3.13 / 3.14                                         | CI runs the full matrix; package floor is `>=3.12`.                                    |
 | Host OS (tested)  | Ubuntu 24.04 LTS                                           | Validation is run against this image; the systemd + Caddy installers assume it.        |
 | Host OS (dev)     | macOS                                                      | Unsupported for production; `pty`/SSH paths work for local development.                |
-| Host OS (other)   | Windows                                                    | Out of scope — no PTY contract, no systemd integration.                                |
+| Host OS (other)   | Windows                                                    | Not a host (no PTY contract, no systemd). Windows is supported as an SSH *target* over OpenSSH + PowerShell ([ADR 0011](docs/adr/0011-windows-openssh-powershell.md)). |
 | Transports        | `stdio`, `streamable-http`                                 | Stdio is the default. HTTP binds loopback and requires a TLS edge (see `deployment.md`). |
-| SDK               | `mcp>=2,<3` (pinned: `requirements.txt`)                       | Range-pinned since the v2 migration (ADR 0001); bumps trigger a fresh validation pass. |
-| SSH library       | `asyncssh>=2.23.0` (tested at 2.24.1)                      | Native async; no shell-out to system `ssh`.                                            |
+| SDK               | `mcp>=2,<3` (pinned: `requirements.txt`)                   | Range-pinned since the v2 migration (ADR 0001); bumps trigger a fresh validation pass. |
+| SSH library       | `asyncssh>=2.23.0,<3` (tested at 2.24.1)                   | Native async; no shell-out to system `ssh` (only `ssh_keyscan` runs `ssh-keyscan`).    |
 
 ## Security posture
 
-`relay-shell` runs unsandboxed with the privileges of its service account by design
-(see [`docs/adr/0002-no-sandbox-full-access.md`](docs/adr/0002-no-sandbox-full-access.md)):
-sandboxing the process would defeat the very capability it exists to provide.
-Safety is achieved with **compensating controls**, not by crippling the tool:
+The server grants real administrative power. Run it only as a scoped service account, only on
+hosts you are authorized to administer, behind the network controls in
+[`docs/deployment.md`](docs/deployment.md). A privileged (root/sudo) deployment is supported
+for isolated administrative hosts with strict network controls and full audit shipping.
+[`SECURITY.md`](SECURITY.md) has the threat model and how to report a vulnerability.
 
-- **Audit** - every invocation appended as one JSON line with a SHA-256 hash
-  of the output (never the output body), byte length, exit code, request and
-  client id, and the assessed tier. Append-only on disk; rotation-safe handler.
-  Optional per-record hash chain (`RELAY_SHELL_AUDIT_CHAIN`,
-  [ADR 0007](docs/adr/0007-audit-hash-chain.md)) makes edits, insertions,
-  reorders, and interior deletions detectable with `relay-shell --verify-audit`,
-  which is fail-closed (a missing / empty / head-truncated log fails;
-  `--segment` accepts a rotation segment; tail-truncation needs the off-host copy).
+Because nothing is sandboxed or blocked by default, the controls are the ones that keep the
+record honest and the surface small:
+
+- **Audit** - every invocation is appended as one JSON line (see above). Append-only on disk,
+  rotation-safe handler. An optional per-record hash chain
+  ([ADR 0007](docs/adr/0007-audit-hash-chain.md)) makes edits, insertions, reorders and
+  interior deletions detectable with `relay-shell --verify-audit`, which is fail-closed;
+  tail-truncation needs the off-host copy.
 - **Syscall visibility** (optional) - `RELAY_SHELL_SECCOMP_NOTIFY`
-  ([ADR 0006](docs/adr/0006-seccomp-notify-audit-channel.md)) adds an
-  audit-only seccomp **user-notify** channel that appends `syscall_notify`
-  lines for a spawned child's `execve` / privilege / namespace / mount /
-  write-`open` / privilege-relevant `prctl` syscalls — for one-shot commands
-  and for `shell_spawn` PTY sessions, where the filter rides the session
-  child for the session's whole life. It **never blocks** a syscall and
-  installs only with `CAP_SYS_ADMIN` (never latching `no_new_privs`), so
-  set-uid/`sudo` posture is preserved verbatim — visibility added,
-  capability untouched.
+  ([ADR 0006](docs/adr/0006-seccomp-notify-audit-channel.md)) adds an audit-only seccomp
+  user-notify channel for a spawned child's `execve`, privilege, namespace, mount,
+  write-`open` and privilege-relevant `prctl` syscalls. It never blocks a syscall and installs
+  only with `CAP_SYS_ADMIN`.
 - **Tiered authority** - every call is classified Tier 0..3
-  ([`docs/adr/0003-tiered-authority.md`](docs/adr/0003-tiered-authority.md)).
-  `RELAY_SHELL_POLICY_MODE` selects `open` (default), `guarded`, or `readonly`.
-- **Redaction** - audited arguments are scrubbed for tokens, keys, and
-  `Authorization` material.
-- **Bounds** - timeout and output caps on every tool; bounded session count
-  and buffers; idle/lifetime reaping.
-- **Optional OAuth 2.1** - DCR with single-client lockdown, PKCE, file-backed
-  rotating tokens, lazy expiry (HTTP transport; **opt-in, off by default**).
-  See [`docs/auth.md`](docs/auth.md) for the authentication lifecycle.
-- **Edge** - parameterized Caddy config restricts the endpoint to known
-  CIDRs with security headers and automated TLS (ACME / Let's Encrypt)
-  installed via `deploy/install-edge.sh`; systemd unit applies resource
-  caps.
-
-This server grants real administrative power. Run it only as a scoped service
-account, only on hosts you are authorized to administer, behind the network
-controls in [`docs/deployment.md`](docs/deployment.md). See
-[`SECURITY.md`](SECURITY.md) for the threat model and reporting.
-
-If your use case requires maximum model capability, `relay-shell` also supports
-an explicit privileged posture (root/sudo workflows). Use that only on isolated
-administrative hosts with strict network controls and full audit shipping.
+  ([ADR 0003](docs/adr/0003-tiered-authority.md)); the tier drives the notice, the audit field
+  and, if you enable them, the stricter modes.
+- **Redaction** - audited arguments are scrubbed for tokens, keys and `Authorization`
+  material. Heuristic; tested with synthetic secrets.
+- **Bounds** - timeout and output caps on every tool, bounded session count and buffers,
+  idle and lifetime reaping.
+- **Optional OAuth 2.1** - dynamic client registration with an operator approval gate, PKCE,
+  rotating refresh tokens with reuse detection, file-backed (HTTP transport; **off by
+  default**). See [`docs/auth.md`](docs/auth.md).
+- **Edge** - a parameterized Caddy config restricts the MCP endpoint to known CIDRs, adds
+  security headers, caps the public OAuth request bodies and keeps authorization codes out of
+  the access log; automated TLS via ACME. Installed with `deploy/install-edge.sh`; the systemd
+  unit applies resource caps.
 
 ## Layout
 

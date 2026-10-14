@@ -29,35 +29,38 @@
 	acme_ca {$RELAY_SHELL_EDGE_ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
 }
 
+# A14-D10: the OAuth endpoints are reachable from any address (the client is not yet
+# authorized), so they get a small request-body cap. Their bodies are form or JSON
+# objects of a few hundred bytes. The MCP path below is CIDR-restricted and is capped by
+# the relay itself (RELAY_SHELL_MAX_INPUT), not here.
+(oauth_public) {
+	request_body {
+		max_size 64KB
+	}
+	reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
+		header_up Host {upstream_hostport}
+	}
+}
+
 {$RELAY_SHELL_EDGE_DOMAIN} {
 	# EDGE-1: OAuth browser/redirect, discovery, dynamic client registration,
 	# token exchange, and protected-resource metadata are handled before the
 	# CIDR block so remote clients can reach the OAuth flow. MCP transport
 	# remains CIDR-restricted even when upstream OAuth is disabled.
 	handle /authorize {
-		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
-			header_up Host {upstream_hostport}
-		}
+		import oauth_public
 	}
 	handle /.well-known/oauth-authorization-server {
-		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
-			header_up Host {upstream_hostport}
-		}
+		import oauth_public
 	}
 	handle /.well-known/oauth-protected-resource* {
-		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
-			header_up Host {upstream_hostport}
-		}
+		import oauth_public
 	}
 	handle /register {
-		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
-			header_up Host {upstream_hostport}
-		}
+		import oauth_public
 	}
 	handle /token {
-		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
-			header_up Host {upstream_hostport}
-		}
+		import oauth_public
 	}
 	# EDGE-3: RFC 7009 token revocation. The OAuth provider enables revocation
 	# (RevocationOptions), so /revoke is advertised in the discovery metadata
@@ -68,9 +71,7 @@
 	# safe, exactly like /token. Without this handle the CIDR block below returns
 	# a flat 403 and the client cannot revoke.
 	handle /revoke {
-		reverse_proxy {$RELAY_SHELL_EDGE_UPSTREAM:127.0.0.1:8080} {
-			header_up Host {upstream_hostport}
-		}
+		import oauth_public
 	}
 	# MCP and all other operational paths are CIDR-restricted. Override
 	# RELAY_SHELL_EDGE_CLIENT_CIDRS for any extra operational paths you expose.
@@ -99,6 +100,14 @@
 			roll_size 50MiB
 			roll_keep 5
 		}
-		format json
+		# A14-D10: the /authorize 302 carries the authorization code and state in its
+		# Location header; the access log is not a place for them. Authorization and
+		# Cookie headers are already replaced by Caddy (log_credentials is off).
+		format filter {
+			wrap json
+			fields {
+				resp_headers>Location delete
+			}
+		}
 	}
 }

@@ -17,12 +17,6 @@ edit_uri: edit/main/docs/
 copyright: Apache-2.0 licensed.
 docs_dir: docs
 
-# docs/_config.yml is the legacy Jekyll config, retained only so the old
-# "Deploy from a branch" build keeps serving during the switch to GitHub
-# Actions. It is not part of this site.
-exclude_docs: |
-  _config.yml
-
 theme:
   name: material
   palette:
@@ -106,3 +100,4 @@ nav:
       - 0010 · Rollback / verify broker (proposed): adr/0010-rollback-verify-broker.md
       - 0011 · Windows OpenSSH + PowerShell 7: adr/0011-windows-openssh-powershell.md
       - 0012 · Cancel-safe session teardown: adr/0012-cancel-safe-session-teardown.md
+      - 0013 · Open by default, with unsafe notices: adr/0013-open-by-default-with-unsafe-notices.md

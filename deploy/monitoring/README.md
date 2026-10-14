@@ -20,7 +20,9 @@ This deployment adds host metrics without exposing the exporter publicly.
   scrape, and a rejected connection to the public address.
 
 The collector validates the Relay services, canonical HTTP redirect, OAuth
-metadata, expected unauthenticated MCP rejection, HSTS, verified TLS
+metadata, expected unauthenticated MCP rejection (HTTP 401 from the app, or 403 from the
+edge CIDR gate when the probing host's own address is not in
+`RELAY_SHELL_EDGE_CLIENT_CIDRS`; `relay_mcp_probe_http_status` says which), HSTS, verified TLS
 certificate expiry, and the latest retained audit-chain evidence anchor. It
 never exports OAuth tokens, command data, certificate keys, or audit payloads.
 

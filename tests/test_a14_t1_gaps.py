@@ -313,8 +313,8 @@ async def test_ssh_upload_and_download_pass_their_arguments_through(
             )
         ).content
     )
-    assert up == "uploaded /tmp/a -> h1.example:/srv/a"
-    assert down == "downloaded h1.example:/srv/b -> /tmp/b"
+    assert up.split("\n[NOTICE", 1)[0] == "uploaded /tmp/a -> h1.example:/srv/a"
+    assert down.split("\n[NOTICE", 1)[0] == "downloaded h1.example:/srv/b -> /tmp/b"
     assert calls[0][2]["recurse"] is True and calls[0][2]["timeout"] == 0
     assert calls[1][2]["recurse"] is False and calls[1][2]["timeout"] == 5
     tools = {r["tool"]: r for r in audit_lines(Path(cfg.audit_path))}
@@ -347,7 +347,9 @@ async def test_ssh_forward_success_list_and_close(
     out = text(
         (await mcp.call_tool("ssh_forward", {"host": "h1.example", "spec": "L:0:db:5432"})).content
     )
-    assert out == "forward fwd-1 active: local L:0:db:5432 listening on port 4242"
+    assert out.split("\n[NOTICE", 1)[0] == (
+        "forward fwd-1 active: local L:0:db:5432 listening on port 4242"
+    )
     listed = json.loads(text((await mcp.call_tool("ssh_forward_list", {})).content))
     assert listed[0]["id"] == "fwd-1" and listed[0]["listen_port"] == 4242
     closed = text((await mcp.call_tool("ssh_forward_close", {"forward_id": "fwd-1"})).content)

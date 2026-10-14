@@ -471,8 +471,19 @@ accumulate idle handles.
 
 ## 8. Policy posture
 
+The default is `open` with no deny list and no confirmation step, so **no command is refused
+because of what it does** ([ADR 0013](adr/0013-open-by-default-with-unsafe-notices.md)). The
+server tells the caller instead: an admitted Tier 2 or Tier 3 call, or one using SSH with
+host-key verification off, ends with a `[NOTICE ...]` line, and `server_info.warnings` plus the
+startup log list the permissive settings (root, open policy, `accept-new`/`ignore` host keys,
+per-call weaker host keys, HTTP without OAuth, audit chain off). `RELAY_SHELL_UNSAFE_NOTICES=false`
+removes the trailing lines; the audit record is the same either way. A notice is information,
+not a block, and a call without one is not thereby safe, because the classifier is a heuristic.
+What still refuses a call is a resource bound (`RELAY_SHELL_MAX_INPUT`, the session and forward
+caps), never the command's meaning.
+
 - `open` - full access, every call still classified and audited. The
-  documented single-owner default.
+  default.
 - `guarded` - Tier 2+ refused unless `RELAY_SHELL_POLICY_ALLOW` matches; set an
   allowlist of sanctioned change patterns. The pattern is an unanchored `re.search`
   over `<tool> <policy text>`, and a match admits the whole call, so anchor the start
@@ -514,8 +525,8 @@ the deny list alone. See ADR 0003.
 
 ### 8a. Tier-3 confirmation broker (optional)
 
-`open` runs Tier-3 (IRREVERSIBLE) commands with no friction; `guarded` refuses
-them wholesale. For the middle ground — *permit irreversible admin work, but
+`open` runs Tier-3 (IRREVERSIBLE) commands on the first request (with a trailing notice);
+`guarded` refuses them wholesale. For the middle ground — *permit irreversible admin work, but
 require a deliberate second step per call* — set `RELAY_SHELL_CONFIRM_TIER3=true`
 ([ADR 0009](adr/0009-tier3-confirmation-broker.md)). When on, a Tier-3 call that
 passed the deny list and mode check does not run on first request: it returns a

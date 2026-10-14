@@ -29,31 +29,33 @@ ACTIVE_SESSIONS = "relay_shell_active_sessions"
 ACTIVE_FORWARDS = "relay_shell_active_forwards"
 AUDIT_DEGRADED = "relay_shell_audit_degraded"
 
-_HELP: dict[str, str] = {
-    TOOL_CALLS_TOTAL: "Total tool invocations, labelled by tool/tier/mode/outcome.",
-    SECCOMP_NOTIFY_EVENTS_TOTAL: "Total seccomp-notify syscall observations, labelled by syscall.",
-    SECCOMP_NOTIFY_OVERFLOW_TOTAL: "Total tool calls whose syscall-notify per-call cap was hit.",
-    ACTIVE_SESSIONS: "Current count of live local/SSH PTY sessions.",
-    ACTIVE_FORWARDS: "Current count of live SSH port forwards.",
-    AUDIT_DEGRADED: "1 if the audit sink is degraded; 0 otherwise.",
-}
-
-_TYPES: dict[str, str] = {
-    TOOL_CALLS_TOTAL: "counter",
-    SECCOMP_NOTIFY_EVENTS_TOTAL: "counter",
-    SECCOMP_NOTIFY_OVERFLOW_TOTAL: "counter",
-    ACTIVE_SESSIONS: "gauge",
-    ACTIVE_FORWARDS: "gauge",
-    AUDIT_DEGRADED: "gauge",
-}
-
-# Order matters: HELP+TYPE+samples block per metric, then the next metric.
-_COUNTER_ORDER: tuple[str, ...] = (
-    TOOL_CALLS_TOTAL,
-    SECCOMP_NOTIFY_EVENTS_TOTAL,
-    SECCOMP_NOTIFY_OVERFLOW_TOTAL,
+# One row per metric, in exposition order: HELP + TYPE + samples per metric, counters
+# first. The lookups below are derived from this table so a metric cannot be listed in
+# one place and forgotten in another.
+_METRICS: tuple[tuple[str, str, str], ...] = (
+    (
+        TOOL_CALLS_TOTAL,
+        "counter",
+        "Total tool invocations, labelled by tool/tier/mode/outcome.",
+    ),
+    (
+        SECCOMP_NOTIFY_EVENTS_TOTAL,
+        "counter",
+        "Total seccomp-notify syscall observations, labelled by syscall.",
+    ),
+    (
+        SECCOMP_NOTIFY_OVERFLOW_TOTAL,
+        "counter",
+        "Total tool calls whose syscall-notify per-call cap was hit.",
+    ),
+    (ACTIVE_SESSIONS, "gauge", "Current count of live local/SSH PTY sessions."),
+    (ACTIVE_FORWARDS, "gauge", "Current count of live SSH port forwards."),
+    (AUDIT_DEGRADED, "gauge", "1 if the audit sink is degraded; 0 otherwise."),
 )
-_GAUGE_ORDER: tuple[str, ...] = (ACTIVE_SESSIONS, ACTIVE_FORWARDS, AUDIT_DEGRADED)
+_HELP: dict[str, str] = {name: text for name, _kind, text in _METRICS}
+_TYPES: dict[str, str] = {name: kind for name, kind, _text in _METRICS}
+_COUNTER_ORDER: tuple[str, ...] = tuple(n for n, kind, _t in _METRICS if kind == "counter")
+_GAUGE_ORDER: tuple[str, ...] = tuple(n for n, kind, _t in _METRICS if kind == "gauge")
 
 _LabelKey = tuple[tuple[str, str], ...]
 

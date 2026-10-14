@@ -25,7 +25,7 @@ import re
 import shlex
 import signal
 import socket
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +40,12 @@ from .config import Settings, get_settings
 from .errors import RelayError, fmt_exc
 from .inventory import Inventory
 from .metrics import ACTIVE_FORWARDS, ACTIVE_SESSIONS, AUDIT_DEGRADED, Metrics
+from .notices import (
+    attach_notices,
+    call_notices,
+    config_warnings,
+    unverified_host_notice,
+)
 from .policy import Policy, Tier, classify
 from .redaction import redact_args
 from .sessions import LocalPtyTransport, Session, SessionRegistry, Transport
@@ -486,7 +492,11 @@ class Relay:
         max_output: int,
         work: Work,
         min_tier: Tier = Tier.READ_ONLY,
+        extra_notices: Sequence[str] = (),
+        json_notices: bool = False,
     ) -> str:
+        """Admit, run and audit one call. ``extra_notices`` are tool-specific unsafe facts;
+        ``json_notices`` puts the notices inside a JSON-object result instead of after it."""
         request_id, client_id = _ctx_ids(ctx)
         red = redact_args(audit_args)
         mode = self.settings.policy_mode
@@ -635,6 +645,11 @@ class Relay:
         )
         outcome = "error" if errored else "ok"
         self.metrics.inc_tool_call(tool=tool, tier=int(decision.tier), mode=mode, outcome=outcome)
+        if self.settings.unsafe_notices:
+            # A message to the caller, appended after the audit record was written from
+            # `final`: the record and the output hash do not change (ADR 0013).
+            notes = [*call_notices(decision, audit_args), *extra_notices]
+            return attach_notices(final, notes, as_json=json_notices)
         return final
 
     async def register_session(
@@ -657,6 +672,33 @@ class Relay:
             with contextlib.suppress(Exception):
                 await transport.aclose()
             raise
+
+    def target_names(self, hosts: str) -> list[str]:
+        """Hosts an ``ssh_check`` / ``ssh_fanout`` call addresses: the list, or the inventory."""
+        if hosts.strip():
+            return [h for h in hosts.replace(",", " ").split() if h]
+        return [h.name for h in self.inventory.hosts()]
+
+    def host_key_notices(self, names: Sequence[str]) -> list[str]:
+        """Notice for the named hosts that would be dialled without host-key verification."""
+        if not self.settings.unsafe_notices:
+            return []
+        unverified = [n for n in names[:200] if self.effective_known_hosts(n, "") == "ignore"]
+        return unverified_host_notice(unverified)
+
+    def ssh_target_audit(
+        self, host: str, user: str, port: int, key_path: str, jump: str, known_hosts: str
+    ) -> dict[str, Any]:
+        """The connection-identity fields every single-host SSH tool puts in its audit args,
+        in the order the records have always carried them (``known_hosts`` is the effective
+        mode, not the raw argument)."""
+        return {
+            "user": user,
+            "port": port,
+            "key_path": key_path,
+            "jump": jump,
+            "known_hosts": self.effective_known_hosts(host, known_hosts),
+        }
 
     def effective_known_hosts(self, host: str, known_hosts: str) -> str:
         """The verification mode ``SshPool.connect`` will actually use for ``host``.
@@ -959,11 +1001,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "host": host,
                 "command": command,
                 "timeout": t,
-                "user": user,
-                "port": port,
-                "key_path": key_path,
-                "jump": jump,
-                "known_hosts": app.effective_known_hosts(host, known_hosts),
+                **app.ssh_target_audit(host, user, port, key_path, jump, known_hosts),
             },
             policy_text=_policy_text_ssh_exec(host, command, jump),
             max_output=65536,
@@ -1023,11 +1061,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "host": host,
                 "command": command or "shell",
                 "size": f"{cols}x{rows}",
-                "user": user,
-                "port": port,
-                "key_path": key_path,
-                "jump": jump,
-                "known_hosts": app.effective_known_hosts(host, known_hosts),
+                **app.ssh_target_audit(host, user, port, key_path, jump, known_hosts),
             },
             policy_text=_policy_text_ssh_spawn(host, command, jump),
             max_output=4096,
@@ -1207,11 +1241,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "remote": remote_path,
                 "recursive": recursive,
                 "timeout": t,
-                "user": user,
-                "port": port,
-                "key_path": key_path,
-                "jump": jump,
-                "known_hosts": app.effective_known_hosts(host, known_hosts),
+                **app.ssh_target_audit(host, user, port, key_path, jump, known_hosts),
             },
             policy_text=_policy_text_ssh_upload(host, local_path, remote_path, jump),
             max_output=2048,
@@ -1257,11 +1287,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "local": local_path,
                 "recursive": recursive,
                 "timeout": t,
-                "user": user,
-                "port": port,
-                "key_path": key_path,
-                "jump": jump,
-                "known_hosts": app.effective_known_hosts(host, known_hosts),
+                **app.ssh_target_audit(host, user, port, key_path, jump, known_hosts),
             },
             policy_text=_policy_text_ssh_download(host, remote_path, local_path, jump),
             max_output=2048,
@@ -1300,11 +1326,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             audit_args={
                 "host": host,
                 "spec": spec,
-                "user": user,
-                "port": port,
-                "key_path": key_path,
-                "jump": jump,
-                "known_hosts": app.effective_known_hosts(host, known_hosts),
+                **app.ssh_target_audit(host, user, port, key_path, jump, known_hosts),
             },
             policy_text=_policy_text_ssh_forward(spec, host, jump),
             max_output=1024,
@@ -1349,11 +1371,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         """Probe connectivity to the given hosts (or the whole inventory)."""
 
         async def _work() -> tuple[str, int | None]:
-            names = (
-                [h for h in hosts.replace(",", " ").split() if h]
-                if hosts.strip()
-                else [h.name for h in app.inventory.hosts()]
-            )
+            names = app.target_names(hosts)
             if not names:
                 return ("[no hosts configured; pass hosts= or add an inventory]", None)
             if len(names) > _SSH_CHECK_MAX_HOSTS:
@@ -1399,6 +1417,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             max_output=8192,
             work=_work,
             min_tier=Tier.REVERSIBLE if outside_inventory else Tier.READ_ONLY,
+            extra_notices=app.host_key_notices(app.target_names(hosts)),
         )
 
     @mcp.tool()
@@ -1424,11 +1443,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         policy_text = _policy_text_ssh_fanout(hosts, command)
 
         async def _work() -> tuple[str, int | None]:
-            names = (
-                [h for h in hosts.replace(",", " ").split() if h]
-                if hosts.strip()
-                else [h.name for h in app.inventory.hosts()]
-            )
+            names = app.target_names(hosts)
             if not names:
                 return ("[no hosts configured; pass hosts= or add an inventory]", None)
             if len(names) > _SSH_FANOUT_MAX_HOSTS:
@@ -1529,6 +1544,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             policy_text=policy_text,
             max_output=app.clamp_output(cfg.max_output),
             work=_work,
+            extra_notices=app.host_key_notices(app.target_names(hosts)),
+            json_notices=True,  # the result is a JSON object: notices go inside it
         )
 
     @mcp.tool()
@@ -1671,6 +1688,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "version": __version__,
                 "transport": cfg.transport,
                 "policy_mode": cfg.policy_mode,
+                "warnings": config_warnings(cfg, euid=euid),
                 "runtime": {
                     "uid": uid,
                     "euid": euid,
@@ -1725,7 +1743,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             ctx=ctx,
             audit_args={},
             policy_text="",
-            max_output=4096,
+            max_output=8192,
             work=_work,
         )
 
@@ -2117,6 +2135,11 @@ What a result can look like
 - [DENIED tier N (NAME): reason]          refused by policy (depends on
                                           RELAY_SHELL_POLICY_MODE and the
                                           deny/allow lists).
+- [NOTICE ...]                            trailing line on a call that ran as
+                                          Tier 2/3 or with host-key checking off:
+                                          what is unsafe about it. The classifier is a
+                                          heuristic; a call without a notice is not
+                                          thereby safe.
 - [TIMEOUT after Ns]                      exceeded the clamped timeout. For SSH
                                           the text adds "outcome unknown": verify
                                           the remote state before retrying.

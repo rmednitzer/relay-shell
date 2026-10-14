@@ -167,9 +167,11 @@ Harden the destination as well:
   command, for example `command="rrsync -wo /var/backups/relay-shell",restrict ssh-ed25519
   AAAA...` (`rrsync -wo` allows writing only). Then set `RELAY_AUDIT_RSYNC_PATH=rsync` and
   `RELAY_AUDIT_REMOTE_CHECK=off`, or keep the check by allowing read access.
-- The default `RELAY_AUDIT_RSYNC_PATH="sudo -n /usr/bin/rsync"` runs rsync as root on the
-  backup host, so a compromised audited host gets root-equivalent write there. Replace it
-  with the forced command above unless the destination needs root-owned files.
+- `RELAY_AUDIT_RSYNC_PATH` defaults to plain `rsync` (changed on 2026-10-14, A14-D9; it was
+  `sudo -n /usr/bin/rsync`). The backup account must therefore own the destination
+  directory. An installation that relied on the old default and needs root-owned files on
+  the backup host sets `RELAY_AUDIT_RSYNC_PATH="sudo -n /usr/bin/rsync"` explicitly and
+  accepts that a compromised audited host then has root-equivalent write there.
 - Keep snapshots or a second immutable copy on the backup host (ZFS/btrfs snapshots, object
   lock): the mirror will faithfully replicate whatever an attacker with the key writes.
 

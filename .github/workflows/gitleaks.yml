@@ -4,9 +4,10 @@ name: gitleaks
 # main, plus a daily rerun so a credential committed between releases surfaces
 # within 24h. This repository is a redaction tool and deliberately ships
 # *synthetic* secret-shaped fixtures (tests, the runbook redaction sample, the
-# audit evidence); `.gitleaks.toml` allowlists exactly those documented paths,
-# so a finding here means a real secret reached a non-fixture location (e.g.
-# under `src/`). See `.gitleaks.toml` and audit finding S-004/TOOL-1.
+# audit evidence); `.gitleaks.toml` allowlists the five rules those fixtures trip, in
+# `tests/*.py` only, so a finding here means a real secret, or a different kind of
+# secret, reached a non-fixture location (e.g. under `src/`). See `.gitleaks.toml`
+# and audit finding S-004/TOOL-1.
 
 on:
   push:

@@ -317,6 +317,9 @@ Use this for every PR, your own or external.
       user-controlled parts).
 - [ ] No new env var is missing from `.env.example`, `Settings`, and
       `docs/deployment.md`.
+- [ ] A new setting whose permissive value widens what a caller can do has a matching entry in
+      `notices.config_warnings`, and nothing here makes the default configuration refuse a
+      command (ADR 0013, `tests/test_notices.py`).
 - [ ] No new dependency is added without a justification in the PR body and
       a pinned version in `requirements.txt`.
 - [ ] No new metric is undocumented in `docs/deployment.md` §9a and the
@@ -675,7 +678,8 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
 3. Document the addition in `docs/adr/0003-tiered-authority.md` if the
    heuristic represents a new category (not just another verb).
 4. Never replaces the deny list as a security control. The heuristics
-   are advisory in `open` mode; the deny list is the only guarantee.
+   are advisory in `open` mode (they drive the audit tier and the `[NOTICE]` text, ADR 0013);
+   the deny list is the only guarantee. A new pattern must not make `open` refuse anything.
 5. Keep the pattern linear. The classifier runs synchronously on the event loop before
    the deny list, so bound every repetition (`{0,N}` rather than `*`/`+` on a class that can
    match whitespace or the pattern's own separator) and never put two adjacent quantifiers
@@ -1149,8 +1153,8 @@ cite them.
   §7 here.
 - **8.23 Docs site.** MkDocs Material from `docs/`, configured by `mkdocs.yml` (the `nav:`
   is the single navigation source; add a new guide to `nav:` and `docs/index.md`),
-  published by `.github/workflows/docs.yml` with `mkdocs build --strict`. Pages must be
-  set to the "GitHub Actions" source; the legacy `docs/_config.yml` can then be removed.
+  published by `.github/workflows/docs.yml` with `mkdocs build --strict`. Pages uses
+  the "GitHub Actions" source (the legacy `docs/_config.yml` was removed on 2026-10-14).
   Preview with `pip install -r requirements-docs.txt && mkdocs serve`.
 - **Mirrored checklists.** If §3.1 or §3.3 of this runbook changes, mirror it in
   `CONTRIBUTING.md` and `.github/PULL_REQUEST_TEMPLATE.md`. The local loop in
@@ -1195,6 +1199,6 @@ Bearer/resource validation is enabled explicitly. New authorization codes, acces
 
 `RELAY_SHELL_AUTH_RESOURCE_URL` can name a separate public MCP resource. Empty preserves the existing issuer-based resource identifier so discovery identifiers do not silently change during upgrade. New deployments should set the exact public MCP endpoint. There is no automatic grandfathering or timed fail-open mode.
 
-Existing local opaque grants may be reauthorized, or an operator may explicitly rebind them offline using `scripts/bind-legacy-oauth.py`. This is a policy migration, not recovery of historical audience evidence. The script defaults to dry-run and exposes counts/hashes only. Apply requires root, a stopped service, an exact token-store preimage hash, private state and backup paths, known registered clients and the existing `mcp:tools` scope. It refuses foreign bindings, preserves expiry and scopes, and writes a private preimage before atomic replacement. Never upload token stores or backups to source control.
+Existing local opaque grants are reauthorized: a grant without a stored resource binding fails closed, and a client signs in again. The offline rebind script (`scripts/bind-legacy-oauth.py`) was removed on 2026-10-14 (A14-A5): it could not bind records once the current version had started, because tokens are hashed and the `token` field is dropped, and the migration window it served is over. The last version that shipped it is in the git history. Never upload token stores or backups to source control.
 
 Deploy from an independently supervised transaction with the previous complete runtime retained and an automatic rollback deadline. Synthetic registration/PKCE/refresh/wrong-resource tests precede cutover; verify an actual existing connector afterwards before cancelling rollback. A rollback selects the prior runtime but must not restore token-store snapshots over newer grants or audit records. Additive resource fields are ignored by the previous runtime. Do not change issuer/resource identifiers at the same time as this migration.

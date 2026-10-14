@@ -2,11 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
-      "Bash(uv:*)",
-      "Bash(uvx:*)",
       "Bash(ruff:*)",
-      "Bash(python:*)",
-      "Bash(python3:*)",
       "Bash(pytest:*)",
       "Bash(pre-commit run:*)",
       "Bash(pip list)",
@@ -14,12 +10,16 @@
       "Bash(pip show:*)",
       "Bash(pip freeze)",
       "Bash(pipx list)",
-      "Bash(pipx run:*)",
       "Bash(mypy:*)",
-      "Bash(just:*)",
-      "Bash(bats:*)",
       "Bash(bash -n:*)",
-      "Bash(bash --version)"
+      "Bash(bash --version)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m mypy:*)",
+      "Bash(python -m ruff:*)",
+      "Bash(python -m pip install -e:*)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(python3 -m mypy:*)",
+      "Bash(python3 -m ruff:*)"
     ],
     "deny": [
       "Read(./.env)",

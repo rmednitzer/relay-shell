@@ -55,6 +55,10 @@ Every tool body is identical in shape (`Relay.run`):
    (`deployment.md` §6a).
 4. **Bound** - the body is truncated to the effective output budget (byte
    safe). An `[exit N]` prefix is added when an exit code is meaningful.
+4a. **Notice** - after the audit record is written, an admitted Tier 2/3 call (or one with
+   `known_hosts=ignore`) gets one or two trailing `[NOTICE ...]` lines appended to the returned
+   string; nothing is added to the record ([ADR 0013](adr/0013-open-by-default-with-unsafe-notices.md),
+   `RELAY_SHELL_UNSAFE_NOTICES`).
 5. **Audit** - one JSON line: timestamp, tool, tier, denied flag, redacted and
    length-bounded args, SHA-256 of the final output, output byte length, exit
    code, request and client id. The output body is never written. With
@@ -85,7 +89,8 @@ syscall and is default off, so the lifecycle above is otherwise unchanged.
 | `patterns` | Version-pinned compiled regex tables for redaction and tier classification. |
 | `redaction` | Scrub secrets from audited arguments (consumes `patterns`). |
 | `audit` | Rotation-safe append-only JSONL; hash, never body. Optional tamper-evident per-record hash chain + `verify_chain` (ADR 0007). |
-| `policy` | Tier 0..3 classification (consumes `patterns`); `open`/`guarded`/`readonly` admission. |
+| `policy` | Tier 0..3 classification with its basis (consumes `patterns`); `open`/`guarded`/`readonly` admission. |
+| `notices` | The `[NOTICE ...]` text for risky admitted calls and the standing `server_info.warnings` list (ADR 0013). |
 | `broker` | Opt-in Tier-3 confirmation broker: single-use, TTL-bounded tokens bound to the operation (`sha256(tool \0 op_key)`) and to the planning client, gating IRREVERSIBLE ops behind a plan → arm → execute handshake ([ADR 0009](adr/0009-tier3-confirmation-broker.md)). |
 | `metrics` | In-memory Prometheus counter + gauge registry rendered at `GET /metrics` (HTTP only). |
 | `seccomp` | Opt-in, audit-only seccomp-notify channel: a version-pinned BPF filter + per-spawn supervisor that appends `syscall_notify` lines for a spawned child's syscalls, never blocking. Covers one-shot executors and local PTY sessions (the transport adopts the monitor for the session's lifetime). `CAP_SYS_ADMIN`-gated, Linux/`x86_64` ([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)). |

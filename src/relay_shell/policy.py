@@ -28,7 +28,7 @@ from enum import IntEnum
 
 from . import patterns
 
-__all__ = ["Policy", "PolicyDecision", "Tier", "classify"]
+__all__ = ["Assessment", "Policy", "PolicyDecision", "Tier", "assess", "classify"]
 
 
 class Tier(IntEnum):
@@ -90,17 +90,34 @@ def _strip_line_continuations(text: str) -> str:
     )
 
 
-def classify(tool: str, command: str = "") -> Tier:
-    """Best-effort tier for ``tool`` given an optional command string.
+# Why a call got its tier. Stable short strings: they are shown to the caller in a notice
+# and keyed on by tests, so change them deliberately.
+BASIS_READ_ONLY = "read-only tool"
+BASIS_IRREVERSIBLE = "matched an irreversible-operation pattern"
+BASIS_PRIVILEGE = "matched a privilege-escalation pattern"
+BASIS_STATEFUL = "matched a state-changing pattern"
+BASIS_MUTATING_TOOL = "the tool changes local or remote state"
+BASIS_DEFAULT = "arbitrary command with no state-changing pattern"
+
+
+@dataclass(frozen=True)
+class Assessment:
+    tier: Tier
+    basis: str
+
+
+def assess(tool: str, command: str = "") -> Assessment:
+    """Best-effort tier for ``tool`` given an optional command string, with its basis.
 
     Conservative: when in doubt it returns the *higher* tier. Classification
-    is advisory in ``open`` mode and enforced in the stricter modes.
+    is advisory in ``open`` mode and enforced in the stricter modes. It is a regex
+    heuristic over the command text, not a parse of the shell language.
     """
     if tool in _READ_ONLY_TOOLS:
-        return Tier.READ_ONLY
+        return Assessment(Tier.READ_ONLY, BASIS_READ_ONLY)
     text = _strip_line_continuations(command or "")
     if patterns.TIER3_PATTERN.search(text):
-        return Tier.IRREVERSIBLE
+        return Assessment(Tier.IRREVERSIBLE, BASIS_IRREVERSIBLE)
     # A privilege wrapper named only by a read-only command is data, unless the line can
     # evaluate text (`echo 'sudo ...' | sh`), in which case it is still scanned.
     priv_text = (
@@ -109,17 +126,22 @@ def classify(tool: str, command: str = "") -> Tier:
         else patterns.PRIV_ESC_READER_SEGMENT.sub(" ", text)
     )
     if patterns.PRIV_ESC_PATTERN.search(priv_text):
-        return Tier.STATEFUL
+        return Assessment(Tier.STATEFUL, BASIS_PRIVILEGE)
     if patterns.TIER2_PATTERN.search(text):
-        return Tier.STATEFUL
+        return Assessment(Tier.STATEFUL, BASIS_STATEFUL)
     if tool in _MUTATING_TOOLS:
-        return Tier.STATEFUL
+        return Assessment(Tier.STATEFUL, BASIS_MUTATING_TOOL)
     # Anything else (shell_exec/script/spawn, ssh_exec/fanout/spawn, session_send/
     # kill/resize): an arbitrary command or interactive input with no obvious
     # mutating token is reversible-by-default but never read-only. The TIER
     # heuristics above already escalate (rm -rf, systemctl restart, ...) based on
     # the command itself before we reach this default.
-    return Tier.REVERSIBLE
+    return Assessment(Tier.REVERSIBLE, BASIS_DEFAULT)
+
+
+def classify(tool: str, command: str = "") -> Tier:
+    """Best-effort tier for ``tool`` given an optional command string (see :func:`assess`)."""
+    return assess(tool, command).tier
 
 
 @dataclass(frozen=True)
@@ -127,6 +149,7 @@ class PolicyDecision:
     allowed: bool
     tier: Tier
     reason: str
+    basis: str = ""  # why the tier was chosen (one of the BASIS_* strings)
 
 
 class Policy:
@@ -142,25 +165,32 @@ class Policy:
     ) -> PolicyDecision:
         """Admit or refuse. ``min_tier`` raises the tier a caller knows is warranted
         but the text cannot show (for example a probe of a host outside the inventory)."""
-        tier = max(classify(tool, command), min_tier)
+        assessment = assess(tool, command)
+        tier = max(assessment.tier, min_tier)
+        basis = assessment.basis
+        if min_tier > assessment.tier:
+            basis = "raised by the tool (a target the command text does not show)"
         probe = f"{tool} {command}".strip()
 
         if self._deny is not None and self._deny.search(probe):
-            return PolicyDecision(False, tier, "matched RELAY_SHELL_POLICY_DENY")
+            return PolicyDecision(False, tier, "matched RELAY_SHELL_POLICY_DENY", basis)
 
         if self.mode == "readonly" and tier != Tier.READ_ONLY:
             return PolicyDecision(
-                False, tier, f"readonly mode refuses Tier {int(tier)} ({tier.name})"
+                False, tier, f"readonly mode refuses Tier {int(tier)} ({tier.name})", basis
             )
 
         if self.mode == "guarded" and tier >= Tier.STATEFUL:
             if self._allow is not None and self._allow.search(probe):
-                return PolicyDecision(True, tier, "guarded: allowed by RELAY_SHELL_POLICY_ALLOW")
+                return PolicyDecision(
+                    True, tier, "guarded: allowed by RELAY_SHELL_POLICY_ALLOW", basis
+                )
             return PolicyDecision(
                 False,
                 tier,
                 f"guarded mode refuses Tier {int(tier)} ({tier.name}) "
                 f"without an RELAY_SHELL_POLICY_ALLOW match",
+                basis,
             )
 
-        return PolicyDecision(True, tier, "permitted")
+        return PolicyDecision(True, tier, "permitted", basis)

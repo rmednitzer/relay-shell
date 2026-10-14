@@ -23,6 +23,7 @@ jobs:
         pip-audit (CVE scan)
         dependency-review
         Analyze (python) (python)
+        Analyze (actions)
       # Empty by design. Add an exact check name here only when a skipped
       # result is an explicitly valid outcome for that protected dependency.
       ALLOWED_SKIPPED_CHECKS: ""
