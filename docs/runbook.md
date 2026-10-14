@@ -701,6 +701,10 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
    repetitions, no nested quantifiers) and add a time-ceiling test with a 10-20 KB payload that
    would trigger the worst case (for example `-1` repeated), as in
    `test_cli_flag_redaction_is_not_quadratic_on_hyphen_digit_runs`.
+5. An unquoted value stops at an unquoted shell control operator (`;`, `&`, `|`), shared as
+   `_VALUE_RUN` in `patterns.py` (v15), so a command glued to a secret is not swallowed;
+   tests in `tests/test_redaction_operators.py` pin both directions. Copy that behaviour
+   into any new rule with a bare value.
 
 ### 6.6 Cut a release (PyPI via OIDC trusted publishing)
 

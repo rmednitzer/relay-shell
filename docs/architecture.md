@@ -41,7 +41,7 @@ Every tool body is identical in shape (`Relay.run`):
    admitted call is Tier 3 (IRREVERSIBLE). Without an armed confirmation the
    runner returns a single-use, TTL-bounded token (audited `action=confirm_plan`,
    no execution) and the caller must arm it via `operation_confirm` and re-issue
-   the exact same call; a confirmed re-issue proceeds and is tagged
+   the exact same call from the same authenticated client; a confirmed re-issue proceeds and is tagged
    `action=confirm_execute` ([ADR 0009](adr/0009-tier3-confirmation-broker.md)).
    Layered *after* the deny/mode check — never a bypass; default off skips the
    step entirely.
@@ -86,7 +86,7 @@ syscall and is default off, so the lifecycle above is otherwise unchanged.
 | `redaction` | Scrub secrets from audited arguments (consumes `patterns`). |
 | `audit` | Rotation-safe append-only JSONL; hash, never body. Optional tamper-evident per-record hash chain + `verify_chain` (ADR 0007). |
 | `policy` | Tier 0..3 classification (consumes `patterns`); `open`/`guarded`/`readonly` admission. |
-| `broker` | Opt-in Tier-3 confirmation broker: single-use, TTL-bounded tokens bound to `sha256(tool \0 policy_text)`, gating IRREVERSIBLE ops behind a plan → arm → execute handshake ([ADR 0009](adr/0009-tier3-confirmation-broker.md)). |
+| `broker` | Opt-in Tier-3 confirmation broker: single-use, TTL-bounded tokens bound to the operation (`sha256(tool \0 op_key)`) and to the planning client, gating IRREVERSIBLE ops behind a plan → arm → execute handshake ([ADR 0009](adr/0009-tier3-confirmation-broker.md)). |
 | `metrics` | In-memory Prometheus counter + gauge registry rendered at `GET /metrics` (HTTP only). |
 | `seccomp` | Opt-in, audit-only seccomp-notify channel: a version-pinned BPF filter + per-spawn supervisor that appends `syscall_notify` lines for a spawned child's syscalls, never blocking. Covers one-shot executors and local PTY sessions (the transport adopts the monitor for the session's lifetime). `CAP_SYS_ADMIN`-gated, Linux/`x86_64` ([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)). |
 | `errors` | Error types and the uniform `[ERROR: ...]` formatter. |

@@ -541,10 +541,10 @@ class Relay:
         confirm_action = ""
         if self.broker is not None and decision.tier == Tier.IRREVERSIBLE:
             op_key = _confirm_op_key(policy_text, audit_args)
-            if self.broker.consume(tool, op_key):
+            if self.broker.consume(tool, op_key, client_id):
                 confirm_action = "confirm_execute"
             else:
-                challenge = self.broker.plan(tool, op_key)
+                challenge = self.broker.plan(tool, op_key, client_id)
                 body = (
                     f"[CONFIRM REQUIRED tier {int(decision.tier)} "
                     f"({decision.tier.name}): this irreversible operation needs a second "
@@ -1740,13 +1740,17 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         reports that and changes nothing.
         """
 
+        # The arming client must be the one the token was issued to (A14-C10b); the same
+        # verified identity the audit record carries, never request metadata.
+        _, arming_client = _ctx_ids(ctx)
+
         async def _work() -> tuple[str, int | None]:
             if app.broker is None:
                 return (
                     "[confirmation broker disabled (RELAY_SHELL_CONFIRM_TIER3 is off)]",
                     None,
                 )
-            if app.broker.arm(token):
+            if app.broker.arm(token, arming_client):
                 return ("[armed: re-issue the exact Tier-3 call now to execute it]", None)
             return ("[invalid or expired confirmation token]", None)
 
