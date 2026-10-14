@@ -1,7 +1,5 @@
 # Relay Shell
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/rmednitzer/relay-shell)
-
 **Status:** v0.3.0 · Python 3.12 / 3.13 / 3.14 · transports: `stdio` and
 `streamable-http` · MCP SDK `mcp>=2,<3` · last validated against
 upstream surfaces on 2026-08-12
