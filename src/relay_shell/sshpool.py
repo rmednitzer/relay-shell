@@ -19,16 +19,22 @@ from typing import Any
 
 import asyncssh
 
-from .errors import ForwardError
+from .errors import ForwardError, SessionError
 from .inventory import HostSpec, Inventory
 from .util import gen_id, truncate
 
 __all__ = ["ForwardHandle", "SshPool", "SshProcessTransport"]
 
 _SIG_NAMES = {2: "INT", 9: "KILL", 15: "TERM", 1: "HUP", 3: "QUIT"}
+# Local listen address for L:/D: forwards. Never "" (asyncssh binds every interface for
+# that), which would expose an unauthenticated forward/SOCKS proxy to the network.
+_LOOPBACK = "127.0.0.1"
 _KNOWN_HOSTS_MODES = frozenset({"strict", "accept-new", "ignore"})
 # How long `run` waits for the channel to close after both output streams hit EOF.
 _WAIT_CLOSED_TIMEOUT = 5.0
+# ssh_spawn stdin back-pressure: bound the local write buffer and the wait for it to drain.
+_MAX_PENDING_WRITE = 1 << 20
+_DRAIN_TIMEOUT = 5.0
 
 
 def _known_hosts_path() -> str:
@@ -92,8 +98,14 @@ def _append_known_host(hostname: str, algo: str, b64: str, port: int | None = No
     kh.parent.mkdir(parents=True, exist_ok=True)
     existing = kh.read_text(encoding="utf-8") if kh.is_file() else ""
     if b64 not in existing:
+        # A final line without a newline would fuse with the new entry and corrupt both.
+        sep = "\n" if existing and not existing.endswith("\n") else ""
         with kh.open("a", encoding="utf-8") as fh:
-            fh.write(f"{_known_host_pattern(hostname, port)} {algo} {b64}\n")
+            fh.write(f"{sep}{_known_host_pattern(hostname, port)} {algo} {b64}\n")
+
+
+class _OwnerCancelled(Exception):
+    """The caller that owned a single-flight connect was cancelled (waiters retry)."""
 
 
 @dataclass
@@ -142,8 +154,24 @@ class SshProcessTransport:
         self._entry = entry
 
     async def write(self, data: bytes) -> None:
+        stdin = self._p.stdin
+        # A remote that stops reading must not let session_send grow the local
+        # write buffer without bound (max_input only caps a single call).
+        try:
+            pending = stdin.get_write_buffer_size()
+        except Exception:  # noqa: BLE001 - not every stdin double reports it
+            pending = 0
+        if pending > _MAX_PENDING_WRITE:
+            raise SessionError(
+                f"remote is not reading input ({pending} bytes pending); "
+                "close the session or wait for it to drain"
+            )
         with contextlib.suppress(Exception):
-            self._p.stdin.write(data)
+            stdin.write(data)
+        # A drain timeout leaves the data queued (the cap above stops further growth);
+        # a closed channel drops the input, as before.
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(stdin.drain(), _DRAIN_TIMEOUT)
 
     def resize(self, cols: int, rows: int) -> None:
         with contextlib.suppress(Exception):
@@ -361,34 +389,53 @@ class SshPool:
             # and the owner task. ``task.cancel()`` calls
             # ``self._fut_waiter.cancel()``, which without the shield
             # would cancel the shared future.
-            return await asyncio.shield(other_future)
-
-        # accept-new verifies hosts it has seen before; only a first contact is
-        # accepted unverified (and recorded below).
-        known = (
-            await asyncio.to_thread(_host_is_known, _known_hosts_path(), spec.hostname, eff_port)
-            if mode == "accept-new"
-            else False
-        )
-        opts: dict[str, Any] = {
-            "known_hosts": self._known_hosts_arg(mode, known),
-            "connect_timeout": connect_timeout or self.settings.ssh_connect_timeout,
-        }
-        if self.settings.ssh_keepalive:
-            opts["keepalive_interval"] = self.settings.ssh_keepalive
-        if eff_user:
-            opts["username"] = eff_user
-        if eff_port:
-            opts["port"] = eff_port
-        if eff_key:
-            opts["client_keys"] = [str(Path(eff_key).expanduser())]
-        if eff_jump:
-            opts["tunnel"] = eff_jump
-        cfg = self.inventory.ssh_config_file
-        if cfg:
-            opts["config"] = [cfg]
+            try:
+                return await asyncio.shield(other_future)
+            except _OwnerCancelled:
+                # The caller that owned the connect was cancelled; this waiter was
+                # not. Retry (one waiter becomes the new owner).
+                return await self.connect(
+                    target,
+                    user=user,
+                    port=port,
+                    key_path=key_path,
+                    known_hosts=known_hosts,
+                    jump=jump,
+                    connect_timeout=connect_timeout,
+                )
 
         try:
+            # Everything that can raise or be cancelled after the in-flight slot is
+            # claimed stays inside this try, so the slot is always released and
+            # later callers never wait forever on an unresolved future.
+            #
+            # accept-new verifies hosts it has seen before; only a first contact is
+            # accepted unverified (and recorded below).
+            known = (
+                await asyncio.to_thread(
+                    _host_is_known, _known_hosts_path(), spec.hostname, eff_port
+                )
+                if mode == "accept-new"
+                else False
+            )
+            opts: dict[str, Any] = {
+                "known_hosts": self._known_hosts_arg(mode, known),
+                "connect_timeout": connect_timeout or self.settings.ssh_connect_timeout,
+            }
+            if self.settings.ssh_keepalive:
+                opts["keepalive_interval"] = self.settings.ssh_keepalive
+            if eff_user:
+                opts["username"] = eff_user
+            if eff_port:
+                opts["port"] = eff_port
+            if eff_key:
+                opts["client_keys"] = [str(Path(eff_key).expanduser())]
+            if eff_jump:
+                opts["tunnel"] = eff_jump
+            cfg = self.inventory.ssh_config_file
+            if cfg:
+                opts["config"] = [cfg]
+
             conn = await asyncssh.connect(spec.hostname, **opts)
             if mode == "accept-new" and not known:
                 await self._persist_host_key(conn, spec.hostname, eff_port or None)
@@ -397,12 +444,15 @@ class SshPool:
             # subsequent caller can retry, and propagate to any waiter.
             # Only pop OUR slot — if close_all racing replaced us with a
             # fresh future for a new caller, leave that future for its
-            # owner.
+            # owner. A cancelled owner must not cancel its waiters: they get
+            # _OwnerCancelled and retry the connect themselves.
             async with self._lock:
                 if self._pending.get(key) is own_future:
                     self._pending.pop(key, None)
             if not own_future.done():
-                own_future.set_exception(exc)
+                own_future.set_exception(
+                    _OwnerCancelled() if isinstance(exc, asyncio.CancelledError) else exc
+                )
             raise
         # The connect succeeded. Before caching, check whether the
         # in-flight future was cancelled out from under us (only
@@ -526,6 +576,10 @@ class SshPool:
                 if proc is not None:
                     with contextlib.suppress(Exception):
                         proc.terminate()
+                    # SIGTERM only reaches a cooperative direct child; closing the
+                    # channel also releases the session slot on the shared connection.
+                    with contextlib.suppress(Exception):
+                        proc.close()
                     with contextlib.suppress(Exception):
                         await asyncio.wait_for(proc.wait_closed(), 2)
                 return (f"[TIMEOUT after {timeout}s]", None)
@@ -681,7 +735,7 @@ class SshPool:
         try:
             fid = gen_id("fwd")
             if kind == "L":
-                listener = await conn.forward_local_port("", lport, dhost, dport)
+                listener = await conn.forward_local_port(_LOOPBACK, lport, dhost, dport)
                 handle = ForwardHandle(
                     fid, "local", spec, listener.get_port(), f"{dhost}:{dport}", listener, entry
                 )
@@ -691,7 +745,7 @@ class SshPool:
                     fid, "remote", spec, listener.get_port(), f"{dhost}:{dport}", listener, entry
                 )
             else:  # D (validated above)
-                listener = await conn.forward_socks("", lport)
+                listener = await conn.forward_socks(_LOOPBACK, lport)
                 handle = ForwardHandle(
                     fid, "dynamic", spec, listener.get_port(), "socks", listener, entry
                 )

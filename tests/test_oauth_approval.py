@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
-from mcp.server.auth.provider import AuthorizationParams, AuthorizeError
+from mcp.server.auth.provider import AuthorizationParams, AuthorizeError, RegistrationError
 from mcp.shared.auth import OAuthClientInformationFull
 
 from relay_shell.__main__ import main
@@ -101,7 +101,7 @@ async def test_clients_registered_before_the_gate_are_carried_over_as_approved(
 async def test_a_second_registrant_is_still_refused_and_stays_pending(tmp_path: Path) -> None:
     p = _provider(tmp_path, approval=True)
     await p.register_client(_client("first", "https://evil.example/cb"))
-    with pytest.raises(ValueError, match="closed"):
+    with pytest.raises(RegistrationError, match="closed"):
         await p.register_client(_client("legit", REDIRECT))
     assert [r.client_id for r in list_clients(str(tmp_path / "oauth"))] == ["first"]
 
@@ -122,7 +122,7 @@ async def test_corrupt_clients_file_refuses_registration_and_is_left_intact(
     clients = tmp_path / "oauth" / "clients.json"
     clients.write_text('{"real": {"client_id"', encoding="utf-8")  # truncated mid-write
 
-    with pytest.raises(ValueError, match="unreadable"):
+    with pytest.raises(RegistrationError, match="unreadable"):
         await p.register_client(_client("attacker", "https://evil.example/cb"))
     assert clients.read_text(encoding="utf-8") == '{"real": {"client_id"'  # not overwritten
     assert await p.get_client("real") is None  # and nothing authenticates as it

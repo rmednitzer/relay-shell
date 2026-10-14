@@ -226,7 +226,8 @@ async def run_script(
         argv = [binary, "-s"]
         body = script
         if strict:
-            body = "set -euo pipefail\n" + script
+            # dash (/bin/sh on Debian/Ubuntu) rejects `pipefail`; POSIX sh gets -eu only.
+            body = ("set -euo pipefail\n" if interp == "bash" else "set -eu\n") + script
     elif interp in {"python", "python3", "py"}:
         argv = [sys.executable or "python3", "-"]
         body = script

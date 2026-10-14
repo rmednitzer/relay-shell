@@ -790,8 +790,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         For a single command use ``shell_exec``; for interactive or long-lived
         work that needs a TTY use ``shell_spawn``.
 
-        With ``strict`` and a shell interpreter, ``set -euo pipefail`` is
-        prepended so failures abort early.
+        With ``strict`` and a shell interpreter, ``set -euo pipefail`` (``set -eu``
+        for ``sh``) is prepended so failures abort early.
         """
         t = app.clamp_timeout(timeout)
         policy_text = _policy_text_shell_script(script, env_json)
@@ -1022,16 +1022,18 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         ctx: Context | None = None,
     ) -> str:
         """Read buffered/new output from a session, waiting up to ``timeout`` seconds."""
+        # Clamp up front so the audited value is always finite (a bare NaN/Infinity
+        # is not valid JSON for strict log shippers).
+        tmo = max(0.0, min(float(timeout), 60.0))
 
         async def _work() -> tuple[str, int | None]:
-            tmo = max(0.0, min(float(timeout), 60.0))
             mb = clamp(max_bytes, 256, app.settings.max_output_hard)
             return (await app.sessions.recv(session_id, tmo, mb), None)
 
         return await app.run(
             tool="session_recv",
             ctx=ctx,
-            audit_args={"session_id": session_id, "timeout": timeout},
+            audit_args={"session_id": session_id, "timeout": tmo},
             policy_text="",
             max_output=max_bytes,
             work=_work,
@@ -1044,8 +1046,9 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         """Resize a session's PTY."""
 
         async def _work() -> tuple[str, int | None]:
-            await app.sessions.resize(session_id, max(1, cols), max(1, rows))
-            return (f"resized {session_id} to {cols}x{rows}", None)
+            c, r = clamp(cols, 1, 0xFFFF), clamp(rows, 1, 0xFFFF)
+            await app.sessions.resize(session_id, c, r)
+            return (f"resized {session_id} to {c}x{r}", None)
 
         return await app.run(
             tool="session_resize",

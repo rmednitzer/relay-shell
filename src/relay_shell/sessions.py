@@ -105,7 +105,9 @@ class Transport(Protocol):
 
 def _set_winsize(fd: int, cols: int, rows: int) -> None:
     with contextlib.suppress(OSError):
-        packed = struct.pack("HHHH", max(1, rows), max(1, cols), 0, 0)
+        # Clamp to the unsigned-short range: struct.pack raises struct.error (not
+        # OSError) above 65535, which would leak the pty fds in spawn().
+        packed = struct.pack("HHHH", min(max(1, rows), 0xFFFF), min(max(1, cols), 0xFFFF), 0, 0)
         fcntl.ioctl(fd, termios.TIOCSWINSZ, packed)
 
 
@@ -261,7 +263,9 @@ class LocalPtyTransport:
         self.signal(signal.SIGTERM)
         try:
             await asyncio.wait_for(self._proc.wait(), 5)
-        except (TimeoutError, ProcessLookupError):
+        except (TimeoutError, ProcessLookupError, RuntimeError):
+            # RuntimeError: the process handle is bound to another (closed) event
+            # loop, as in the shutdown path, so it cannot be awaited; still kill it.
             self.signal(signal.SIGKILL)
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self._proc.wait(), 2)

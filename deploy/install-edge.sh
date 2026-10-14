@@ -214,6 +214,21 @@ log "Installing $CADDYFILE_DST"
     cat "$CADDYFILE_SRC"
 } > "$CADDYFILE_DST.tmp"
 chmod 0644 "$CADDYFILE_DST.tmp"
+
+# Validate the candidate BEFORE it replaces the live file: a bad value must not
+# leave a broken Caddyfile behind for the next restart. `caddy validate` reads the
+# same env Caddy will see at start, so export it here.
+log "Validating Caddyfile syntax"
+export RELAY_SHELL_EDGE_DOMAIN RELAY_SHELL_EDGE_ACME_EMAIL RELAY_SHELL_EDGE_ACME_CA \
+       RELAY_SHELL_EDGE_UPSTREAM RELAY_SHELL_EDGE_CLIENT_CIDRS
+if ! caddy validate --config "$CADDYFILE_DST.tmp" --adapter caddyfile; then
+    rm -f "$CADDYFILE_DST.tmp"
+    die "Caddyfile failed validation; $CADDYFILE_DST left untouched"
+fi
+if [ -e "$CADDYFILE_DST" ]; then
+    cp -p "$CADDYFILE_DST" "$CADDYFILE_DST.bak"
+    log "Previous Caddyfile saved as $CADDYFILE_DST.bak"
+fi
 mv "$CADDYFILE_DST.tmp" "$CADDYFILE_DST"
 
 # Write a dedicated systemd EnvironmentFile rather than inlining values into
@@ -271,12 +286,6 @@ cat >"$ENV_DROPIN" <<EOF
 EnvironmentFile=$EDGE_ENV_FILE
 EOF
 chmod 0644 "$ENV_DROPIN"
-
-log "Validating Caddyfile syntax"
-# `caddy validate` reads the same env Caddy will see at start, so export here.
-export RELAY_SHELL_EDGE_DOMAIN RELAY_SHELL_EDGE_ACME_EMAIL RELAY_SHELL_EDGE_ACME_CA \
-       RELAY_SHELL_EDGE_UPSTREAM RELAY_SHELL_EDGE_CLIENT_CIDRS
-caddy validate --config "$CADDYFILE_DST" --adapter caddyfile
 
 if [ "${RELAY_SHELL_EDGE_OPEN_FIREWALL:-0}" = "1" ] && command -v ufw >/dev/null 2>&1; then
     log "Opening 80/tcp and 443/tcp via ufw"

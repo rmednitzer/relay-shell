@@ -180,8 +180,11 @@ once the first client registers:
   `redirect_uri` cannot be overwritten, which would otherwise let someone who
   learned the `client_id` steer the next authorization code to their own URL
   (AUTH-2);
-- a **byte-identical** re-registration is a harmless no-op, so a client that
-  re-runs DCR with the same metadata is not broken.
+- every `/register` call is minted a fresh `client_id` by the SDK, so under
+  lockdown a repeated registration is always a *new* client and is refused with
+  an RFC 7591 `400 invalid_client_metadata` (it used to surface as an HTTP 500).
+  The provider itself still treats a byte-identical re-registration of an
+  existing `client_id` as a no-op.
 
 Set it to `false` for a multi-client deployment, where ordinary DCR (including
 metadata updates) applies.
