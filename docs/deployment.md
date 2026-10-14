@@ -244,7 +244,14 @@ RELAY_SHELL_AUTH_ISSUER=https://relay-shell.example.org
 RELAY_SHELL_AUTH_STATE_DIR=/var/lib/relay-shell/oauth
 RELAY_SHELL_AUTH_SINGLE_CLIENT=true       # lock DCR after the first client registers
 RELAY_SHELL_AUTH_REQUIRE_APPROVAL=true    # default: a new client stays pending until you approve it
+RELAY_SHELL_AUTH_RESOURCE_URL=https://relay-shell.example.org/mcp  # exact public MCP endpoint tokens are bound to
 ```
+
+`RELAY_SHELL_AUTH_RESOURCE_URL` (RFC 8707) defaults to the issuer URL when empty, so an upgrade does
+not change the identifier already advertised; set it explicitly in a new deployment. Tokens issued
+before resource binding existed are refused until re-authorized ([`auth.md`](auth.md#9-resource-binding-rfc-8707)).
+The TTL settings (`RELAY_SHELL_AUTH_ACCESS_TTL` / `_REFRESH_TTL` / `_CODE_TTL`) are in the defaults
+table in [`auth.md`](auth.md#defaults-at-a-glance).
 
 **Approve your client.** A client that registers is *pending*; `/authorize`
 refuses it until you approve it on the host
@@ -253,7 +260,8 @@ closes the window in which the first party to reach `/register` could obtain a
 token; see [`auth.md`](auth.md#operator-approval). Existing installs are carried
 over as approved on upgrade.
 
-Install the `[http]` extra. Tokens are file-backed under the state dir
+The `[http]` extra (PyJWT, cryptography) is still declared, but `mcp` 2 already depends on both, so
+a plain install is enough. Tokens are file-backed under the state dir
 (`clients.json`, `approvals.json`, `codes.json`, `tokens.json`), access tokens are short-lived,
 refresh tokens rotate on use, secrets are stored hashed rather than raw, and expiry
 is enforced lazily on read. With
@@ -405,6 +413,24 @@ call has ended, and each such listener holds one file descriptor until that proc
 2026-10-14 correction). The events ride the same off-host shipper as the
 rest of the log (`docs/audit-shipper.md`); shippers route on the `tool` field.
 
+### 6c. Audit evidence verifier and off-host sync (optional)
+
+`deploy/evidence/` ships a timer-driven verifier and an rsync wrapper that make the off-host
+copy of the audit log trustworthy. Each run recomputes every retained record's hash, checks
+sequence and `prev` continuity inside every segment and across rotation seams (a genesis reset
+only with an exact entry in a root-owned approval ledger), writes `chain-verification.jsonl`,
+`latest-anchor.json` and `retained-checkpoints.json`, and only then does the wrapper publish the
+segments and, last, the anchor as the commit marker. A failed verification publishes nothing and
+exits non-zero. It needs `RELAY_AUDIT_RSYNC_DEST` and, if logrotate keeps other than 90 rotated
+segments, `RELAY_AUDIT_RETAIN_SEGMENTS`; after logrotate prunes the oldest segment the verifier
+accepts the shortened history when it continues a checkpointed record (and hosts that rotated
+before checkpoints existed need one reviewed `approved_heads` entry). Install steps, the ledger
+format and the limits of that check are in
+[`deploy/evidence/README.md`](https://github.com/rmednitzer/relay-shell/blob/main/deploy/evidence/README.md);
+host metrics and the anchor health check are in
+[`deploy/monitoring/README.md`](https://github.com/rmednitzer/relay-shell/blob/main/deploy/monitoring/README.md).
+It complements, and does not replace, the shipper recipes in `audit-shipper.md`.
+
 ## 7. SSH credential scoping
 
 The realized credential surface is whatever keys the service account can use.
@@ -413,8 +439,9 @@ key. `RELAY_SHELL_SSH_KNOWN_HOSTS=strict` is recommended for production; pre-pop
 `~/.ssh/known_hosts` for the service account. Provide a JSON inventory via
 `RELAY_SHELL_INVENTORY` for hosts not in `ssh_config`.
 
-Every SSH tool also takes a per-call `known_hosts` argument, so by default a caller can
-pass `ignore` against a `strict` server default. Set
+The SSH tools that take connection parameters (`ssh_exec`, `ssh_spawn`, `ssh_upload`,
+`ssh_download`, `ssh_forward`) also accept a per-call `known_hosts` argument, so by default a
+caller can pass `ignore` against a `strict` server default. Set
 `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false` to refuse any per-call mode weaker than
 `RELAY_SHELL_SSH_KNOWN_HOSTS` (strength order `strict` > `accept-new` > `ignore`) with a
 bounded error; a stronger per-call mode is always allowed, and a `known_hosts` entry in the
@@ -562,6 +589,9 @@ covered above:
   or `RELAY_SHELL_ALLOW_UNAUTH_NETWORK=true`. The override is for deployments where an
   authenticating proxy is the only route to the port; `/metrics` is outside OAuth by
   design, so it is exposed to whoever can reach the port.
+- **SSH:** `RELAY_SHELL_SSH_CONFIG` (default `~/.ssh/config`) and `RELAY_SHELL_INVENTORY`
+  (JSON inventory) say where hosts come from; `RELAY_SHELL_SSH_KNOWN_HOSTS` and
+  `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS` set host-key verification (§7).
 - **SSH connect tuning:** `RELAY_SHELL_SSH_CONNECT_TIMEOUT` / `_SSH_KEEPALIVE`
   (dial timeout + keepalive; `_SSH_IDLE_TIMEOUT` for the pool reaper is in §7).
 - **Audit sink:** `RELAY_SHELL_AUDIT_STDERR` (also mirror audit lines to stderr).

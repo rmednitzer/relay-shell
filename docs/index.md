@@ -30,8 +30,9 @@ and supported versions see
 
 The [ADR index](adr/README.md) records every decision with its status and date —
 the no-sandbox full-access posture (0002), tiered authority (0003), edge-TLS
-automation (0004), the seccomp-notify audit channel (0006), and the audit hash
-chain (0007).
+automation (0004), the seccomp-notify audit channel (0006), the audit hash
+chain (0007), the Tier-3 confirmation broker (0009) and Windows targets over
+OpenSSH + PowerShell (0011).
 
 ---
 

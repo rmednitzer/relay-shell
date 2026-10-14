@@ -27,7 +27,11 @@ Conventions:
   `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false` a mode weaker than the server
   default is refused (`[ERROR: RelayError: known_hosts=... would weaken ...]`).
 - `jump` is an `ssh_config`-style `user@host[:port]` bastion (asyncssh
-  `tunnel`); `ssh_config` `ProxyJump` is also honoured automatically.
+  `tunnel`); `ssh_config` `ProxyJump` is also honoured automatically. The jump host is
+  dialled first, so it is part of the text `RELAY_SHELL_POLICY_DENY` matches against. Only
+  `ssh_exec`, `ssh_spawn`, `ssh_upload`, `ssh_download` and `ssh_forward` take the per-call
+  connection parameters (`user`, `port`, `key_path`, `known_hosts`, `jump`); `ssh_check`,
+  `ssh_fanout` and `ssh_keyscan` use the inventory and server defaults.
 
 Each tool entry below lists the test file that exercises it. Line
 numbers are intentionally omitted — they drift; the file name is the
@@ -121,6 +125,10 @@ Create a port forward. `spec`:
 - `R:rport:dhost:dport` - remote forward.
 - `D:lport` - dynamic SOCKS proxy.
 
+`L:` and `D:` listen on the relay host's **loopback only** (`127.0.0.1`), never on every
+interface, so a forward is not reachable from other hosts; `lport` may be `0` to pick a free
+port (the response reports it). An `R:` forward listens on the remote side as that sshd allows
+(`GatewayPorts`). At most `RELAY_SHELL_MAX_FORWARDS` (default 64) forwards are active at once.
 Returns a forward id and the listening port. Tier 2.
 
 Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
@@ -133,7 +141,9 @@ Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 
 ### `ssh_check`
 Probe connectivity. `hosts` is a comma/space list, or empty for the whole
-inventory. Returns `host: ok | UNREACHABLE` per host. Tier 0 for the inventory
+inventory. Returns `host: ok | UNREACHABLE` per host. `timeout` is the per-host connect-and-probe
+bound (default 5 s); the host list is capped at 100 per call, at most 8 probes run at once, and
+each probe's output is capped at 4 KiB (the probe only looks for `ok`). Tier 0 for the inventory
 (an alias or the `hostname` of an entry); Tier 1 when any requested host is not in
 the inventory, because that dials a caller-chosen address with the relay's keys, so
 `readonly` mode refuses it (as it does `ssh_keyscan`).
@@ -144,7 +154,9 @@ Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 Run `command` in parallel across `hosts` (comma/space list, or empty for
 the whole inventory). Returns one JSON object with per-host
 `exit_code` and (truncated) `output`. `concurrency` bounds how many SSH
-connections run at once (clamped to `[1, 32]`, default 8); the host
+connections run at once (clamped to `[1, 32]`, default 8); `timeout` (default 30 s) bounds
+each host's command, and a host that times out reports the same `outcome unknown` text as
+`ssh_exec`; the host
 list is capped at 100 per call to bound the outbound burst. Tier
 classification reads `command` like a regular `ssh_exec`: `ssh_fanout
 rm -rf /` is still Tier 3, `ssh_fanout systemctl restart nginx` is
@@ -202,7 +214,7 @@ flag / format / chain (the tamper-evident hash chain state, ADR 0007),
 seccomp-notify state (`notify` enabled, `supported` + `reason`, the per-call
 `cap`, the `filter_version`; ADR 0006), the Tier-3 confirmation-broker state
 (`confirm.tier3` enabled, `confirm.ttl`, live `confirm.pending` token count;
-ADR 0009), SSH defaults (known-hosts mode, connect/keepalive/idle timeouts),
+ADR 0009), SSH defaults (known-hosts mode and whether a weaker per-call mode is allowed, connect/keepalive/idle timeouts),
 inventory size. Tier 0.
 
 Tests: `tests/test_tool_wrappers.py`, `tests/test_stdio_e2e.py`.

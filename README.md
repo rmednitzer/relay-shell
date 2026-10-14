@@ -50,7 +50,7 @@ centrally; failure paths never crash the transport. The reasoning layer sits
 | `ssh_exec` | Run a command on a remote host (jump host, key/agent, known-hosts policy). |
 | `ssh_spawn` | Interactive remote PTY session. |
 | `ssh_upload` / `ssh_download` | SFTP transfer (recursive supported). |
-| `ssh_forward` | Local (`L`), remote (`R`), or dynamic SOCKS (`D`) forwarding. |
+| `ssh_forward` | Local (`L`), remote (`R`), or dynamic SOCKS (`D`) forwarding; `L`/`D` listen on loopback only. |
 | `ssh_forward_list` / `ssh_forward_close` | Manage active forwards. |
 | `ssh_check` | Connectivity probe across the inventory or a host list. |
 | `ssh_fanout` | Run a command in parallel across hosts; per-host exit codes in one JSON. |
