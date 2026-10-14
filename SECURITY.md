@@ -164,8 +164,9 @@ These are **required**, not optional, for any non-local deployment:
 5. Ship the audit log off-host and alert on gaps.
 6. Keep the host patched; treat compromise of the MCP client or transport
    as equivalent to compromise of the service account.
-7. If `RELAY_SHELL_POLICY_DENY` / `RELAY_SHELL_POLICY_ALLOW` are set,
-   review the regex for catastrophic backtracking. The pattern is compiled
+7. If `RELAY_SHELL_POLICY_DENY` / `RELAY_SHELL_POLICY_ALLOW` are set (both are unanchored
+   `re.search` patterns, and an `ALLOW` match admits the whole call, so anchor its start;
+   `docs/tools.md` lists the per-tool probe text), review the regex for catastrophic backtracking. The pattern is compiled
    with stdlib `re` (no timeout) and matched on every tool call on the
    asyncio event loop; a pathological pattern is a self-inflicted DoS.
    Prefer simple, anchored, atomic-group-free literals.

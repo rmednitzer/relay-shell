@@ -464,7 +464,12 @@ accumulate idle handles.
 - `open` - full access, every call still classified and audited. The
   documented single-owner default.
 - `guarded` - Tier 2+ refused unless `RELAY_SHELL_POLICY_ALLOW` matches; set an
-  allowlist of sanctioned change patterns.
+  allowlist of sanctioned change patterns. The pattern is an unanchored `re.search`
+  over `<tool> <policy text>`, and a match admits the whole call, so anchor the start
+  (`(?s)^shell_exec systemctl restart nginx\b`) rather than naming a word that could
+  appear anywhere in a longer command. SSH and transfer tools append host, jump and IP
+  lines after the command, so do not end-anchor with `$`; the per-tool shapes are in
+  [`tools.md`](tools.md).
 - `readonly` - only Tier 0. Useful for an observation-only client.
 
 Interactive PTY sessions are classified per input: each `session_send` payload
@@ -571,8 +576,9 @@ covered above:
 - **HTTP listener:** `RELAY_SHELL_HTTP_HOST` / `RELAY_SHELL_HTTP_PORT` (default
   `127.0.0.1:8080`; see §4).
 - **Resource bounds:** `RELAY_SHELL_MAX_OUTPUT` / `_MAX_OUTPUT_HARD` (output
-  caps), `RELAY_SHELL_DEFAULT_TIMEOUT` / `_MAX_TIMEOUT` (per-call timeout +
-  clamp), `RELAY_SHELL_MAX_SESSIONS` / `_MAX_FORWARDS` / `_MAX_CONNS`
+  caps), `RELAY_SHELL_DEFAULT_TIMEOUT` / `_MAX_TIMEOUT` (timeout used when a
+  `shell_exec` / `ssh_exec` caller omits it, default 60 s, + the clamp for every
+  call; other tools keep their own documented defaults), `RELAY_SHELL_MAX_SESSIONS` / `_MAX_FORWARDS` / `_MAX_CONNS`
   (concurrency caps — sessions, port forwards, and the SSH connection cache;
   `_MAX_CONNS` defaults to 256 and evicts the least-recently-used idle
   connection when full), `RELAY_SHELL_SESSION_IDLE_TIMEOUT` /
@@ -599,6 +605,12 @@ covered above:
 - **SSH connect tuning:** `RELAY_SHELL_SSH_CONNECT_TIMEOUT` / `_SSH_KEEPALIVE`
   (dial timeout + keepalive; `_SSH_IDLE_TIMEOUT` for the pool reaper is in §7).
 - **Audit sink:** `RELAY_SHELL_AUDIT_STDERR` (also mirror audit lines to stderr).
+
+A `RELAY_SHELL_*` name that no setting reads (a typo such as `RELAY_SHELL_POLICY_MOD`,
+in the environment or in `.env`) is ignored and the default stays in force, so the server
+logs `ignoring unknown setting ... (did you mean ...?)` at startup. Read the start-up log
+after changing a setting; `RELAY_SHELL_EDGE_*` names belong to the edge installer and are
+not reported.
 
 Tuning guidance for the bounds lives in [`runbook.md`](runbook.md) §7.
 

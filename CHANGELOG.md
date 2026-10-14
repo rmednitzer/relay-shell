@@ -121,6 +121,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Cancelling a session close no longer strands the session (A14-R10).** `close`, the idle
+  sweep and shutdown unregistered sessions before tearing them down, so a cancel part-way
+  left the rest running with no owner; teardown now runs as its own shielded task, and a
+  local PTY child that ignores SIGTERM is SIGKILLed if the close is cancelled mid-wait
+  (ADR 0012 carries the STPA trace).
+- **`RELAY_SHELL_DEFAULT_TIMEOUT` now does something (A14-C11).** `shell_exec` and `ssh_exec`
+  take `timeout=0` to mean the server default (60 s unless set); an explicit `timeout=0`
+  used to clamp to 1 s. A mistyped `RELAY_SHELL_*` name (environment or `.env`) is logged at
+  startup with a suggestion instead of silently leaving the default in force.
 - **A seccomp-notify monitor that fails open now marks the audit sink degraded** (ADR 0006;
   `on_degraded` was never wired), so `relay_shell_audit_degraded` and `server_info` show the
   gap. A call cancelled while `ssh_spawn` pins its connection no longer orphans the remote

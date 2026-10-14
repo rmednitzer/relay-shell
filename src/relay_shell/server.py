@@ -467,6 +467,12 @@ class Relay:
     def clamp_timeout(self, timeout: int) -> int:
         return clamp(timeout, 1, self.settings.max_timeout)
 
+    def exec_timeout(self, timeout: int) -> int:
+        """Per-call timeout for ``shell_exec`` / ``ssh_exec``: exactly ``0`` means the server
+        default (``RELAY_SHELL_DEFAULT_TIMEOUT``); every other value, a negative one
+        included, is clamped as usual (so a negative becomes the 1 s floor, never the default)."""
+        return self.clamp_timeout(self.settings.default_timeout if timeout == 0 else timeout)
+
     def clamp_output(self, max_output: int) -> int:
         return clamp(max_output, 1024, self.settings.max_output_hard)
 
@@ -775,7 +781,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
     @mcp.tool()
     async def shell_exec(
         command: str,
-        timeout: int = 60,
+        timeout: int = 0,
         max_output: int = 65536,
         cwd: str = "",
         stdin: str = "",
@@ -791,10 +797,11 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         ``shell_spawn``; for several statements or a non-bash interpreter use
         ``shell_script``.
 
-        Timeout and output size are clamped to the server limits. Set
+        Timeout and output size are clamped to the server limits; ``timeout=0``
+        uses the server default (60 s unless configured). Set
         ``use_shell=false`` to exec an argv without a shell.
         """
-        t = app.clamp_timeout(timeout)
+        t = app.exec_timeout(timeout)
         policy_text = _policy_text_shell_exec(command, stdin, env_json)
         return await app.run(
             tool="shell_exec",
@@ -924,7 +931,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
     async def ssh_exec(
         host: str,
         command: str,
-        timeout: int = 60,
+        timeout: int = 0,
         user: str = "",
         port: int = 0,
         key_path: str = "",
@@ -940,9 +947,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         ``ssh_fanout``.
 
         ``host`` may be an inventory/ssh_config alias or ``user@host``.
-        ``known_hosts`` is ``strict`` | ``accept-new`` | ``ignore``.
+        ``known_hosts`` is ``strict`` | ``accept-new`` | ``ignore``. ``timeout=0``
+        uses the server default (60 s unless configured).
         """
-        t = app.clamp_timeout(timeout)
+        t = app.exec_timeout(timeout)
         ck = app.connect_kwargs(user, port, key_path, known_hosts, jump)
         return await app.run(
             tool="ssh_exec",
