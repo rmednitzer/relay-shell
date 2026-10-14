@@ -13,7 +13,8 @@ All notable changes to this project are documented here. The format follows
   `relay-audit-evidence-sync` silently stopped publishing off-host. It now also accepts a
   retained history whose oldest record continues a record checkpointed by an earlier valid run
   (`retained-checkpoints.json`) while at least `RELAY_AUDIT_RETAIN_SEGMENTS` (default 90)
-  rotated segments remain, so deleting an extra segment still fails; hosts already past the
+  rotated segments remain (a guard against accidents and crude deletion, not against a writer of
+  the log directory; the off-host copy stays authoritative); hosts already past the
   window bootstrap with an exact `approved_heads` entry in the root-owned ledger. New anchor
   fields `retention_pruned_head` and `first_retained_seq`; the sync also ships the checkpoint
   file. See `deploy/evidence/README.md` ("Retention and pruning").

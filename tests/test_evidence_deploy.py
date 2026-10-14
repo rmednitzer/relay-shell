@@ -402,3 +402,89 @@ def test_verifier_accepts_a_root_approved_pruned_head(tmp_path: Path) -> None:
     (tmp_path / "audit.jsonl.3").unlink()
     result, _ = _run_verifier(tmp_path, retain=3, approvals=ledger)
     assert result.returncode == 1
+
+
+@pytest.mark.parametrize("value", ["abc", "", "0", "-3", "3661", "1.5"])
+def test_verifier_rejects_malformed_retention_values(tmp_path: Path, value: str) -> None:
+    # The setting decides whether a non-genesis history is trusted: never coerce it.
+    _write_segment(tmp_path / "audit.jsonl", _chain(2))
+    env = {
+        **os.environ,
+        "RELAY_AUDIT_LOG_DIR": str(tmp_path),
+        "RELAY_AUDIT_APPROVALS": str(tmp_path / "none.json"),
+        "RELAY_AUDIT_RETAIN_SEGMENTS": value,
+    }
+    result = subprocess.run(
+        [sys.executable, str(VERIFIER)], check=False, capture_output=True, text=True, env=env
+    )
+    assert result.returncode == 1
+    assert "RELAY_AUDIT_RETAIN_SEGMENTS must be" in result.stderr
+    assert not (tmp_path / "retained-checkpoints.json").exists()
+
+
+def test_verifier_fails_when_checkpoints_cannot_be_persisted(tmp_path: Path) -> None:
+    # Publishing a "valid" anchor that recorded no checkpoint would stall the pipeline
+    # for good once logrotate removes the genesis segment; fail loudly instead.
+    _write_segment(tmp_path / "audit.jsonl", _chain(3))
+    (tmp_path / "retained-checkpoints.tmp").mkdir()  # blocks the atomic write
+    result, evidence = _run_verifier(tmp_path)
+    assert result.returncode == 1
+    assert "could not write" in result.stderr
+    assert evidence is not None and evidence["valid"] is False
+
+
+def test_checkpoint_history_scales_with_the_retention_window(tmp_path: Path) -> None:
+    env = {"RELAY_AUDIT_RETAIN_SEGMENTS": "1000", "RELAY_AUDIT_LOG_DIR": str(tmp_path)}
+    old = {k: os.environ.get(k) for k in env}
+    os.environ.update(env)
+    try:
+        module = _load_verifier()
+    finally:
+        for key, value in old.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    assert module.RETAIN_SEGMENTS == 1000
+    assert module.MAX_CHECKPOINTS >= 1001  # every endpoint of a full window plus the active one
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() != 0, reason="ledger must be root-owned")
+def test_approved_head_can_carry_the_chain_epoch(tmp_path: Path) -> None:
+    parts = _rotated_history(tmp_path, segments=4)
+    (tmp_path / "audit.jsonl.4").unlink()
+    head = parts[1][0]
+    epoch = "ab" * 32
+
+    def _ledger(extra: dict[str, Any]) -> Path:
+        path = tmp_path / "approvals.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "approved_resets": [],
+                    "approved_heads": [
+                        {
+                            "first_seq": head["seq"],
+                            "prev": head["prev"],
+                            "approved_at": "2026-02-01T00:00:00+00:00",
+                            "reason": "Reviewed pre-checkpoint rotation.",
+                            **extra,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        path.chmod(0o644)
+        return path
+
+    result, evidence = _run_verifier(tmp_path, retain=3, approvals=_ledger({"epoch": epoch}))
+    assert result.returncode == 0, result.stderr
+    assert evidence is not None and evidence["latest_epoch"] == epoch
+    saved = json.loads((tmp_path / "retained-checkpoints.json").read_text(encoding="utf-8"))
+    assert all(entry["epoch"] == epoch for entry in saved["checkpoints"])
+
+    # A malformed epoch invalidates the ledger (fail closed).
+    result, _ = _run_verifier(tmp_path, retain=3, approvals=_ledger({"epoch": "not-hex"}))
+    assert result.returncode == 1 and "epoch must be 64 lowercase hex" in result.stderr

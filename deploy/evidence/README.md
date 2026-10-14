@@ -68,8 +68,15 @@ accepts that only when both hold:
 2. at least `RELAY_AUDIT_RETAIN_SEGMENTS` rotated segments (default 90, set it to the
    logrotate `rotate` value) are still present.
 
-Deleting even one segment more than logrotate would have fails condition 2, and a history
-that continues an unknown chain fails condition 1. The anchor reports
+Deleting a segment more than logrotate would have normally fails condition 2, and a history
+that continues an unknown chain fails condition 1. This catches accidents and crude deletion.
+It is **not** a defence against someone who can write the log directory: condition 2 counts
+files, so such a writer can split a retained segment in two (every hash and seam still verify)
+to restore the count, and the chain is keyless (ADR 0007). The off-host copy is the authority
+for that case. `RELAY_AUDIT_RETAIN_SEGMENTS` must be an integer from 1 to 3660; anything else
+fails the run instead of being coerced, and the checkpoint history is sized from it. The run
+also fails (rather than publishing a valid anchor) if `retained-checkpoints.json` cannot be
+written, since the next prune would then stall the pipeline. The anchor reports
 `retention_pruned_head` (`checkpoint`, `approved` or `null`) and `first_retained_seq`.
 Deleting whole segments at the retention boundary is, by design, indistinguishable from
 rotation locally: the off-host copy (the sync never deletes) remains the authority.
@@ -87,14 +94,19 @@ with the off-host copy), approve exactly that record in the root-owned ledger:
       "first_seq": 4321,
       "prev": "<64 lowercase hex chars from the error message>",
       "approved_at": "2026-10-14T12:00:00+00:00",
-      "reason": "Oldest segment rotated out before checkpoints existed; off-host copy matches."
+      "reason": "Oldest segment rotated out before checkpoints existed; off-host copy matches.",
+      "epoch": "<optional: latest_epoch from the last good anchor / off-host evidence>"
     }
   ]
 }
 ```
 
 `approved_heads` entries are validated like resets (root-owned ledger, timezone-aware
-`approved_at`, non-empty `reason`, unique, `first_seq >= 1`). The next valid run records
+`approved_at`, non-empty `reason`, unique, `first_seq >= 1`). The chain epoch cannot be
+recomputed from a pruned history; if you supply the optional 64-hex `epoch` (the
+`latest_epoch` of the last good anchor, kept in `chain-verification.jsonl` or off-host) the
+anchor and the new checkpoints carry it, otherwise `latest_epoch` is `null` until a genesis
+reset reappears. The next valid run records
 checkpoints, and later rotations need no further approval.
 
 ## Validate

@@ -24,19 +24,29 @@ ANCHOR = LOG_DIR / "latest-anchor.json"
 # segments the retained history no longer starts at genesis; it is still trustworthy
 # when its first record continues a record this file proves was verified before.
 CHECKPOINTS = LOG_DIR / "retained-checkpoints.json"
-MAX_CHECKPOINTS = 512
 HEX64 = frozenset("0123456789abcdef")
+MAX_RETAIN_SEGMENTS = 3660  # ten years of daily rotation
 
 
-def _retain_segments() -> int:
-    """Rotated segments logrotate keeps (`rotate N`); head-pruning is only legitimate at N."""
+def _retain_segments() -> tuple[int, str | None]:
+    """Rotated segments logrotate keeps (`rotate N`); head-pruning is only legitimate at N.
+
+    A malformed or out-of-range value is an error (the run fails), never silently
+    coerced: this setting decides whether a non-genesis history is trusted.
+    """
+    raw = os.environ.get("RELAY_AUDIT_RETAIN_SEGMENTS", "90").strip()
     try:
-        return max(1, int(os.environ.get("RELAY_AUDIT_RETAIN_SEGMENTS", "90")))
+        value = int(raw)
     except ValueError:
-        return 90
+        return 90, f"RELAY_AUDIT_RETAIN_SEGMENTS must be an integer, got {raw!r}"
+    if not 1 <= value <= MAX_RETAIN_SEGMENTS:
+        return 90, f"RELAY_AUDIT_RETAIN_SEGMENTS must be 1..{MAX_RETAIN_SEGMENTS}, got {value}"
+    return value, None
 
 
-RETAIN_SEGMENTS = _retain_segments()
+RETAIN_SEGMENTS, RETAIN_ERROR = _retain_segments()
+# Keep every endpoint a full retention window can still need (plus the active segment).
+MAX_CHECKPOINTS = max(512, 2 * RETAIN_SEGMENTS + 16)
 GENESIS = "0" * 64
 # The live, actively-appended segment. Rotated segments carry a numeric/date
 # suffix (optionally `.gz`); only this one is written concurrently with the
@@ -155,7 +165,16 @@ def load_approvals() -> tuple[
                 raise ValueError(f"approved_heads[{index}].reason must be non-empty")
             if (first_seq, prev) in heads:
                 raise ValueError(f"duplicate approved head: seq {first_seq} prev {prev}")
-            heads[(first_seq, prev)] = {"approved_at": approved_at, "reason": reason.strip()}
+            epoch = entry.get("epoch")
+            if epoch is not None and not (
+                isinstance(epoch, str) and len(epoch) == 64 and set(epoch) <= HEX64
+            ):
+                raise ValueError(f"approved_heads[{index}].epoch must be 64 lowercase hex chars")
+            heads[(first_seq, prev)] = {
+                "approved_at": approved_at,
+                "reason": reason.strip(),
+                "epoch": epoch or "",
+            }
 
         digest = hashlib.sha256(raw).hexdigest()
         return approvals, heads, digest, None
@@ -277,6 +296,8 @@ def main() -> int:
     errors: list[str] = []
     if approval_error:
         errors.append(approval_error)
+    if RETAIN_ERROR:
+        errors.append(RETAIN_ERROR)
     if checkpoint_warning:
         print(checkpoint_warning, file=sys.stderr)
 
@@ -330,6 +351,9 @@ def main() -> int:
                 before = (first["seq"] - 1, first["prev"])
                 if head in approved_heads:
                     pruned_head = "approved"
+                    # The chain epoch cannot be recomputed from a pruned history; the
+                    # reviewed ledger entry may carry it (from the last anchor).
+                    latest_epoch = approved_heads[head]["epoch"] or None
                 elif before in checkpoints and rotated_count >= RETAIN_SEGMENTS:
                     # Logrotate pruned older segments: the oldest retained record
                     # continues one a previous valid run verified, and the full
@@ -386,6 +410,16 @@ def main() -> int:
     if not segments:
         errors.append("no chained audit records found")
 
+    LOG_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
+    if not errors:
+        # Persist the boundary records BEFORE declaring the run valid: a run that cannot
+        # record them would publish a valid anchor and then stall for good once logrotate
+        # removes the genesis segment, so it must fail loudly now.
+        try:
+            save_checkpoints(checkpoints, fresh_checkpoints)
+        except OSError as exc:
+            errors.append(f"could not write {CHECKPOINTS}: {exc}")
+
     now = datetime.now(UTC).isoformat()
     valid = not errors
     anchor = {
@@ -413,13 +447,6 @@ def main() -> int:
         "segment_summary": segments,
     }
 
-    LOG_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
-    if valid:
-        try:
-            save_checkpoints(checkpoints, fresh_checkpoints)
-        except OSError as exc:
-            # Best effort: a failed checkpoint write only delays head-pruning tolerance.
-            print(f"could not write {CHECKPOINTS}: {exc}", file=sys.stderr)
     with EVIDENCE.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(evidence, separators=(",", ":")) + "\n")
         handle.flush()
