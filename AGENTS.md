@@ -3,6 +3,7 @@
 ## Repository-specific workflow
 
 MCP shell/SSH operator infrastructure. Read `docs/runbook.md` (especially its audit/review/validation sections), relevant `docs/adr/`, and `SECURITY.md`.
+
 - Preserve intentional scoped and privileged/root deployment modes, shell/SSH, sessions, transfers and forwarding. The executor has no internal sandbox. Do not silently remove capabilities or introduce a sandbox; changes to posture need explicit scope and design review.
 - Every execution path passes through the central audited runner. Preserve deny-first precedence across open/guarded/readonly modes, tier classification, confirmation-token binding/expiry/single-use semantics, redaction, timeout/output/session caps, and SSH host verification.
 - Classification regexes are heuristics, not a complete shell-language security boundary. Never claim that a permitted shell command or privileged client is contained by the classifier.
@@ -130,6 +131,7 @@ product, edition, profile and justified exceptions. Preserve existing CTL-/POL- 
 Do not infer legal applicability, ISO conformance or certification from a mapping.
 
 Primary references:
+
 - [NIST SSDF](https://csrc.nist.gov/pubs/sp/800/218/final)
 - [OWASP ASVS](https://owasp.org/www-project-application-security-verification-standard/)
 - [MIT STPA handbook](https://psas.scripts.mit.edu/home/books-and-handbooks/)
