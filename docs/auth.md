@@ -9,7 +9,7 @@
 
 This document explains how a client authenticates and, in particular, **how a
 single client stays authenticated over time**. For the operational enable
-steps (env vars, the `[http]` extra, the Caddy edge) see
+steps (env vars, the Caddy edge) see
 [`deployment.md` §5](deployment.md). For the threat model see
 [`SECURITY.md`](https://github.com/rmednitzer/relay-shell/blob/main/SECURITY.md).
 
@@ -77,8 +77,9 @@ calls `load_access_token` to validate it. Two guards matter there:
   code, so a copy of the state directory yields nothing usable as a bearer
   credential. A presented secret that is not plain URL-safe base64 (for instance a
   stored `sha256:...` key replayed as a token) is refused before any lookup. Files
-  from before this change are rewritten on the next start and credentials issued
-  under the old format keep working;
+  from before hashing are rewritten on the next start; a record that carries no
+  matching `resource` binding (issued before resource binding, see below) is refused
+  rather than honoured;
 - the whole-file read that backs each authenticated request runs on a worker
   thread, so it does not block the event loop.
 
@@ -131,6 +132,27 @@ between an access token and its paired refresh token (RFC 7009 leaves that
 unspecified and the provider opts out, in both directions — see the
 `test_revoke_*` cases). To fully cut a client off, revoke both, or let the
 short access TTL expire and revoke the refresh token.
+
+### 9. Resource binding (RFC 8707)
+
+Every authorization code, access token and refresh token is bound to **this server's
+resource identifier**: `RELAY_SHELL_AUTH_RESOURCE_URL`, or the issuer URL when that is
+empty (so upgrading does not change the identifier discovery already advertises). Set it
+to the exact public MCP endpoint in a new deployment.
+
+- A request with no `resource` parameter is bound to the configured resource; a `resource`
+  that names anything else is refused (`invalid_target` on `/authorize` and `/token`), and
+  so is a repeated `resource` parameter at the token endpoint (a small middleware checks it
+  because the SDK parses but does not pass it on).
+- Code and refresh exchange use the **stored** grant (scopes and resource), never
+  caller-supplied scopes or audience, and `load_access_token` validates the bound resource
+  of every bearer token (`validate_token_resource`).
+- A stored record whose `resource` is missing or different fails closed: an access token
+  answers 401, a refresh or code exchange answers `invalid_grant`. There is no automatic
+  grandfathering and no timed fail-open mode, so grants issued before this binding existed
+  must be re-authorized (or rebound offline, see
+  [`runbook.md` §10](runbook.md)). Do not change the issuer or resource identifier in the
+  same step as that migration.
 
 ## Operator approval
 
@@ -227,6 +249,7 @@ metadata updates) applies.
 | Code TTL | `RELAY_SHELL_AUTH_CODE_TTL` | `300` (5 min) | Authorization-code lifetime (single-use). |
 | State dir | `RELAY_SHELL_AUTH_STATE_DIR` | `/var/lib/relay-shell/oauth` | `clients.json` / `approvals.json` / `codes.json` / `tokens.json` (`0o700`/`0o600`). |
 | Issuer | `RELAY_SHELL_AUTH_ISSUER` | `https://localhost:8080` | Advertised issuer URL. |
+| Resource URL | `RELAY_SHELL_AUTH_RESOURCE_URL` | empty (= the issuer URL) | The exact public MCP endpoint that tokens are bound to (RFC 8707). |
 
 ## Security model — why opt-in
 

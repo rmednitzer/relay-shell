@@ -74,7 +74,11 @@ and redaction are heuristic; arbitrary shell execution is not a containment boun
   the check never blesses an absent or front-excised trail; `--segment`
   accepts a legitimate mid-stream rotation segment. Tail-truncation and
   cross-file durability remain the off-host shipper's job (a single file
-  cannot prove its own newest record is the true end).
+  cannot prove its own newest record is the true end). The bundled
+  `deploy/evidence/` verifier checks every retained segment and the seams between
+  them and gates the off-host copy on the result (it tolerates logrotate pruning the
+  oldest segments, see its README for what that does and does not detect). A runtime
+  write failure marks the audit sink degraded rather than silently dropping records.
 - **Secret redaction.** Audited arguments are scrubbed for bearer tokens,
   API keys, private-key blocks, `Authorization` headers, long-name CLI
   flags (both `--password` and single-dash `-token=` forms, including
@@ -100,12 +104,17 @@ and redaction are heuristic; arbitrary shell execution is not a containment boun
   secret flags (`--client-secret V`, `--access-token V`, `--passphrase V`),
   `curl -u user:pass`, `sshpass -p`, `docker login -p`, `openssl -pass pass:`
   and URL passwords containing `@` are covered. A password containing `/` in a
-  URL cannot be told from a path and is not redacted. **Input typed into a PTY
+  URL cannot be told from a path and is not redacted. Compound key variables
+  (`SECRET_KEY=`, `DJANGO_SECRET_KEY=`, `ENCRYPTION_KEY=`, `PRIVATE_KEY=`,
+  `ACCESS_KEY=`, `SIGNING_KEY=`, `*_KEY_BASE=`) and PGP private-key blocks are covered;
+  positional secrets with no keyword, `password := V` forms and URL user-info tokens with
+  no colon are not. **Input typed into a PTY
   session** has no keyword for any of this to find, so `session_send` input is
   withheld from the audit record when the session is at a secret prompt (the last
   output line reads like one, or the terminal has echo off), and
   `RELAY_SHELL_AUDIT_SESSION_INPUT=hash` records only its length and SHA-256 for
-  deployments that must never log typed content. A secret typed at a prompt this
+  deployments that must never log typed content (at a recognised secret prompt the digest
+  is withheld too, since an unsalted hash of a password can be brute-forced). A secret typed at a prompt this
   heuristic does not recognise is still recorded. See
   `src/relay_shell/redaction.py` for the full pattern set.
 - **OAuth client approval.** Dynamic registration is open and the authorization
@@ -115,11 +124,17 @@ and redaction are heuristic; arbitrary shell execution is not a containment boun
   (`relay-shell --auth-approve`; `RELAY_SHELL_AUTH_REQUIRE_APPROVAL`, default on),
   existing clients are carried over as approved at upgrade, and an unparsable state
   file fails closed. See `docs/auth.md` (Operator approval).
+- **SSH host identity.** Host keys are verified: `RELAY_SHELL_SSH_KNOWN_HOSTS` is `strict`
+  (known hosts only), `accept-new` (trust on first use; a changed key is refused) or
+  `ignore` (never verifies). A caller may pass a weaker `known_hosts` per call unless
+  `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false`; the audit record states the mode actually
+  used. Jump hosts are verified against `~/.ssh/known_hosts`. Local (`L`) and dynamic (`D`)
+  forwards listen on loopback only.
 - **Resource bounds.** Per-call timeout and output caps, a bounded number of
   concurrent sessions, bounded per-session buffers, and idle/lifetime
   reaping. Failure paths return a structured error string; a tool never
   raises into the transport.
-- **Optional OAuth 2.1 edge** (HTTP transport, `[http]` extra): dynamic
+- **Optional OAuth 2.1 edge** (HTTP transport): dynamic
   client registration with single-client lockdown, PKCE, file-backed
   access/refresh tokens (stored hashed, never raw) with rotation and expiry. **Opt-in, disabled by
   default** (`RELAY_SHELL_AUTH_ENABLED=false`); enable it for any HTTP exposure
@@ -138,7 +153,9 @@ These are **required**, not optional, for any non-local deployment:
    front with an IP allowlist (reference `deploy/Caddyfile`).
 3. Apply the systemd unit and hardening drop-in (`deploy/systemd/`).
 4. Scope SSH credentials per role; prefer one key per scope, revocable
-   independently. Do not reuse a single all-powerful key.
+   independently. Do not reuse a single all-powerful key. Use
+   `RELAY_SHELL_SSH_KNOWN_HOSTS=strict` with `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false`
+   in production.
 5. Ship the audit log off-host and alert on gaps.
 6. Keep the host patched; treat compromise of the MCP client or transport
    as equivalent to compromise of the service account.

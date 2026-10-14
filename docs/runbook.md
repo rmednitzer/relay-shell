@@ -250,12 +250,15 @@ s = get_settings()
 inv = Inventory(s.ssh_config, s.inventory).load()
 for h in inv.hosts(): print(h.as_dict())
 print('default known_hosts mode:', s.ssh_known_hosts)
+print('per-call weaker mode allowed:', s.ssh_allow_weaker_known_hosts)
 "
 ```
 
-For production: `ssh_known_hosts` should be `strict`. `accept-new` is
-trust-on-first-use (a known host is verified, a changed key is refused) and is
-fine for dev. `ignore` outside tests is a finding.
+For production: `ssh_known_hosts` should be `strict` and
+`ssh_allow_weaker_known_hosts` `false`, so a caller cannot pass `known_hosts=ignore` per
+call. `accept-new` is trust-on-first-use (a known host is verified, a changed key is refused)
+and is fine for dev. `ignore` outside tests is a finding. An inventory entry may still set its
+own `known_hosts` (it is operator-written); the audit record shows the mode actually used.
 
 ### 2.8 Edge / OAuth (HTTP transport only)
 
@@ -282,11 +285,16 @@ On a real deployment:
 lsattr /var/log/relay-shell/audit.jsonl | head -1
 # Logrotate config installed and recognized?
 sudo logrotate -d /etc/logrotate.d/relay-shell 2>&1 | head -30
-# Off-host shipping running?  (deployment-specific; not in-tree)
+# Off-host shipping running?  The shipper itself is deployment-specific; if the
+# bundled verifier/sync (deploy/evidence/) is installed, check the anchor:
+jq '{valid, generated_at, latest_seq, retention_pruned_head}' /var/log/relay-shell/latest-anchor.json
+systemctl status relay-audit-evidence.timer
 ```
 
-A degraded audit (e.g. permission-denied on the path) is reported in
-`server_info().audit.degraded`. That flag flipping to `true` in production
+`valid` must be `true` and `generated_at` recent; `valid: false` or a stale anchor means
+off-host publishing has stopped (read `chain-verification.jsonl` for the errors). A degraded
+audit (a bad path at start-up, a non-regular sink, or a write that failed at runtime) is
+reported in `server_info().audit.degraded`. That flag flipping to `true` in production
 is page-worthy.
 
 ---
@@ -322,16 +330,16 @@ Use this for every PR, your own or external.
 | `server.py`          | Every new tool goes through `Relay.run()`. No tool ever raises into the transport.                |
 | `patterns.py`        | The single home for `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN` and the redaction tables. Any change bumps `PATTERNS_VERSION`. Paired tests in `tests/test_patterns.py`. |
 | `policy.py`          | Consumes `patterns`; deny list is still the first gate; `_READ_ONLY_TOOLS` / `_MUTATING_TOOLS` membership intact. |
-| `audit.py`           | Output body never written, only `sha256` + `len`. `degraded` path still degrades, not crashes. With `audit_chain` on, `seq`/`prev`/`chain` are appended under `_chain_lock` and `verify_chain` round-trips (ADR 0007); the default-off path is byte-identical. |
+| `audit.py`           | Output body never written, only `sha256` + `len`. `degraded` path still degrades, not crashes, and a runtime write failure (not just a bad path at start-up) sets `degraded`. With `audit_chain` on, `seq`/`prev`/`chain` are appended under `_chain_lock` and `verify_chain` round-trips (ADR 0007); the default-off path is byte-identical. |
 | `redaction.py`       | Consumes `patterns`; the loop order (URL creds → prefix patterns → whole-match patterns → MySQL family) is unchanged. |
 | `sessions.py`        | Lost-wakeup invariant: `recv` clears the event under the buffer lock before awaiting. PTY spawn adopts the active seccomp monitor; the transport stops it in `aclose()` — on the failure path too (B-026). |
-| `sshpool.py`         | `known_hosts` arg is validated. Connection cache keyed by `user@host:port`. Forwards leak-free.   |
-| `auth/oauth.py`      | File modes (0o700 dir / 0o600 files), atomic save, lazy expiry, single-client lockdown intact.    |
+| `sshpool.py`         | `known_hosts` arg is validated and, when `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false`, may not weaken the server default. The connection cache key includes user, port, verification mode, identity key and jump host; a failed or cancelled connect always releases its single-flight slot. `L:`/`D:` forwards listen on loopback only. Forwards leak-free. |
+| `auth/oauth.py`      | File modes (0o700 dir / 0o600 files), atomic save (unique temp, fsync, rename; ownership of the state dir kept when run as root), approval written before the client, lazy expiry, single-client lockdown intact, refusals raised as `RegistrationError`/`TokenError` (never a bare exception), every grant bound to the configured resource. |
 | `auth/admin.py`      | Approve / reject only touch the named client's approval, codes and tokens; an unreadable store is an error, not empty. |
 | `shelltools.py`      | `start_new_session=True` preserved (so `killpg` works). Env overlay does not propagate JSON errors. |
 | `inventory.py`       | Wildcard `Host *` patterns are skipped in the flat listing. `resolve()` passthrough behavior holds. The raw ssh_config parse is retained so `ssh_config_aliases()` reports aliases that an inventory entry overrides. |
 | `metrics.py`         | Counter / gauge label cardinality stays bounded. The `tool` label on resource reads is the STABLE name, never a user-controlled string. Hand-rolled exposition stays compliant (HELP + TYPE per metric, label escaping). The `syscall` label on the seccomp counters comes from the fixed `NOTIFIED_SYSCALLS` set. |
-| `seccomp.py`         | Opt-in, default-off, `CAP_SYS_ADMIN`-gated; **never** latches `no_new_privs` (preserves set-uid/`sudo`). The supervisor only ever answers CONTINUE — it must never block/kill a child. `SECCOMP_FILTER_VERSION` bumps on any filter / notified-set change. `syscall_notify` events carry raw scalar register args only — no buffer dereference. Paired tests in `tests/test_seccomp.py`; the privileged paths are `seccomp`-marked. |
+| `seccomp.py`         | Opt-in, default-off, `CAP_SYS_ADMIN`-gated; **never** latches `no_new_privs` (preserves set-uid/`sudo`). The supervisor only ever answers CONTINUE — it must never block/kill a child, and `stop()` must not close a listener that a surviving process still needs (it hands it to the detached server, ADR 0006 correction). `SECCOMP_FILTER_VERSION` bumps on any filter / notified-set change. `syscall_notify` events carry raw scalar register args only — no buffer dereference. Paired tests in `tests/test_seccomp.py`; the privileged paths are `seccomp`-marked. |
 | `verifier.py`        | Template lookup tries packaged `_deploy` first, then source-tree `deploy/`. Each pair in `DEFAULT_PAIRS` has a stable `name`; new pairs must be reflected in `docs/deployment.md` §10. |
 
 ### 3.3 Security-sensitive diffs
@@ -344,6 +352,8 @@ Trigger an extra review pass if the diff touches:
 - `metrics.py` (label-cardinality and label-value-escaping invariants are part of the trust boundary - a model that controls a label could otherwise smuggle data into the exposition)
 - `seccomp.py` (the BPF filter, the notified-syscall set, the `CAP_SYS_ADMIN` gate, or the never-`no_new_privs` / always-CONTINUE invariants - a change here can alter the audit shape or the no-sandbox posture)
 - `broker.py` (ADR 0009 Tier-3 confirmation broker: the plan->execute token identity/binding, its TTL, and the always-*after*-the-deny/mode-check layering - a change here can weaken the friction on irreversible operations or, if it ran before the deny/mode check, turn a safeguard into a bypass)
+- `deploy/evidence/*` (the audit-evidence verifier and sync: a change that relaxes what counts as a valid anchor stops the anti-tail-truncation control working) and `.github/workflows/release.yml` / `sbom.yml` / `requirements-build.txt` / `requirements-sbom.txt` (the jobs that build, sign and publish: privileges must stay separate from package installs)
+- `sshpool.py` (host-key verification, the connection-cache key, forwards)
 - `verifier.py` (the `relay-shell --verify-deploy` drift comparator: a change that silently widens the byte-for-byte comparison, or the single-leader-line strip it allows, could report `OK` for a hand-edited systemd unit or Caddyfile - the same class of hardening-regression the comparator exists to catch)
 - `deploy/install*.sh` (anything that writes a systemd unit / EnvironmentFile)
 - `deploy/Caddyfile` (CIDR matcher or header changes)
@@ -451,7 +461,7 @@ sudo systemd-run --wait --pipe --collect \
 Keep the transient unit scoped to `CAP_SYS_ADMIN`; do not disable the running
 Relay channel or relax its service posture just to execute the tests.
 
-### 4.3 Coverage (CI floor: 90%, current ~92%)
+### 4.3 Coverage (CI floor: 90%, last measured 93%)
 
 `coverage` is in the dev extra and runs as part of the CI loop with a
 90% floor that fails the workflow on regression. Reproduce locally:
@@ -480,10 +490,15 @@ to runs that opt in.
 
 Modules to bring to and hold above 90%: `policy.py`, `redaction.py`,
 `audit.py`, `sessions.py`. Anything that handles secrets or admission.
-After B-022, `sshpool.py` is at ~96% and `server.py` wrapper bodies are
-at ~95%. The remaining gap is in `sessions.py` (~85%; OS-specific
-BlockingIOError + NotImplementedError fallbacks) and `auth/oauth.py`
-(~84%; HTTP transport only).
+Last measured (2026-10-14, as root so the live `seccomp` tests ran, no subprocess
+collection): 93% total; `policy`, `redaction`, `patterns`, `broker`, `metrics`,
+`auth/admin` at 100%; `sshpool.py` 97%, `server.py` 97%, `seccomp.py` 96%,
+`auth/oauth.py` 93%, `audit.py` 95%. The remaining gaps are `sessions.py` (~88%;
+OS-specific BlockingIOError + NotImplementedError fallbacks), `inventory.py` (~91%) and
+`__main__.py` (~56% without subprocess collection: the CLI tests run the program as a
+subprocess, so use the recipe above). A non-root runner (GitHub Actions) skips the live
+`seccomp` tests and reports less for `seccomp.py`. `branch = true` is not enabled, so
+untaken branches inside covered lines are not reported.
 
 ### 4.4 Type-checking notes
 
@@ -534,11 +549,13 @@ Before tagging a release:
 - [ ] `git tag -s vX.Y.Z` (signed) and `git push --tags`.
 
 When the tag lands, `.github/workflows/release.yml` builds and publishes to
-PyPI via OIDC trusted publishing (verify → build → publish; the full
+PyPI via OIDC trusted publishing (verify → build → attest → publish; the full
 procedure and the one-time PyPI / `pypi`-environment setup are in §6.6), and
 `.github/workflows/sbom.yml` generates a CycloneDX SBOM (JSON + XML, CDX
-spec 1.5) for the resolved environment, attaches both files to the GitHub
-release, and attests their build provenance. B-005 (PyPI publish automation)
+spec 1.5, pinned) for the package's runtime environment, attaches both files to the
+GitHub release, and attests their build provenance. Both workflows install their
+tooling from the hash-locked `requirements-build.txt` / `requirements-sbom.txt`
+(§6.6 says how to regenerate them). B-005 (PyPI publish automation)
 closed in 0.1.0 with `release.yml`; the one-time PyPI trusted-publisher /
 `pypi`-environment setup is documented in §6.6.
 
@@ -603,7 +620,8 @@ number.
 3. Register the tool in `server.py` as `@mcp.tool()`. The wrapper must:
    - clamp its timeout/output budget via `app.clamp_timeout` / `app.clamp_output`;
    - call `app.run(...)` with `policy_text` covering **every** byte the
-     executor will see (command + stdin + env_json + script body);
+     executor will see (command + stdin + env_json + script body; for an SSH tool
+     also the destination host and any jump host);
    - return only through `app.run`, never raise.
 4. Update, in the same PR:
    - `tests/test_server.py::_EXPECTED` (and the `len()` assertion).
@@ -658,6 +676,12 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
    heuristic represents a new category (not just another verb).
 4. Never replaces the deny list as a security control. The heuristics
    are advisory in `open` mode; the deny list is the only guarantee.
+5. Keep the pattern linear. The classifier runs synchronously on the event loop before
+   the deny list, so bound every repetition (`{0,N}` rather than `*`/`+` on a class that can
+   match whitespace or the pattern's own separator) and never put two adjacent quantifiers
+   over overlapping classes. Add a time-ceiling test with a 20-100 KB adversarial payload
+   (whitespace runs, repeated `dd `/`rm `) next to the positive/near-miss pair, and run
+   `pytest -m fuzz -v` (the fuzz inputs are short, so they do not replace that test).
 
 ### 6.5 Add a new redaction rule
 
@@ -673,6 +697,10 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
    `tests/test_patterns.py` (or `tests/test_redaction.py` for higher-
    level scenarios). The `test_redact_cli_flag_does_not_eat_next_flag`
    family is the model.
+4. Redaction runs on every audit record on the event loop: keep the rule linear (bounded
+   repetitions, no nested quantifiers) and add a time-ceiling test with a 10-20 KB payload that
+   would trigger the worst case (for example `-1` repeated), as in
+   `test_cli_flag_redaction_is_not_quadratic_on_hyphen_digit_runs`.
 
 ### 6.6 Cut a release (PyPI via OIDC trusted publishing)
 

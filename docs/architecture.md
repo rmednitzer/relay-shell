@@ -48,6 +48,11 @@ Every tool body is identical in shape (`Relay.run`):
 3. **Execute** - the work coroutine runs. `RelayError` and any other exception
    are converted to a bounded `[ERROR: ...]` string; nothing propagates into
    the transport.
+   A client disconnect or MCP cancellation during this step terminates the work (the local
+   process group is killed, a remote command is sent a terminate) and is audited as
+   `action=cancelled`; with `RELAY_SHELL_AUDIT_INTENT=true` an `action=intent` record is also
+   written before the work starts, so a relay crash mid-command still leaves a trace
+   (`deployment.md` §6a).
 4. **Bound** - the body is truncated to the effective output budget (byte
    safe). An `[exit N]` prefix is added when an exit code is meaningful.
 5. **Audit** - one JSON line: timestamp, tool, tier, denied flag, redacted and
@@ -110,7 +115,7 @@ The five `Relay.run` steps above correspond to specific call sites in
 | Step | Where |
 |------|-------|
 | 1 Identify | `_ctx_ids(ctx)` (best-effort `request_id` / `client_id` from `Context`). |
-| 2 Classify + admit | `self.policy.check(tool, policy_text)` from `policy.Policy.check`. |
+| 2 Classify + admit | `self.policy.check(tool, policy_text, min_tier)` from `policy.Policy.check`. |
 | 3 Execute | `await work()` - the per-tool coroutine captured by the wrapper. |
 | 4 Bound | `truncate(body, self.clamp_output(max_output))` from `util.truncate`. |
 | 5 Audit | `self.audit.record(...)` from `audit.AuditLogger.record`. |

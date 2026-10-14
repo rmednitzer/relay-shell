@@ -6,7 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed (audit follow-up 2026-10-14)
+### Added
+
+- **`RELAY_SHELL_MAX_CONNS`** (default 256) — a hard ceiling on the live SSH
+  connection cache (`SshPool._conns`), mirroring `max_sessions` / `max_forwards`
+  for the cache that sits underneath them (CONN-1, 2026-08-04 audit pass). Idle
+  eviction (`ssh_idle_timeout`) is opportunistic and unbounded in count, so a
+  caller varying the target or per-call `user`/`port`/`key_path` across many
+  reachable hosts could accumulate live SSH sessions between sweeps. When the
+  cache is full a new connect evicts the least-recently-used **unpinned** entry
+  (a connection in active use — a session, forward, or in-flight run — is never
+  evicted, so the cap is transiently exceeded rather than dropping a live
+  connection). Surfaced in `server_info.config.max_conns`.
+
+- **`RELAY_SHELL_MAX_INPUT`** (default 2097152 characters) and
+  **`RELAY_SHELL_ALLOW_UNAUTH_NETWORK`** (default `false`); `server_info.limits.max_input`.
+- **`RELAY_SHELL_AUTH_REQUIRE_APPROVAL`** (default `true`) and the `relay-shell
+  --auth-list` / `--auth-approve` / `--auth-reject` operator commands (see Security).
+- **`RELAY_SHELL_AUDIT_SESSION_INPUT`** (`redacted` default, or `hash`) — how
+  `session_send` input is recorded (see Security). Surfaced in
+  `server_info.audit.session_input`.
+- **`RELAY_SHELL_AUDIT_INTENT`** (default off) — write-ahead audit: append an
+  `action=intent` record before a call's work starts, so a crash or SIGKILL of the
+  relay mid-command no longer leaves an executed command with no record. Default off
+  keeps one record per call. Surfaced in `server_info.audit.intent`.
+
+### Changed
 
 - **Seccomp-notify no longer breaks backgrounded jobs when the call ends** (A14-R4). `stop()`
   closed the notify listener as soon as the call returned (or a PTY session closed); a
@@ -67,7 +92,34 @@ All notable changes to this project are documented here. The format follows
   authorization; `docs/auth.md` and `SECURITY.md` state what the edge CIDR gate does and does
   not bound. No behaviour change.
 
-### Fixed (audit 2026-10-14)
+- Consolidate Codex, Claude Code and Copilot guidance with repository-specific secure development, STPA traceability and private vulnerability reporting.
+
+- **Audit records for `ssh_upload`, `ssh_download`, `ssh_forward` and `ssh_spawn` now
+  carry the connection identity** (M6): `user`, `port`, `key_path`, `jump`, plus
+  `recursive` for transfers (`ssh_spawn` gained `jump`). Additive `args` fields; the
+  top-level record shape is unchanged. With the Tier-3 broker on, these fields are
+  part of the confirmed operation, so a token no longer covers a different user,
+  port, key or jump host.
+
+- Refreshed tested pins: `mcp` 2.2.0 to 2.3.0, `asyncssh` 2.24.0 to 2.24.1,
+  `mypy` 2.3.1 to 2.4.0, `ruff` 0.16.9 to 0.16.10 (kept in lockstep across
+  `requirements.txt`, the `dev` extra, and the pre-commit hook). Lint, format,
+  mypy strict, the full suite, and `pip-audit` pass on Python 3.13.
+- **Migrated to the MCP Python SDK v2** and bound every dependency below its
+  next major (PR #164, #165, 2026-08-12). `mcp.server.fastmcp.FastMCP` is now
+  `mcp.server.mcpserver.MCPServer`; the `host`/`port`/`stateless_http`/
+  `json_response` constructor kwargs moved to per-transport `run()` options
+  (`http_transport_kwargs()` in `server.py`); `call_tool` now returns a
+  `CallToolResult` instead of a `(content, structured)` tuple. The dependency
+  moves off the exact pin `mcp==1.28.1` to the range `mcp>=2,<3` (v1 is
+  upstream maintenance-mode only). No change to `policy`, `redaction`,
+  `audit`, `patterns`, `broker`, or the `Relay.run` body — the trust boundary
+  is untouched. See [ADR 0001](docs/adr/0001-runtime-and-sdk.md) pin
+  movement. This pass also reconciled the README status line, the
+  compatibility matrix, and `docs/architecture.md` to the new pin, which had
+  drifted (still reading `mcp==1.28.1`) since the migration landed.
+
+### Fixed
 
 - An SSH command that hits its timeout now also closes its channel (not just SIGTERM).
 - `known_hosts` appends no longer fuse onto an unterminated final line (which corrupted
@@ -83,10 +135,75 @@ All notable changes to this project are documented here. The format follows
 - `install-edge.sh` validates the rendered Caddyfile before replacing the live one and keeps
   the previous file as `Caddyfile.bak`.
 
-### Agent guidance (2026-10-14)
+- The HTTP liveness script now fails on curl transport errors, including connection
+  refusal and timeout. Its fallback previously turned curl's `000` into `000000`,
+  falsely reporting an unreachable listener as healthy. HTTP error responses still
+  count as live; regression tests distinguish liveness from application readiness.
 
-- Consolidate Codex, Claude Code and Copilot guidance with repository-specific secure development, STPA traceability and private vulnerability reporting.
+- **Low-severity audit items (2026-10-04, L1/L2/L3/L5/L6/L7/L9).**
+  A failed SSH connect with no concurrent waiter no longer logs asyncio's
+  "Future exception was never retrieved" traceback. `ssh_exec` no longer reports
+  `[TIMEOUT]` and discards the output when the command finished but the channel
+  lingered past the 5 s close wait (the output is kept; the exit status may be
+  unknown). An invalid `RELAY_SHELL_POLICY_DENY` / `_POLICY_ALLOW` regex is rejected
+  at configuration load, and a server-assembly failure at startup exits 2 with a
+  message instead of a raw traceback. `session_recv` no longer splits a multibyte
+  UTF-8 character at `max_bytes` (both halves used to become permanent replacement
+  characters). `ProxyJump none` in `ssh_config` or the inventory means no jump host
+  rather than a host called `none`. Startup logs a warning when settings are being
+  read from a `.env` in the working directory. The `AuditLogger._emit` docstring now
+  states what actually happens when a write fails (the hash chain still advances and
+  the gap shows as a `seq` break in `--verify-audit`) and that one relay process
+  owns one chained log.
 
+- Attribute audit client identities only to the SDK-validated OAuth access token,
+  never caller-provided request metadata (#181). Preserve numeric request ID zero.
+  Add authenticated HTTP, concurrent-client isolation and metadata-spoofing tests.
+
+- `SshPool.run()`'s output cap is now a single budget **shared** across stdout
+  and stderr, so the combined buffered bytes stay within `max_output_bytes`
+  (CONN-2, 2026-08-04 audit pass). Previously each stream had its own counter,
+  so peak transient memory per call was up to 2× the cap — the returned string
+  was still correctly bounded, but `ssh_fanout`'s per-host sizing math assumes a
+  footprint of `cap`, not 2×cap, across concurrent hosts.
+- The single-host exec paths now **bound the output buffered in relay memory**
+  to `max_output_hard` instead of accumulating the child's entire output before
+  truncating (PERF-4, 2026-08-04 backlog follow-up). `shell_exec` / `shell_script`
+  drained the local child via `communicate()`, and `ssh_exec` called
+  `SshPool.run` with no cap (`cap is None`) — so a high-volume producer
+  (`cat /dev/zero`, a runaway build log) could grow the long-lived relay process
+  without limit, a memory DoS reachable by a Tier-1 command that even `guarded`
+  mode permits. The child still runs to completion (exit code + true byte count
+  preserved) and the returned output is byte-identical after truncation; only
+  peak relay memory changes. The interactive/PTY paths were already bounded by
+  `session_buffer_bytes`, and `ssh_fanout` already passed a cap.
+- The audit-evidence verifier (`deploy/evidence/relay-audit-evidence.py`) now
+  orders retained segments by the **first record's timestamp** instead of file
+  mtime, and tolerates a single **torn trailing record** on the live segment
+  (EVID-1, 2026-08-04 backlog follow-up). logrotate `delaycompress` rewrites a
+  rotated segment's mtime when it is compressed on a later cycle, which could
+  invert the segment order and make the cross-segment seam check report a
+  spurious "broken rotation seam"; and reading the concurrently-appended
+  `audit.jsonl` `errors="strict"` turned a benign torn write into an "invalid
+  JSON" failure. Either false failure made `relay-audit-evidence-sync` silently
+  skip the off-host publish — the anti-tail-truncation control (ADR 0007). The
+  evidence record gains a `torn_tails` counter for visibility.
+- Two more local-exec paths now bound their buffered output the same way the
+  PERF-4 pass bounded `shell_exec` / `shell_script` / `ssh_exec`, closing gaps
+  the original pass missed:
+  - **`ssh_keyscan`**'s `run_command()` call omitted `output_cap` entirely
+    (`cap=None`, unbounded), so a caller-chosen host whose sshd streams an
+    oversized banner before the handshake fails could grow relay memory
+    without limit across a multi-host scan. Now passes
+    `output_cap=max_output_hard`, matching every other local-exec tool.
+  - **`ssh_check`**'s `SshPool.run()` call omitted `max_output_bytes` entirely.
+    `ssh_check` is Tier 0 (permitted even in `readonly` mode, unlike
+    `ssh_keyscan`) and its `hosts` argument is caller-chosen, so a malicious or
+    compromised remote sshd could stream unbounded data back on the exec
+    channel regardless of what the fixed `echo ok` probe asked for — up to
+    `_SSH_CHECK_CONCURRENCY` (8) such streams concurrently. Now bounded to
+    `_SSH_CHECK_PER_HOST_OUTPUT_CAP` (4 KiB), generous for a probe that only
+    ever inspects the `"ok"` substring.
 
 ### Security
 
@@ -245,132 +362,6 @@ All notable changes to this project are documented here. The format follows
   now writes an `action=cancelled` record (and `outcome="cancelled"` on `/metrics`),
   the local command's process group is killed, and a remote command is sent a
   terminate; the cancellation still propagates.
-
-### Added
-
-- **`RELAY_SHELL_MAX_CONNS`** (default 256) — a hard ceiling on the live SSH
-  connection cache (`SshPool._conns`), mirroring `max_sessions` / `max_forwards`
-  for the cache that sits underneath them (CONN-1, 2026-08-04 audit pass). Idle
-  eviction (`ssh_idle_timeout`) is opportunistic and unbounded in count, so a
-  caller varying the target or per-call `user`/`port`/`key_path` across many
-  reachable hosts could accumulate live SSH sessions between sweeps. When the
-  cache is full a new connect evicts the least-recently-used **unpinned** entry
-  (a connection in active use — a session, forward, or in-flight run — is never
-  evicted, so the cap is transiently exceeded rather than dropping a live
-  connection). Surfaced in `server_info.config.max_conns`.
-
-- **`RELAY_SHELL_MAX_INPUT`** (default 2097152 characters) and
-  **`RELAY_SHELL_ALLOW_UNAUTH_NETWORK`** (default `false`); `server_info.limits.max_input`.
-- **`RELAY_SHELL_AUTH_REQUIRE_APPROVAL`** (default `true`) and the `relay-shell
-  --auth-list` / `--auth-approve` / `--auth-reject` operator commands (see Security).
-- **`RELAY_SHELL_AUDIT_SESSION_INPUT`** (`redacted` default, or `hash`) — how
-  `session_send` input is recorded (see Security). Surfaced in
-  `server_info.audit.session_input`.
-- **`RELAY_SHELL_AUDIT_INTENT`** (default off) — write-ahead audit: append an
-  `action=intent` record before a call's work starts, so a crash or SIGKILL of the
-  relay mid-command no longer leaves an executed command with no record. Default off
-  keeps one record per call. Surfaced in `server_info.audit.intent`.
-
-### Changed
-
-- **Audit records for `ssh_upload`, `ssh_download`, `ssh_forward` and `ssh_spawn` now
-  carry the connection identity** (M6): `user`, `port`, `key_path`, `jump`, plus
-  `recursive` for transfers (`ssh_spawn` gained `jump`). Additive `args` fields; the
-  top-level record shape is unchanged. With the Tier-3 broker on, these fields are
-  part of the confirmed operation, so a token no longer covers a different user,
-  port, key or jump host.
-
-- Refreshed tested pins: `mcp` 2.2.0 to 2.3.0, `asyncssh` 2.24.0 to 2.24.1,
-  `mypy` 2.3.1 to 2.4.0, `ruff` 0.16.9 to 0.16.10 (kept in lockstep across
-  `requirements.txt`, the `dev` extra, and the pre-commit hook). Lint, format,
-  mypy strict, the full suite, and `pip-audit` pass on Python 3.13.
-- **Migrated to the MCP Python SDK v2** and bound every dependency below its
-  next major (PR #164, #165, 2026-08-12). `mcp.server.fastmcp.FastMCP` is now
-  `mcp.server.mcpserver.MCPServer`; the `host`/`port`/`stateless_http`/
-  `json_response` constructor kwargs moved to per-transport `run()` options
-  (`http_transport_kwargs()` in `server.py`); `call_tool` now returns a
-  `CallToolResult` instead of a `(content, structured)` tuple. The dependency
-  moves off the exact pin `mcp==1.28.1` to the range `mcp>=2,<3` (v1 is
-  upstream maintenance-mode only). No change to `policy`, `redaction`,
-  `audit`, `patterns`, `broker`, or the `Relay.run` body — the trust boundary
-  is untouched. See [ADR 0001](docs/adr/0001-runtime-and-sdk.md) pin
-  movement. This pass also reconciled the README status line, the
-  compatibility matrix, and `docs/architecture.md` to the new pin, which had
-  drifted (still reading `mcp==1.28.1`) since the migration landed.
-
-### Fixed
-
-- The HTTP liveness script now fails on curl transport errors, including connection
-  refusal and timeout. Its fallback previously turned curl's `000` into `000000`,
-  falsely reporting an unreachable listener as healthy. HTTP error responses still
-  count as live; regression tests distinguish liveness from application readiness.
-
-- **Low-severity audit items (2026-10-04, L1/L2/L3/L5/L6/L7/L9).**
-  A failed SSH connect with no concurrent waiter no longer logs asyncio's
-  "Future exception was never retrieved" traceback. `ssh_exec` no longer reports
-  `[TIMEOUT]` and discards the output when the command finished but the channel
-  lingered past the 5 s close wait (the output is kept; the exit status may be
-  unknown). An invalid `RELAY_SHELL_POLICY_DENY` / `_POLICY_ALLOW` regex is rejected
-  at configuration load, and a server-assembly failure at startup exits 2 with a
-  message instead of a raw traceback. `session_recv` no longer splits a multibyte
-  UTF-8 character at `max_bytes` (both halves used to become permanent replacement
-  characters). `ProxyJump none` in `ssh_config` or the inventory means no jump host
-  rather than a host called `none`. Startup logs a warning when settings are being
-  read from a `.env` in the working directory. The `AuditLogger._emit` docstring now
-  states what actually happens when a write fails (the hash chain still advances and
-  the gap shows as a `seq` break in `--verify-audit`) and that one relay process
-  owns one chained log.
-
-- Attribute audit client identities only to the SDK-validated OAuth access token,
-  never caller-provided request metadata (#181). Preserve numeric request ID zero.
-  Add authenticated HTTP, concurrent-client isolation and metadata-spoofing tests.
-
-- `SshPool.run()`'s output cap is now a single budget **shared** across stdout
-  and stderr, so the combined buffered bytes stay within `max_output_bytes`
-  (CONN-2, 2026-08-04 audit pass). Previously each stream had its own counter,
-  so peak transient memory per call was up to 2× the cap — the returned string
-  was still correctly bounded, but `ssh_fanout`'s per-host sizing math assumes a
-  footprint of `cap`, not 2×cap, across concurrent hosts.
-- The single-host exec paths now **bound the output buffered in relay memory**
-  to `max_output_hard` instead of accumulating the child's entire output before
-  truncating (PERF-4, 2026-08-04 backlog follow-up). `shell_exec` / `shell_script`
-  drained the local child via `communicate()`, and `ssh_exec` called
-  `SshPool.run` with no cap (`cap is None`) — so a high-volume producer
-  (`cat /dev/zero`, a runaway build log) could grow the long-lived relay process
-  without limit, a memory DoS reachable by a Tier-1 command that even `guarded`
-  mode permits. The child still runs to completion (exit code + true byte count
-  preserved) and the returned output is byte-identical after truncation; only
-  peak relay memory changes. The interactive/PTY paths were already bounded by
-  `session_buffer_bytes`, and `ssh_fanout` already passed a cap.
-- The audit-evidence verifier (`deploy/evidence/relay-audit-evidence.py`) now
-  orders retained segments by the **first record's timestamp** instead of file
-  mtime, and tolerates a single **torn trailing record** on the live segment
-  (EVID-1, 2026-08-04 backlog follow-up). logrotate `delaycompress` rewrites a
-  rotated segment's mtime when it is compressed on a later cycle, which could
-  invert the segment order and make the cross-segment seam check report a
-  spurious "broken rotation seam"; and reading the concurrently-appended
-  `audit.jsonl` `errors="strict"` turned a benign torn write into an "invalid
-  JSON" failure. Either false failure made `relay-audit-evidence-sync` silently
-  skip the off-host publish — the anti-tail-truncation control (ADR 0007). The
-  evidence record gains a `torn_tails` counter for visibility.
-- Two more local-exec paths now bound their buffered output the same way the
-  PERF-4 pass bounded `shell_exec` / `shell_script` / `ssh_exec`, closing gaps
-  the original pass missed:
-  - **`ssh_keyscan`**'s `run_command()` call omitted `output_cap` entirely
-    (`cap=None`, unbounded), so a caller-chosen host whose sshd streams an
-    oversized banner before the handshake fails could grow relay memory
-    without limit across a multi-host scan. Now passes
-    `output_cap=max_output_hard`, matching every other local-exec tool.
-  - **`ssh_check`**'s `SshPool.run()` call omitted `max_output_bytes` entirely.
-    `ssh_check` is Tier 0 (permitted even in `readonly` mode, unlike
-    `ssh_keyscan`) and its `hosts` argument is caller-chosen, so a malicious or
-    compromised remote sshd could stream unbounded data back on the exec
-    channel regardless of what the fixed `echo ok` probe asked for — up to
-    `_SSH_CHECK_CONCURRENCY` (8) such streams concurrently. Now bounded to
-    `_SSH_CHECK_PER_HOST_OUTPUT_CAP` (4 KiB), generous for a probe that only
-    ever inspects the `"ok"` substring.
-
-### Security
 
 - The edge Caddyfile now proxies `POST /revoke` before the CIDR allowlist gate
   (EDGE-3, 2026-08-04 audit pass). The OAuth provider enables revocation

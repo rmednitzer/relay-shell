@@ -95,7 +95,8 @@ short version:
 | Add or remove a tool         | `docs/tools.md`, `tests/test_server.py::_EXPECTED`, README capability tables, `_INSTRUCTIONS` in `server.py` |
 | Add or remove an env var     | `.env.example`, `Settings`, `docs/deployment.md`                                       |
 | Add or change a module       | `docs/architecture.md` module table                                                    |
-| Add a runtime dependency     | `requirements.txt` (pinned) + a justification in the PR body                           |
+| Add a runtime dependency     | `requirements.txt` (pinned), the `pyproject.toml` bound + a justification in the PR body |
+| Change release/SBOM tooling or a workflow | `requirements-build.in` / `requirements-sbom.in` then regenerate the hashed `.txt` locks (runbook §6.6), `tests/test_release_workflows.py` |
 | Change audit-record fields   | `docs/architecture.md` request lifecycle, `tests/test_audit.py`, runbook §2.3          |
 | Change a redaction/tier pattern | `src/relay_shell/patterns.py` (bump `PATTERNS_VERSION`), paired over-scrub/under-scrub (redaction) or positive/near-miss (policy) tests in `tests/test_patterns.py`, runbook §6.4 (policy heuristics) / §6.5 (redaction rules) |
 
@@ -121,9 +122,10 @@ worth calling out explicitly:
 
 A PR is security-sensitive if it touches any of: `patterns.py`, `audit.py`,
 `redaction.py`, `policy.py`, the `Relay.run()` body or a resource handler in
-`server.py`, `auth/oauth.py`, `metrics.py`, `seccomp.py`, `broker.py`,
-`verifier.py`, `deploy/install*.sh`, or `deploy/Caddyfile` (the canonical list, with
-per-file rationale, is runbook §3.3). The PR-template checklist (under
+`server.py`, `auth/oauth.py`, `metrics.py`, `seccomp.py`, `broker.py`, `sshpool.py`,
+`verifier.py`, `deploy/install*.sh`, `deploy/Caddyfile`, `deploy/evidence/*`, or the
+release/SBOM workflows and their tooling locks (the canonical list, with per-file
+rationale, is runbook §3.3). The PR-template checklist (under
 `.github/`) has a section for these; tick it and walk the runbook §3.3
 checklist before requesting review.
 
