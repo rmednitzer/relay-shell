@@ -1,9 +1,10 @@
 # Relay Shell
 
 **Status:** v0.3.0 · Python 3.12 / 3.13 / 3.14 · transports: `stdio` and
-`streamable-http` · MCP SDK `mcp>=2,<3` · see
-[ADR 0005](docs/adr/0005-codebase-validation.md) for the last upstream-surface
-validation.
+`streamable-http` · MCP SDK `mcp>=2,<3` · pin history in
+[ADR 0001](docs/adr/0001-runtime-and-sdk.md); validation procedure and its recorded
+passes (latest 2026-06-21, before the `mcp` v2 move) in
+[ADR 0005](docs/adr/0005-codebase-validation.md).
 
 A highly reliable, maximally capable [Model Context Protocol](https://modelcontextprotocol.io)
 server for **complete shell and SSH mastery**.
