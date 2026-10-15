@@ -286,9 +286,10 @@ boundary and ADR 0003 tier semantics are unchanged.
   free-form review: re-run steps 1-4; deviations become a finding row in this
   table format.
 - Each `mcp` SDK bump triggers a fresh §2 pass (the step-3 symbol set is the
-  diff target). The latest validated pin is the one named in the most recent
-  dated outcome paragraph above (currently `mcp==1.27.2`, validated
-  2026-06-21), not a version hardcoded here.
+  diff target). The most recent outcome appended here is 2026-06-21 (then
+  `mcp==1.27.2`); later bumps are listed in [ADR 0001](0001-runtime-and-sdk.md)
+  and later passes are recorded in the dated reports under `audit/`. The current
+  pins are in `requirements.txt` and `pyproject.toml`.
 - Each subsequent ADR landing should record its own validation outcome in the
   same format (terse findings table, severity, resolution), so the audit trail
   of *decisions* and of *executions* stay symmetrical.

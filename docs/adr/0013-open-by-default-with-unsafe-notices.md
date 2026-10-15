@@ -94,8 +94,10 @@ Stakeholders: the operator, the MCP client (human or model), the owners of the t
   operator switched notices off.
 - SC-2 (H-2) `warnings` is computed from the live `Settings`, never from a cached or
   documented value.
-- SC-3 (H-3, L-3) Every notice and warning says the classification is a heuristic, and the
-  documentation states that a command without a notice is not thereby safe.
+- SC-3 (H-3, L-3) Every tier notice says the classification is a heuristic, and the
+  documentation states that a command without a notice is not thereby safe. (The SSH
+  host-key notices and the `warnings` entries report settings, not a classification, and do
+  not repeat it.)
 - SC-4 (H-4) The notice is appended after the audit record is written and cannot raise: it
   is a pure function of the decision and the already-redacted audit arguments.
 - SC-5 (L-2) The default posture is pinned by a test, so a change to a default is a visible

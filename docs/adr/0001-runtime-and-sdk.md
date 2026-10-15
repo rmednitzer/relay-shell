@@ -16,14 +16,16 @@ type safety, and how much transport/auth code we own versus delegate.
   to `mcp==1.27.1` (validated by the test suite), with the surrounding stack
   pinned in `requirements.txt`. FastMCP provides the protocol, stdio and
   streamable-HTTP transports, and an OAuth 2.1 hook. The pin moves on a
-  deliberate, tested bump; the *current* validated pin is the one in the latest
-  [ADR 0005](0005-codebase-validation.md) outcome paragraph, not this line.
+  deliberate, tested bump; the *current* pins are the ones in `requirements.txt`
+  (tested) and `pyproject.toml` (supported range), and each bump is listed under
+  Consequences below, not on this line.
 - **`asyncssh`** for all SSH. It is pure-Python, asyncio-native, and covers
   the entire required surface (exec, interactive PTY, SFTP, local/remote/
   dynamic forwarding, agent, `ProxyJump`/tunnels, `known_hosts`, keepalive)
   with one dependency and no system `ssh` shelling.
 - **Local execution** uses `asyncio` subprocesses and a non-blocking PTY
-  master driven by the event loop (executor fallback) - stdlib only.
+  master driven by the event loop (executor fallback, removed in 0.4.0 as dead code,
+  A14-X3) - stdlib only.
 
 ## Consequences
 
@@ -55,6 +57,9 @@ type safety, and how much transport/auth code we own versus delegate.
     --strict` across 20 source files; the living docs (README status line and
     compatibility matrix, `docs/architecture.md`) were reconciled to the same
     range.
+  - Tested pins `mcp` 2.2.0 → 2.3.0 and `asyncssh` 2.24.0 → 2.24.1 (shipped in
+    v0.4.0, 2026-10-15; `requirements.txt`, the `dev` extra and the pre-commit hook
+    in lockstep). The supported ranges stay `mcp>=2,<3` and `asyncssh>=2.23.0,<3`.
 
 ## Rejected
 

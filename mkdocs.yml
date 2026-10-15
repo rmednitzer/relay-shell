@@ -7,8 +7,9 @@
 # Local preview:  pip install -r requirements-docs.txt && mkdocs serve
 site_name: relay-shell
 site_description: >-
-  A governed Model Context Protocol relay for complete shell and SSH operation:
-  central audit, tiered authority, secret redaction, and resource bounds.
+  A Model Context Protocol server for complete shell and SSH operation: open by
+  default, every call audited, risky calls flagged with notices, opt-in refusal,
+  secret redaction and resource bounds.
 site_url: https://rmednitzer.github.io/relay-shell/
 site_author: Roman Mednitzer
 repo_url: https://github.com/rmednitzer/relay-shell

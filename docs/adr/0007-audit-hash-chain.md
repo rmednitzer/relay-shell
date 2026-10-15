@@ -79,9 +79,10 @@ Add an **opt-in, additive** per-record hash chain to the audit log.
 - **Ordering invariant under concurrency.** The `seq`/`prev` read-modify-write
   and the line emit are taken under one lock, so the chain stays monotonic and
   correctly linked even if a caller records from another thread (e.g. the ADR
-  0006 seccomp-notify supervisor). Every write currently runs on the single
-  event-loop thread, so the lock is uncontended; it is engaged only when
-  chaining is on.
+  0006 seccomp-notify supervisor). With seccomp-notify off every write runs on
+  the event-loop thread and the lock is uncontended; with it on, the lock
+  serializes the supervisor thread's `syscall_notify` lines against the
+  tool-call path. It is engaged only when chaining is on.
 - **Offline verification, no new tool, fail-closed.** A new CLI verb
   `relay-shell --verify-audit [--audit-path PATH] [--segment] [--json]`
   walks a file, mirroring `--check-config` and `--verify-deploy`. It is
