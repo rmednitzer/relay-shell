@@ -1,6 +1,6 @@
 # Relay Shell
 
-v0.3.0 · Python 3.12 / 3.13 / 3.14 · transports `stdio` and `streamable-http` · MCP SDK
+v0.4.0 · Python 3.12 / 3.13 / 3.14 · transports `stdio` and `streamable-http` · MCP SDK
 `mcp>=2,<3` · Apache-2.0
 
 `relay-shell` is a [Model Context Protocol](https://modelcontextprotocol.io) server that gives

@@ -1,3 +1,5 @@
 build
 twine
 hatchling
+# Hatchling needs this for editable installs with --no-build-isolation.
+editables

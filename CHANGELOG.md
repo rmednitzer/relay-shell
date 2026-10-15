@@ -6,7 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-15
+
 ### Fixed
+
+- Include Hatchling's `editables` backend requirement in the hash-locked build tooling so
+  the release workflow's clean `--no-build-isolation` editable install succeeds.
 
 - Closing an interactive shell session (`session_kill` with its default `close=true`, the idle
   sweep, shutdown) no longer waits out the whole 5 s SIGTERM grace. Interactive shells ignore
@@ -1723,7 +1728,8 @@ All notable changes to this project are documented here. The format follows
   bundled logrotate config drops and restores the append-only attribute
   across rotation. See `docs/deployment.md` §6.
 
-[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/rmednitzer/relay-shell/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/rmednitzer/relay-shell/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/rmednitzer/relay-shell/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/rmednitzer/relay-shell/releases/tag/v0.1.0
