@@ -5,15 +5,22 @@ protected main branch rather than the tagged checkout. Release commits must
 be ancestors of protected main. Tag creation is owner-restricted, updates
 and deletion are denied, and immutable GitHub releases are enabled.
 
-## Historical signing evidence (2026-10-12)
+## Signing evidence
 
-| Tag | Current signer allowlist | Historical key |
+Recorded 2026-10-12 for v0.1.0 to v0.3.0 and 2026-10-15 for v0.4.0.
+
+| Tag | Current signer allowlist | Signing key |
 | --- | --- | --- |
 | v0.1.0 | Rejected | Previous GitHub-registered SSH key |
 | v0.2.0 | Rejected | Previous GitHub-registered SSH key |
 | v0.3.0 | Accepted | Current authorized SSH key |
+| v0.4.0 | Accepted | Current authorized SSH key |
 
-All three tag targets are ancestors of main. The previous signer fingerprint
+All four tag targets are ancestors of main. The v0.4.0 tag object
+`5b7c9480185c7b2f19a340052c25966090e3e334` targets commit
+`83a08789035713ab77876a3a5fb080ebc0d64b06`; `git tag -v` against
+`deploy/release-signing.pub` on main reports a good signature from the current
+key. The previous signer fingerprint
 is SHA256:l987e6ZYlQyiCwlIdHEsYT9RCnuAAGC3lqqVsZvyt3c. The current
 fingerprint is SHA256:toiPb4c4HuVxGNLbPkfHOnRDO5k7ZvzownZfvmVQ7Lk.
 GitHub currently registers both keys; registration does not prove either
