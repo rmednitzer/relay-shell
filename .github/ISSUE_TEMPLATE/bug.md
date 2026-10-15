@@ -7,16 +7,14 @@ labels: ["bug"]
 
 <!--
 For security-sensitive bugs (audit-trail evasion, policy bypass, secret
-leak, transport / auth issues) please use the "Security report" template
-or open a private advisory instead. See SECURITY.md for the disclosure
-process.
+leak, transport / auth issues) use the "Security report" template or a
+private advisory instead. See SECURITY.md.
 -->
 
 ## What happened
 
-<!-- One or two sentences. What did the tool do, and what was wrong
-about it? Paste the relevant `[ERROR: ...]` / `[DENIED: ...]` string if
-there was one. -->
+<!-- What did the tool do, and what was wrong about it? Paste the relevant
+`[ERROR: ...]` / `[DENIED: ...]` string if there was one. -->
 
 ## Expected behavior
 
@@ -52,6 +50,5 @@ generally safe to share. -->
 
 ## Logs / additional context
 
-<!-- Anything else that helps. Stack traces are appreciated but bear in
-mind that user-facing output is intentionally bounded; checking the
-server's stderr is usually more informative. -->
+<!-- Anything else that helps. User-facing output is intentionally bounded,
+so the server's stderr is usually more informative than a stack trace. -->

@@ -6,32 +6,29 @@
 ## Context
 
 [ADR 0009](0009-tier3-confirmation-broker.md) added an opt-in, default-off
-**two-step confirmation broker** for Tier-3 (IRREVERSIBLE) operations: a
-Tier-3 call returns a single-use, TTL-bounded token instead of running, and a
-distinct `operation_confirm(token)` arm step plus a re-issue of the exact same
-call is required to execute. ADR 0009 explicitly **deferred** the other half of
-the sibling brokers it drew from — pairing an operation with a **rollback
-command**, a **post-execution verify command**, and an **auto-rollback** on
-verify failure — as a materially larger surface needing its own ADR
-(runbook §7.1, BRK-2). This is that ADR.
+**two-step confirmation broker** for Tier-3 (IRREVERSIBLE) operations. It
+explicitly **deferred** the other half of the sibling brokers it drew from:
+pairing an operation with a **rollback command**, a **post-execution verify
+command**, and an **auto-rollback** on verify failure, a materially larger
+surface needing its own ADR (runbook §7.1, BRK-2). This is that ADR.
 
 The pattern, as the sibling planes implement it: a destructive action is
-submitted together with (a) a `verify_command` that checks the system reached
-the intended state and (b) a `rollback_command` that undoes the action; after
+submitted with (a) a `verify_command` that checks the system reached the
+intended state and (b) a `rollback_command` that undoes the action; after
 execute, the broker runs verify, and if `auto_rollback` is set and verify
-fails, runs rollback — a small orchestrated control loop of up to three
-commands under one authorization.
+fails, runs rollback: a control loop of up to three commands under one
+authorization.
 
-The problem it *would* solve for `relay-shell`: an **unattended / autonomous**
-Tier-3 operation where no human or second agent is watching to react if the
-operation half-succeeds. A migration that leaves a service down, a
-`dd`/`mkfs`/`rm` that partially applies — today the model that issued it must
-itself notice and remediate. Rollback/verify binds the remediation to the
-operation *up front*, so it runs even if the issuing turn never follows through.
+For `relay-shell` it would address an **unattended / autonomous** Tier-3
+operation where no human or second agent is watching if the operation
+half-succeeds (a migration that leaves a service down, a `dd`/`mkfs`/`rm` that
+partially applies). Today the issuing model must itself notice and remediate.
+Rollback/verify binds the remediation to the operation *up front*, so it runs
+even if the issuing turn never follows through.
 
-Weighed honestly, that value is narrow, and the cost is not. Everything below
-is why this ADR's decision is to **specify the design but keep it deferred**,
-with explicit triggers that would move it to Accepted.
+That value is narrow and the cost is not, so this ADR **specifies the design
+but keeps it deferred**, with explicit triggers that would move it to
+Accepted.
 
 ## Decision
 
@@ -54,26 +51,24 @@ Adopt when at least one is concretely true, not hypothetical:
 3. A post-incident review shows a real half-succeeded Tier-3 operation whose
    blast radius a bound auto-rollback would have contained.
 
-Absent a trigger, the marginal value over what already ships is low: a model in
-control can already sequence *operation → verify → rollback* as three ordinary,
-individually policy-checked, individually audited tool calls. The **only** thing
-the broker adds is that the remediation is *bound and automatic* — which
-matters exactly and only when the issuing actor will not do it, and an actor
-that issued a destructive op and refuses to remediate is the residual-risk
-attacker ADR 0002/0009 already state is **out of scope**. Building the machinery
-before a trigger spends real surface for a benefit the current design already
-covers in the attended case.
+Absent a trigger, the marginal value is low: a model in control can already
+sequence *operation → verify → rollback* as three ordinary, individually
+policy-checked, individually audited tool calls. The broker adds only that the
+remediation is *bound and automatic*, which matters only when the issuing actor
+will not do it, and an actor that issued a destructive op and refuses to
+remediate is the residual-risk attacker ADR 0002/0009 state is **out of scope**.
+Building the machinery before a trigger spends real surface for a benefit the
+attended case already has.
 
 ### Invariants any implementation MUST satisfy
 
-If a trigger fires, the pairing is admissible only if it holds all of these.
-They are the design constraints, and collectively the reason this is a v2, not
-a parameter:
+If a trigger fires, the pairing is admissible only if it holds all of these;
+collectively they are why this is a v2, not a parameter:
 
 1. **Opt-in, default-off, byte-identical when off.** Gated behind its own flag
    (e.g. `RELAY_SHELL_CONFIRM_ROLLBACK`, requiring `RELAY_SHELL_CONFIRM_TIER3`).
-   When off, no new audit fields, no behavior change — the same promise ADR
-   0006/0007/0009 keep.
+   When off, no new audit fields, no behavior change (the promise ADR
+   0006/0007/0009 keep).
 
 2. **Rollback and verify are themselves fully policy-gated commands.** They are
    commands, not trusted broker internals. Each MUST pass through the *same*
@@ -81,8 +76,8 @@ a parameter:
    classification — as any other call. A rollback that is itself Tier 3 (undoing
    `rm` by restoring from backup could be) is classified and admitted as Tier 3.
    **No path may let a rollback/verify string skip the deny list**; that would
-   turn the remediation channel into a policy-bypass primitive. This is the
-   single most important invariant and the hardest to get right.
+   turn the remediation channel into a policy-bypass primitive. This is the most
+   important invariant and the hardest to get right.
 
 3. **Bound into the confirmation identity.** ADR 0009 binds a token to
    `sha256(tool \0 op_key)` where `op_key = policy_text \0 canonical(audit_args)`.
@@ -137,10 +132,8 @@ per-wrapper param" property and adds no new tool to the contract.
 
 - **If deferred (this ADR's decision):** no code, no new tool, no audit-shape
   change. The backlog item (runbook §7.1 BRK-2) points here for the design and
-  the triggers; the vague "needs an ADR" is replaced by a concrete
-  decision-with-conditions. Reviewers and operators have a written answer for
-  "why doesn't the broker roll back?" — it can, the design is specified, and the
-  cost/benefit says wait for a trigger.
+  the triggers. The written answer to "why doesn't the broker roll back?" is
+  that the design is specified and the cost/benefit says wait for a trigger.
 - **If later adopted:** a new opt-in flag, up to two new `action` values, an
   extended `operation_confirm`, broker state carrying the bound commands, and
   the runbook §3.3 security-sensitive invariant list gains the seven above. The
@@ -149,15 +142,15 @@ per-wrapper param" property and adds no new tool to the contract.
   rollback-is-Tier-3-and-still-policy-gated, deny-list-still-blocks-a-rollback,
   token-bound-to-the-rollback-text, and process-death-mid-loop fail-safe.
 - **Trust boundary unchanged either way.** Like ADR 0009 this is a compensating
-  control layered on ADR 0003 classification; it does not move the ADR 0002
-  boundary, and (invariant 2) it must never become a way around the deny list.
+  control on ADR 0003 classification; it does not move the ADR 0002 boundary,
+  and (invariant 2) it must never become a way around the deny list.
 
 ## Rejected alternatives
 
-- **Build it now, alongside ADR 0009.** ADR 0009 explicitly rejected this to
-  land the confirmation gate cleanly first; nothing since has produced a
-  trigger, so bundling it would add the largest-surface broker feature
-  speculatively. Rejected until a trigger is real.
+- **Build it now, alongside ADR 0009.** ADR 0009 rejected this to land the
+  confirmation gate first; nothing since has produced a trigger, so it would add
+  the largest-surface broker feature speculatively. Rejected until a trigger is
+  real.
 - **Rollback/verify as free-form broker-executed strings, admitted once with
   the main op.** Lets the remediation commands skip their own deny-list/tier
   check (they'd ride the main op's single admission). This is the tempting
@@ -168,6 +161,6 @@ per-wrapper param" property and adds no new tool to the contract.
   already do — with none of the binding that is the feature. Rejected in favor
   of extending `operation_confirm` (invariant/shape above).
 - **Persist the rollback promise across restarts.** A stored "run this later"
-  is a re-execution/replay surface; ADR 0009 already argued ephemeral,
-  process-local state is safer. The fail-safe (invariant 6) is post-execute
-  state plus the audit trail, not a durable rollback queue. Rejected.
+  is a re-execution/replay surface (ADR 0009's argument for ephemeral state).
+  The fail-safe (invariant 6) is post-execute state plus the audit trail, not a
+  durable rollback queue. Rejected.

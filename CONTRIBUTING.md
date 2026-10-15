@@ -1,16 +1,14 @@
 # Contributing to relay-shell
 
-Thanks for the interest. `relay-shell` is a small, security-sensitive
-project; the rules here exist to keep it that way without making
-contribution painful.
+`relay-shell` is a small, security-sensitive project; these rules keep it that
+way without making contribution painful.
 
 Participation is governed by the
-[Code of Conduct](CODE_OF_CONDUCT.md) — Contributor Covenant 2.1.
+[Code of Conduct](CODE_OF_CONDUCT.md) (Contributor Covenant 2.1).
 
-Most of the procedural detail lives in [`docs/runbook.md`](docs/runbook.md).
-This document is the entry point: scope, branch naming, the local
-loop, the docs-with-code requirement, and how security-sensitive PRs
-are handled. For the step-by-step procedure for any of those, follow
+This document is the entry point: scope, branch naming, the local loop, the
+docs-with-code requirement, and how security-sensitive PRs are handled. The
+step-by-step procedures live in [`docs/runbook.md`](docs/runbook.md); follow
 the runbook section linked inline.
 
 ## Scope
@@ -74,9 +72,7 @@ pre-commit install            # set up the git hook
 pre-commit run --all-files    # one-time sweep
 ```
 
-The hooks are advisory locally; CI runs the same ruff and mypy gates directly. Pre-commit cuts a
-round-trip you would otherwise lose when CI catches a missing `ruff
-format` or a strict-typing regression on a remote runner.
+The hooks are advisory locally; CI runs the same ruff and mypy gates directly.
 
 A green local loop is the bar before pushing. If something fails in CI
 but not locally, that is a CI-config bug; fix that, not the test. The
@@ -138,8 +134,7 @@ For suspected vulnerabilities, **do not open a public issue with a
 working exploit**. Open a private security advisory on the repository
 (`Security` tab → `Report a vulnerability`) or open an issue without
 exploit detail and request a private channel. The disclosure process,
-scope, and indicative response targets live in
-[`SECURITY.md`](SECURITY.md).
+scope and response targets are in [`SECURITY.md`](SECURITY.md).
 
 ## Architecturally significant changes
 
@@ -159,8 +154,7 @@ Before requesting review, read the diff as if it were someone else's:
 - If you added a tool, does `tests/test_server.py::_EXPECTED` reflect
   it and does the `len()` assertion still pass?
 
-These all keep showing up in the runbook §3.4 "common review
-failures" list; catching them yourself saves a round trip.
+These recur in the runbook §3.4 "common review failures" list.
 
 ## Code style and discipline
 

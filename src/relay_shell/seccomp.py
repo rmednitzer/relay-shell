@@ -1,6 +1,6 @@
 """Opt-in, audit-only syscall notification channel (ADR 0006, B-021).
 
-This module adds a *forensic* view of what a locally-spawned child does
+This module gives a *forensic* view of what a locally-spawned child does
 *after* ``exec`` returns, without re-introducing a sandbox. It installs a
 ``seccomp-bpf`` filter on the child that traps a small, high-signal set of
 syscalls in **user-notification** mode (``SECCOMP_RET_USER_NOTIF``); a
@@ -10,27 +10,26 @@ syscall proceeds exactly as it would have. Nothing is blocked, no argument
 is rewritten, no child is killed.
 
 Posture invariant (ADR 0002 preserved verbatim): a seccomp filter can be
-installed two ways — with ``CAP_SYS_ADMIN`` or by first latching
-``no_new_privs``. We use **only** the ``CAP_SYS_ADMIN`` path. Latching
-``no_new_privs`` would silently disable set-uid escalation in the child
-(``sudo`` would stop working), a real capability regression this project
-forbids. So the channel activates **only** when the server process holds
-``CAP_SYS_ADMIN`` (e.g. runs as root, a supported privileged posture);
-otherwise it cleanly no-ops and the spawn path is byte-identical to today.
+installed with ``CAP_SYS_ADMIN`` or by first latching ``no_new_privs``. Only
+the ``CAP_SYS_ADMIN`` path is used. Latching ``no_new_privs`` would silently
+disable set-uid escalation in the child (``sudo`` would stop working), a
+capability regression this project forbids. So the channel activates **only**
+when the server process holds ``CAP_SYS_ADMIN`` (e.g. runs as root, a
+supported privileged posture); otherwise it no-ops and the spawn path is
+byte-identical to today.
 
 Scope: the one-shot local executor (``shell_exec`` / ``shell_script``
 / ``ssh_keyscan`` via :mod:`relay_shell.shelltools`) and long-lived local
 PTY sessions (``shell_spawn`` via :mod:`relay_shell.sessions`, where the
-monitor's lifetime follows the session — runbook B-026). SSH sessions have
-no local child (``asyncssh`` runs in-process), so there is nothing local
-to observe on that path. Linux + ``x86_64`` only; every other platform,
-arch, or a kernel below 5.5 makes the feature report ``supported=False``
-and no-op.
+monitor's lifetime follows the session, runbook B-026). SSH sessions have
+no local child (``asyncssh`` runs in-process), so nothing is observed there.
+Linux + ``x86_64`` only; any other platform or arch, or a kernel below 5.5,
+reports ``supported=False`` and no-ops.
 
 Everything here is fail-open for the child: if the filter cannot be
 installed, the handshake fails, or the supervisor dies, the child runs
-unfiltered and the audit pipeline records the gap as degraded — it never
-breaks a tool call.
+unfiltered and the audit pipeline records the gap as degraded; a tool call
+is never broken.
 """
 
 from __future__ import annotations
@@ -82,23 +81,22 @@ SECCOMP_FILTER_VERSION: Final = 2
 
 _SECCOMP_SET_MODE_FILTER = 1
 _SECCOMP_GET_NOTIF_SIZES = 3
-# SECCOMP_FILTER_FLAG_NEW_LISTENER is (1 << 3); (1 << 4) is TSYNC_ESRCH — a
-# classic off-by-one that silently installs a plain (listener-less) filter.
+# NEW_LISTENER is (1 << 3); (1 << 4) is TSYNC_ESRCH, an off-by-one that silently
+# installs a plain (listener-less) filter.
 _SECCOMP_FILTER_FLAG_NEW_LISTENER = 1 << 3
 _SECCOMP_USER_NOTIF_FLAG_CONTINUE = 1
 
 _SECCOMP_RET_ALLOW = 0x7FFF0000
 _SECCOMP_RET_USER_NOTIF = 0x7FC00000
 
-# AUDIT_ARCH_* — the filter guards on data.arch so a 32-bit/compat syscall on
-# a 64-bit host is not misread against the 64-bit number table (it falls
-# through to ALLOW; compat syscalls are simply not notified — this is an
-# audit aid, not a sandbox).
+# The filter guards on data.arch so a 32-bit/compat syscall on a 64-bit host is
+# not misread against the 64-bit number table: it falls through to ALLOW, i.e.
+# compat syscalls are not notified (an audit aid, not a sandbox).
 _AUDIT_ARCH_X86_64 = 0xC000003E
 
-# Per-arch syscall numbers. Only arches we can actually validate ship here;
-# an unknown arch makes platform_support() report unsupported and the channel
-# no-ops, so a wrong/guessed number can never notify the wrong syscall.
+# Per-arch syscall numbers. Only validated arches ship here; an unknown arch makes
+# platform_support() report unsupported, so a guessed number can never notify the
+# wrong syscall.
 _SYSCALLS: Final[dict[str, dict[str, int]]] = {
     "x86_64": {
         "execve": 59,
@@ -125,18 +123,16 @@ _AUDIT_ARCH: Final[dict[str, int]] = {"x86_64": _AUDIT_ARCH_X86_64}
 # syscall(2) number for seccomp(2) itself, per arch.
 _NR_SECCOMP: Final[dict[str, int]] = {"x86_64": 317}
 
-# Open flags that mark a *write/create* intent. O_WRONLY(1) | O_RDWR(2) |
-# O_CREAT(0o100). A read-only open (O_RDONLY == 0, no O_CREAT) ANDs to 0 and
-# is not notified — that is what keeps the volume bounded (a plain `ls` or a
-# dynamic linker opening libraries does not trap).
+# Open flags marking write/create intent: O_WRONLY(1) | O_RDWR(2) | O_CREAT(0o100).
+# A read-only open ANDs to 0 and is not notified, which keeps volume bounded (a
+# plain `ls` or the dynamic linker opening libraries does not trap).
 _O_WRITE_MASK = 0o100 | 0o1 | 0o2  # 0x43
 
-# prctl(2) `option` values that change the privilege / capability /
-# traceability posture of the calling process (validated against a live
-# host's <linux/prctl.h>; see ADR 0006 and runbook B-024). The eq-any
-# predicate notifies prctl ONLY for these, which is what keeps the volume
-# bounded: high-frequency benign options (PR_SET_NAME from every thread
-# naming itself, glibc's PR_SET_VMA tagging, ...) never trap.
+# prctl(2) `option` values that change the privilege / capability / traceability
+# posture of the calling process (validated against a live host's
+# <linux/prctl.h>; ADR 0006, runbook B-024). The eq-any predicate notifies prctl
+# ONLY for these, keeping volume bounded: high-frequency benign options
+# (PR_SET_NAME, glibc's PR_SET_VMA tagging, ...) never trap.
 _PR_SET_DUMPABLE = 4  # anti-forensics: hides the child from core dumps/ptrace
 _PR_SET_KEEPCAPS = 8  # keep permitted caps across a setuid transition
 _PR_SET_SECCOMP = 22  # child installing its own (nested) filter
@@ -205,10 +201,9 @@ _CAP_SYS_ADMIN = 21  # capability bit number
 
 # --- libc handle ------------------------------------------------------------
 #
-# A single process-wide handle with explicit argtypes. The variadic
-# ``syscall(2)`` and ``ioctl(2)`` wrappers MUST have argtypes pinned or
-# ctypes mis-marshals the flag/request word (the bug that silently drops
-# NEW_LISTENER and yields ENOTTY on the notify ioctls).
+# One process-wide handle. The variadic ``syscall(2)`` and ``ioctl(2)`` wrappers
+# MUST have argtypes pinned or ctypes mis-marshals the flag/request word (which
+# silently drops NEW_LISTENER and yields ENOTTY on the notify ioctls).
 try:
     _lib = ctypes.CDLL("libc.so.6", use_errno=True)
     _lib.syscall.restype = ctypes.c_long
@@ -297,9 +292,8 @@ _FALL = "@fall"  # sentinel label meaning "the next instruction" (offset 0)
 class _Assembler:
     """A two-pass label assembler for the tiny classic-BPF filter program.
 
-    Keeping the program symbolic (jump *targets* are labels, resolved to
-    byte offsets at the end) makes the filter readable and unit-testable
-    instead of a wall of hand-counted offsets.
+    Jump targets are labels resolved to offsets at the end, which keeps the
+    filter readable and unit-testable instead of hand-counted offsets.
     """
 
     def __init__(self) -> None:
@@ -361,7 +355,7 @@ def build_filter(arch: str) -> bytes:
             continue
         if spec.eq_arg is not None and not spec.eq_values:
             # An empty eq-any set would assemble to a bare argument load that
-            # falls through into the NEXT conditional block — silently testing
+            # falls through into the NEXT conditional block, silently testing
             # the wrong syscall's predicate. Refuse to build instead.
             raise ValueError(f"{spec.name}: eq_arg set but eq_values is empty")
         if spec.flag_arg is None and spec.eq_arg is None:
@@ -376,9 +370,8 @@ def build_filter(arch: str) -> bytes:
 
     for i, spec in enumerate(conditional):
         asm.label(f"ck{i}")
-        # args[] are 64-bit; the low 32 bits carry the open flags / the prctl
-        # option (both are ints well under 2^32). Little-endian hosts keep
-        # the low word at the slot's start.
+        # args[] are 64-bit; the low 32 bits carry the open flags / prctl option
+        # (both well under 2^32), at the slot's start on little-endian hosts.
         if spec.flag_arg is not None:
             asm.stmt(_LD_W_ABS, _DATA_ARGS_OFFSET + spec.flag_arg * 8)
             asm.jump(_JSET_K, spec.flag_mask, "notify", "allow")
@@ -470,9 +463,8 @@ def platform_support() -> PlatformSupport:
     if not _kernel_at_least(kernel, 5, 5):
         return PlatformSupport(False, f"kernel {kernel} below 5.5 floor", arch, kernel)
     if not _has_cap_sys_admin():
-        # The CAP_SYS_ADMIN-only install path is deliberate: see module
-        # docstring. Without it we will not latch no_new_privs, so we cannot
-        # install a filter — and we refuse to, rather than change posture.
+        # Deliberate (see module docstring): without CAP_SYS_ADMIN we would have
+        # to latch no_new_privs, so we refuse rather than change posture.
         return PlatformSupport(False, "requires CAP_SYS_ADMIN", arch, kernel)
     sizes = _notif_sizes()
     if sizes is None:

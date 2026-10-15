@@ -7,22 +7,19 @@ registry is transport-agnostic: any object implementing :class:`Transport`
 
 Design choices for reliability:
 
-* Bounded everything - max session count, per-session ring buffer, idle and
-  lifetime reaping. Memory cannot grow without bound.
+* Bounded everything: max session count, per-session ring buffer, idle and
+  lifetime reaping.
 * Opportunistic sweeping on every create/list call, so a dead or idle session
-  is reclaimed without a fragile always-on background task.
+  is reclaimed without an always-on background task.
 * ``recv`` clears its wakeup event *under the buffer lock* immediately
-  before awaiting. The reader callback (``_sink``) runs on the asyncio
-  event loop as a synchronous ``add_reader`` callback, so its
-  buffer/event mutations are atomic with respect to other coroutines by
-  virtue of the single-threaded event loop - they cannot interleave with
-  a ``recv`` task. The lost-wakeup invariant therefore holds without
-  ``_sink`` re-acquiring the buffer lock; the loop scheduler guarantees
-  serialization, not the lock. If a future refactor moves the reader
-  off the event loop (e.g. a dedicated thread), ``_sink`` will need to
-  acquire ``sess._lock`` explicitly to preserve this invariant.
-* A reader task per session ends naturally on EOF; failures are contained and
-  mark the session closed rather than propagating.
+  before awaiting. The reader callback (``_sink``) is a synchronous
+  ``add_reader`` callback on the asyncio event loop, so its buffer/event
+  mutations cannot interleave with a ``recv`` task: the single-threaded loop,
+  not the lock, serializes them, and the lost-wakeup invariant holds without
+  ``_sink`` taking the lock. If the reader ever moves off the event loop (e.g.
+  a dedicated thread), ``_sink`` must acquire ``sess._lock`` to keep it.
+* A reader task per session ends on EOF; failures are contained and mark the
+  session closed rather than propagating.
 """
 
 from __future__ import annotations
@@ -111,8 +108,8 @@ _HANGUP_AFTER = 0.5
 
 def _set_winsize(fd: int, cols: int, rows: int) -> None:
     with contextlib.suppress(OSError):
-        # Clamp to the unsigned-short range: struct.pack raises struct.error (not
-        # OSError) above 65535, which would leak the pty fds in spawn().
+        # Clamp to unsigned short: above 65535 struct.pack raises struct.error
+        # (not OSError), which would leak the pty fds in spawn().
         packed = struct.pack("HHHH", min(max(1, rows), 0xFFFF), min(max(1, cols), 0xFFFF), 0, 0)
         fcntl.ioctl(fd, termios.TIOCSWINSZ, packed)
 
@@ -130,9 +127,9 @@ class LocalPtyTransport:
         self._proc = proc
         self._monitor = monitor
         self._closed = False
-        # `start_new_session=True` makes the child a group leader, so its pgid is its pid.
-        # Kept because `os.getpgid(pid)` fails once the leader has been reaped, while
-        # descendants that stayed in the group may still be running.
+        # start_new_session makes the child a group leader (pgid == pid). Kept
+        # because os.getpgid(pid) fails once the leader is reaped while
+        # descendants in the group may still run.
         self._pgid = proc.pid
 
     @classmethod
@@ -149,13 +146,11 @@ class LocalPtyTransport:
         _set_winsize(slave_fd, cols, rows)
         flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
         fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-        # Optional, opt-in seccomp-notify audit channel (ADR 0006, B-026).
-        # `extras` is {} unless the active per-call monitor armed
-        # (CAP_SYS_ADMIN + enabled), keeping the default spawn byte-identical.
+        # Opt-in seccomp-notify audit channel (ADR 0006, B-026). `extras` is {}
+        # unless the active per-call monitor armed (CAP_SYS_ADMIN + enabled).
         # Unlike the one-shot executor (shelltools), the monitor must outlive
-        # the originating tool call: the session child holds the filter for
-        # its whole life, so the transport adopts the monitor and stop()
-        # happens in aclose(), not when shell_spawn returns.
+        # the tool call: the child holds the filter for its whole life, so the
+        # transport adopts the monitor and stop() happens in aclose().
         monitor = seccomp.get_active()
         extras = monitor.arm() if monitor is not None else {}
         try:
@@ -170,8 +165,8 @@ class LocalPtyTransport:
                 **extras,  # type: ignore[arg-type]
             )
         except BaseException:
-            # The child never existed: release the supervisor and the master
-            # end (the slave end closes in the finally below either way).
+            # No child: release the supervisor and the master end (the slave
+            # end closes in the finally below either way).
             if monitor is not None:
                 monitor.stop()
             with contextlib.suppress(OSError):
@@ -225,8 +220,7 @@ class LocalPtyTransport:
         assert callable(sink)
         loop = asyncio.get_running_loop()
         event = asyncio.Event()
-        # This module is POSIX-only (pty, fcntl, termios), so the selector loop's
-        # `add_reader` is always available; there is no thread-based fallback.
+        # POSIX-only module, so the selector loop's add_reader is always available.
         loop.add_reader(self._fd, event.set)
         try:
             while True:
@@ -260,10 +254,10 @@ class LocalPtyTransport:
     async def _reap_group(self, deadline: float) -> None:
         """Once the leader is gone, give the rest of its group until ``deadline``, then SIGKILL.
 
-        The leader exiting on SIGTERM or SIGHUP says nothing about descendants that stayed
-        in its process group and ignore both. Without this a close returned while they ran on
-        with their session removed. Descendants that handle SIGTERM get the remaining grace
-        before SIGKILL; an empty group costs one syscall.
+        The leader exiting on SIGTERM or SIGHUP says nothing about descendants in its
+        group that ignore both; without this a close returned while they ran on with their
+        session removed. Descendants that handle SIGTERM get the remaining grace before
+        SIGKILL; an empty group costs one syscall.
         """
         loop = asyncio.get_running_loop()
         try:
@@ -285,19 +279,17 @@ class LocalPtyTransport:
             try:
                 await asyncio.wait_for(self._proc.wait(), _HANGUP_AFTER)
             except TimeoutError:
-                # Interactive shells ignore SIGTERM, so without this every close of
-                # one sat out the whole grace period and ended in SIGKILL. SIGHUP is
-                # what a closing terminal sends and they exit on it. It follows
-                # SIGTERM only after a short grace so a daemon that traps SIGTERM
-                # for an orderly shutdown (and treats SIGHUP as "reload") is not
-                # hung up mid-shutdown.
+                # Interactive shells ignore SIGTERM but exit on SIGHUP (what a
+                # closing terminal sends); without it every close sat out the whole
+                # grace period and ended in SIGKILL. SIGHUP follows SIGTERM only
+                # after a short grace so a daemon that traps SIGTERM for orderly
+                # shutdown (and treats SIGHUP as "reload") is not hung up mid-shutdown.
                 self.signal(signal.SIGHUP)
                 await asyncio.wait_for(self._proc.wait(), _TERM_GRACE - _HANGUP_AFTER)
             await self._reap_group(deadline)
         except asyncio.CancelledError:
-            # Cancelled during the SIGTERM grace wait: `_closed` is already set, so no
-            # second aclose will follow. A child that ignores SIGTERM would outlive its
-            # session, so kill it before propagating.
+            # `_closed` is already set, so no second aclose will follow; a child
+            # that ignores SIGTERM would outlive its session, so kill it first.
             self.signal(signal.SIGKILL)
             raise
         except (TimeoutError, ProcessLookupError, RuntimeError):
@@ -310,9 +302,9 @@ class LocalPtyTransport:
             with contextlib.suppress(OSError):
                 os.close(self._fd)
             if self._monitor is not None:
-                # Session over: the supervisor has already drained (the
-                # notify fd hangs up when the filtered task tree dies); this
-                # joins the thread and releases its fds. Idempotent.
+                # The supervisor has already drained (the notify fd hangs up when
+                # the filtered task tree dies); this joins its thread and releases
+                # its fds. Idempotent.
                 self._monitor.stop()
 
 
@@ -334,12 +326,11 @@ class Session:
     _event: asyncio.Event = field(default_factory=asyncio.Event)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _reader: asyncio.Task[None] | None = None
-    # Number of `recv()` calls currently long-polling this session. A session
-    # with a live waiter is *actively in use*, not idle, so the idle sweep must
-    # not reap it — otherwise a single `recv(timeout=T)` whose wait exceeds the
-    # registry idle timeout gets torn down mid-wait (the client is killed
-    # precisely because it is waiting). Mutated only on the event-loop thread
-    # with no `await` between the read and write, so it needs no lock.
+    # Number of `recv()` calls long-polling this session. A live waiter means
+    # the session is in use, so the idle sweep must not reap it: a
+    # `recv(timeout=T)` longer than the idle timeout would otherwise be torn
+    # down mid-wait. Mutated only on the event-loop thread with no `await`
+    # between read and write, so it needs no lock.
     _waiters: int = 0
     # The line being typed (text sent since the last Enter / Ctrl-C / Ctrl-U). The
     # policy classifies this plus the next send, so a destructive command split
@@ -453,10 +444,9 @@ class SessionRegistry:
 
     async def recv(self, sid: str, timeout: float, max_bytes: int) -> str:
         sess = await self._get(sid)
-        # Mark the session in-use for the whole call: refreshing last_used only
-        # at entry is not enough when the wait below runs longer than the idle
-        # timeout, so `_sweep` also skips any session with a live waiter. Both
-        # writes happen with no intervening await, so a concurrent sweep sees a
+        # last_used at entry is not enough when the wait outlasts the idle
+        # timeout, so `_sweep` also skips sessions with a live waiter. Both
+        # writes have no intervening await, so a concurrent sweep sees a
         # consistent (last_used=now, waiter present) state.
         sess.last_used = time.monotonic()
         sess._waiters += 1
@@ -561,8 +551,7 @@ class SessionRegistry:
         async with self._lock:
             for sid in list(self._sessions):
                 sess = self._sessions[sid]
-                # A session with a live `recv()` waiter is actively in use, not
-                # idle — never reap it out from under the waiting client.
+                # Never reap a session out from under a waiting recv().
                 if sess._waiters > 0:
                     continue
                 idle = now - sess.last_used

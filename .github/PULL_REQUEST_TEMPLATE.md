@@ -1,10 +1,7 @@
 <!--
-Thanks for contributing to relay-shell.
-
-Before opening this PR, walk the runbook §3.1 checklist below. The
-checklist enforces the project's "documentation moves with code" rule:
-new tools, env vars, and modules must be reflected in every cross-
-referenced source in the same PR.
+Walk the runbook §3.1 checklist below. It enforces "documentation moves with
+code": new tools, env vars and modules must be reflected in every
+cross-referenced source in the same PR.
 
 Run the local loop before pushing:
 
@@ -15,8 +12,8 @@ Reference: docs/runbook.md
 
 ## Summary
 
-<!-- One or two sentences explaining what changes and why. Link the
-backlog item if applicable: "Closes F-6 from docs/runbook.md". -->
+<!-- What changes and why, in one or two sentences. Link the backlog item
+if applicable: "Closes F-6 from docs/runbook.md". -->
 
 ## Type of change
 
@@ -66,9 +63,8 @@ If ticked, also confirm:
 
 ## Test plan
 
-<!-- How was this verified locally? Which tests were added or changed?
-For UI-less server changes the full local loop is usually enough;
-for behavior changes, name the new test(s). -->
+<!-- How was this verified locally? For behavior changes, name the new
+test(s); for other server changes the full local loop is usually enough. -->
 
 - [ ] `ruff check . && ruff format --check . && mypy && pytest -q`
       passes locally.

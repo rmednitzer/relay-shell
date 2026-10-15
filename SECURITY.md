@@ -9,15 +9,15 @@ maintainer security contact where published; otherwise request a private channel
 with a minimal, non-sensitive issue. Do not assume an invented email address works.
 
 Include the affected revision/version and paths, prerequisites and trust boundary,
-expected versus actual behavior, a minimal sanitized reproduction, impact and any
-workaround. Use synthetic data. A dependency issue affecting this project is in
+expected versus actual behavior, a minimal sanitized reproduction using synthetic
+data, impact and any workaround. A dependency issue affecting this project is in
 scope: coordinate upstream as appropriate without delaying notification here.
 This policy does not authorize testing third-party or live deployments, service
 disruption, credential use, persistence or access to other people's data.
 
-Existing response targets are retained below as maintainer goals, not guaranteed
-service levels. Coordinate disclosure and advisory timing with the maintainer;
-urgent active exploitation or credential exposure should be identified immediately.
+Response targets (see below) are maintainer goals, not guaranteed service levels.
+Coordinate disclosure and advisory timing with the maintainer; flag urgent active
+exploitation or credential exposure immediately.
 
 ## Contributor security requirements
 
@@ -41,8 +41,9 @@ constraining the executor.
 
 The trust boundary is the MCP transport. Treat everything arriving over it as
 potentially attacker-influenced (prompt injection through tool results, file
-contents, or remote command output). The controls below reduce risk within the deployment posture. Command classification
-and redaction are heuristic; arbitrary shell execution is not a containment boundary:
+contents, or remote command output). The controls below reduce risk within the
+deployment posture. Command classification and redaction are heuristic; arbitrary
+shell execution is not a containment boundary:
 
 - **Tiered authority** (`docs/adr/0003-tiered-authority.md`). Every call is
   classified Tier 0 (read-only) to Tier 3 (irreversible). `RELAY_SHELL_POLICY_MODE`:
@@ -56,7 +57,7 @@ and redaction are heuristic; arbitrary shell execution is not a containment boun
 - **Append-only audit** (`audit.jsonl`). One JSON object per line:
   timestamp, tool, redacted/truncated args, SHA-256 of the output, output
   byte length, exit code, request id, client id, tier. The output **body is
-  never written** - only its hash and length. Make the file append-only on
+  never written**, only its hash and length. Make the file append-only on
   disk (`chattr +a`) and ship it off-host; the bundled logrotate config
   preserves the attribute across rotation. See
   [`docs/audit-shipper.md`](docs/audit-shipper.md) for worked Vector,
@@ -67,7 +68,7 @@ and redaction are heuristic; arbitrary shell execution is not a containment boun
   `relay-shell --verify-audit`. The chain is **keyless** by deliberate
   design (ADR 0007): it is in-record tamper-evidence against accidental or
   unsophisticated corruption and does not depend on the filesystem attribute
-  the residual-risk attacker below can clear — but it is **not** a defence
+  the residual-risk attacker below can clear, but it is **not** a defence
   against an attacker who can both rewrite the log and recompute the chain
   from genesis. That attacker is caught only by the off-host copy (compare
   the cross-rotation seam: the prior file's last `chain` against the next
@@ -86,7 +87,7 @@ and redaction are heuristic; arbitrary shell execution is not a containment boun
   API keys, private-key blocks, `Authorization` headers, long-name CLI
   flags (both `--password` and single-dash `-token=` forms, including
   PowerShell `-Credential VALUE` and the `ConvertTo-SecureString '...'
-  -AsPlainText` inline-secret idiom — WIN-1 / ADR 0011),
+  -AsPlainText` inline-secret idiom; WIN-1 / ADR 0011),
   URL-embedded credentials, cloud-provider assignment forms (AWS
   `*_SECRET_ACCESS_KEY=`, Azure connection-string `AccountKey=`/
   `SharedAccessKey=` and SAS `sig=`), and a set of structurally-anchored
@@ -209,7 +210,7 @@ the allowlist, so a broad allowlist removes the protection. See the residual-ris
 
 The latest released pre-1.0 minor receives security patches; older minors are not
 backported. Check releases and pyproject.toml for the current version.
-Existing goals: acknowledge within 7 days; share a fix or mitigation plan within
+Goals: acknowledge within 7 days; share a fix or mitigation plan within
 30 days of triage. Coordinate public advisory and credit when the fix ships.
 
 ## Scope and resource admission

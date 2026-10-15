@@ -1,8 +1,8 @@
 # Maintenance Runbook
 
-A working procedure for auditing, reviewing, enhancing, validating, and
-extending `relay-shell`. Pair it with [`AGENTS.md`](https://github.com/rmednitzer/relay-shell/blob/main/AGENTS.md) and
-[`CLAUDE.md`](https://github.com/rmednitzer/relay-shell/blob/main/CLAUDE.md): those define the operating contract, this is
+The procedure for auditing, reviewing, enhancing, validating, and extending
+`relay-shell`. [`AGENTS.md`](https://github.com/rmednitzer/relay-shell/blob/main/AGENTS.md) and
+[`CLAUDE.md`](https://github.com/rmednitzer/relay-shell/blob/main/CLAUDE.md) define the operating contract; this is
 the step-by-step playbook for executing against it.
 
 Anything that touches the audit pipeline, the policy layer, redaction, or a
@@ -13,7 +13,7 @@ docs/README edits do not.
 
 ## 0. How to use this document
 
-Each major section is a phase you can execute end-to-end on its own:
+Each major section is a phase that runs end-to-end on its own:
 
 | Phase    | When to run                                          | Time budget |
 |----------|------------------------------------------------------|-------------|
@@ -31,7 +31,7 @@ audit-pass deferrals. §8 lists the documentation conventions that keep the
 
 ## 1. Orientation - the 10-minute flyover
 
-Read these in this order and you have the whole system:
+Read these in order:
 
 1. `README.md` - what the project is and why.
 2. `SECURITY.md` - the threat model and the trust boundary.
@@ -42,16 +42,14 @@ Read these in this order and you have the whole system:
 7. `tests/test_stdio_e2e.py` - the end-to-end contract; one fixture, one
    real subprocess, one real tool call. If this passes the wiring is sound.
 
-After that, look at any individual module via its dedicated test (e.g.
-`redaction.py` <-> `tests/test_redaction.py`). Tests are the executable
-spec.
+Then read any module through its dedicated test (e.g. `redaction.py` <->
+`tests/test_redaction.py`); tests are the executable spec.
 
 ---
 
 ## 2. Audit pass
 
-Goal: confirm the system still behaves the way the docs and ADRs say it
-does, and surface any drift.
+Goal: confirm the system still behaves as the docs and ADRs say, and surface drift.
 
 ### 2.1 Inventory
 
@@ -80,14 +78,14 @@ Cross-check against:
 - `tests/test_server.py::_EXPECTED` (the contract test)
 - The capability tables in `README.md`
 
-All three sources must list the same set. Mismatches are the leading
-indicator that someone added a tool without finishing the loop.
+All three must list the same set; a mismatch means a tool was added without
+finishing the loop.
 
 ### 2.3 Audit-the-audit
 
 The audit guarantee is "every tool call appended as one JSON line with hash
-+ length, never body". Confirm it empirically by driving one real tool
-through the audited runner and inspecting the resulting record:
++ length, never body". Confirm it by driving one real tool through the audited
+runner and inspecting the record:
 
 ```bash
 AUDIT=/tmp/audit-check.jsonl
@@ -103,26 +101,25 @@ jq -c 'keys' "$AUDIT" | sort -u
 ```
 
 Every record must contain `ts, tool, tier, denied, args, output_sha256,
-output_len, exit_code` at minimum. `request_id`, `client_id`, and `action`
-are context-dependent and may be absent (`action` is `confirm_plan` /
-`confirm_execute` only under the Tier-3 confirmation broker,
-`RELAY_SHELL_CONFIRM_TIER3`; ADR 0009; `cancelled` when the caller went away
-mid-call; `intent` only under the opt-in write-ahead record
-`RELAY_SHELL_AUDIT_INTENT`). Absence of any of the *required*
-fields above is an audit regression; the default-off broker keeps the
-record byte-identical (no `action` field).
+output_len, exit_code` at minimum; a missing required field is an audit
+regression. `request_id`, `client_id`, and `action` are context-dependent and
+may be absent: `action` is `confirm_plan` / `confirm_execute` only under the
+Tier-3 confirmation broker (`RELAY_SHELL_CONFIRM_TIER3`; ADR 0009), and
+`cancelled` when the caller went away mid-call; `intent` appears only under the
+opt-in write-ahead record `RELAY_SHELL_AUDIT_INTENT`. The default-off broker
+keeps the record byte-identical (no `action` field).
 
 Grep for the canonical "must never appear" markers:
 
 ```bash
-# Output bodies must never reach the audit log. The stdio e2e test asserts
-# this; this is a manual cross-check for the operator.
+# Output bodies must never reach the audit log (the stdio e2e test asserts
+# this; this is the operator's manual cross-check).
 grep -F "body-42-only" "$AUDIT" && echo "FAIL: output body leaked into audit"
 ```
 
 If the deployment runs with `RELAY_SHELL_AUDIT_CHAIN=true`
 ([ADR 0007](adr/0007-audit-hash-chain.md)), also verify the tamper-evident
-chain — on the live log and on a shipped-off-host copy:
+chain, on the live log and on a shipped off-host copy:
 
 ```bash
 relay-shell --verify-audit --json
@@ -135,16 +132,15 @@ relay-shell --verify-audit --json
 
 A `FAILED` result is page-worthy: a missing/empty audit log, or an on-disk
 stream that diverged from what the relay emitted (`broken_at` localizes a
-break). Note the bounds of single-file verification: it does not detect
-**tail-truncation** (dropping the newest records leaves a valid prefix) —
-catch that by comparing the latest `seq` against the off-host copy, which has
-the later records. The default is strict (a non-genesis start fails as possible
-head-truncation); pass `--segment` only when verifying a mid-stream rotation
-segment that legitimately starts at `seq > 0`.
+break). Single-file verification does not detect **tail-truncation** (dropping
+the newest records leaves a valid prefix); catch that by comparing the latest
+`seq` against the off-host copy, which has the later records. The default is
+strict (a non-genesis start fails as possible head-truncation); pass `--segment`
+only for a mid-stream rotation segment that legitimately starts at `seq > 0`.
 
 If the deployment runs with `RELAY_SHELL_SECCOMP_NOTIFY=true`
 ([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)), confirm the
-syscall-notify channel actually engaged — an enabled-but-inactive channel is a
+syscall-notify channel actually engaged; an enabled-but-inactive channel is a
 silent audit gap on the child side. `server_info.seccomp.supported` must be
 `true` (a `false` carries a `reason`, most often "requires CAP_SYS_ADMIN"), and
 one real `shell_exec` should leave at least one `syscall_notify` line behind:
@@ -175,10 +171,9 @@ for cmd in ['ls', 'rm -rf /tmp/x', 'systemctl restart nginx',
 "
 ```
 
-Sanity-check that every Tier 2+ example is denied under `guarded` (unless
-allowlisted - `guarded` refuses both `STATEFUL` (2) and `IRREVERSIBLE`
-(3)), that `readonly` permits only Tier 0, and that the deny list fires
-in `open`.
+Check that every Tier 2+ example is denied under `guarded` unless allowlisted
+(`guarded` refuses both `STATEFUL` (2) and `IRREVERSIBLE` (3)), that `readonly`
+permits only Tier 0, and that the deny list fires in `open`.
 
 ### 2.5 Secret redaction
 
@@ -205,9 +200,9 @@ for s in samples: print(redact(s))
 "
 ```
 
-Compare with the assertions in `tests/test_redaction.py`. If a new common
-secret shape appears in real audit logs without redaction, that's a bug
-report against `redaction.py`, not a deployment problem.
+Compare with the assertions in `tests/test_redaction.py`. A common secret shape
+that reaches real audit logs unredacted is a bug against `redaction.py`, not a
+deployment problem.
 
 ### 2.6 Resource bounds and timeouts
 
@@ -235,9 +230,8 @@ for block in content:
 "
 ```
 
-If any bound is wider than the ADR-blessed defaults, document the reason in
-a deployment-specific note (the operator's env file is the right place, not
-the code).
+Document the reason for any bound wider than the ADR-blessed defaults in the
+operator's env file, not in the code.
 
 ### 2.7 SSH posture
 
@@ -272,9 +266,8 @@ curl -sk -I "https://${RELAY_SHELL_EDGE_DOMAIN}/.well-known/oauth-protected-reso
 # Expected: 200 (discovery is always reachable, by design).
 ```
 
-`scripts/healthcheck.sh` covers the local liveness probe. A non-zero exit is
-an alertable condition; any HTTP response (including 401/403/404) means the
-listener is up.
+`scripts/healthcheck.sh` is the local liveness probe: a non-zero exit is
+alertable; any HTTP response (including 401/403/404) means the listener is up.
 
 ### 2.9 Audit-log hygiene
 
@@ -301,7 +294,7 @@ is page-worthy.
 
 ## 3. Review pass
 
-Use this for every PR, your own or external.
+Use for every PR, your own or external.
 
 ### 3.1 Pre-review checklist
 
@@ -313,7 +306,7 @@ Use this for every PR, your own or external.
 - [ ] No new MCP resource is missing from `docs/tools.md` §Resources,
       the README Resources subsection, and the audit-tool-name table in
       both places (resource reads are audited; the `tool` field must stay
-      stable to keep cardinality bounded and to let redaction run on
+      stable so cardinality stays bounded and redaction can run on
       user-controlled parts).
 - [ ] No new env var is missing from `.env.example`, `Settings`, and
       `docs/deployment.md`.
@@ -361,10 +354,8 @@ Trigger an extra review pass if the diff touches:
 - `deploy/install*.sh` (anything that writes a systemd unit / EnvironmentFile)
 - `deploy/Caddyfile` (CIDR matcher or header changes)
 
-If you are reviewing through Claude Code, the bundled `/security-review`
-skill scans the current diff and surfaces common findings in one pass;
-that is the lowest-friction option. Without it, walk the diff against
-this manual checklist:
+In Claude Code, the bundled `/security-review` skill scans the current diff
+in one pass. Otherwise walk the diff against this checklist:
 
 - audit-record fields unchanged (`ts, tool, tier, denied, args,
   output_sha256, output_len, exit_code`), output body still hashed only;
@@ -390,11 +381,11 @@ this manual checklist:
 
 ### 3.4 Common review failures (seen in past PRs)
 
-These keep coming back; check them explicitly:
+Check these explicitly:
 
 1. **New tool added but `tests/test_server.py::_EXPECTED` not updated** -
-   the count assertion catches it but the message is confusing if the test
-   maintainer forgot to bump `len(names) == 22`.
+   the count assertion catches it, but the message is confusing if
+   `len(names) == 22` was not bumped.
 2. **Redaction pattern that eats the next argv token** - quoted/escaped
    values are tested; if you change `REDACTION_PREFIX_PATTERNS` in
    `patterns.py`, run `tests/test_redaction.py` and
@@ -424,8 +415,8 @@ mypy
 pytest -q
 ```
 
-A green local loop is the bar before pushing. Anything that fails CI but
-not locally is a CI-config bug; fix that, not the test.
+A green local loop is the bar before pushing. A failure in CI only is a
+CI-config bug; fix that, not the test.
 
 ### 4.2 Targeted runs
 
@@ -443,8 +434,7 @@ pytest -q tests/test_stdio_e2e.py
 pytest -x -vv -s
 ```
 
-`pytest-asyncio` mode is `auto` (see `pyproject.toml`); you do not need to
-mark coroutines.
+`pytest-asyncio` mode is `auto` (see `pyproject.toml`); coroutines need no marker.
 
 If the test command is itself launched through a running Relay instance whose
 seccomp-notify channel is enabled, the live `seccomp` tests inherit the outer
@@ -466,8 +456,8 @@ Relay channel or relax its service posture just to execute the tests.
 
 ### 4.3 Coverage (CI floor: 90%, last measured 93%)
 
-`coverage` is in the dev extra and runs as part of the CI loop with a
-90% floor that fails the workflow on regression. Reproduce locally:
+`coverage` is in the dev extra and runs in the CI loop; a drop below the 90%
+floor fails the workflow. Reproduce locally:
 
 ```bash
 # One-time: wire subprocess coverage so the stdio e2e contributes.
@@ -483,16 +473,14 @@ coverage report           # uses fail_under=90 from [tool.coverage.report]
 coverage html && xdg-open htmlcov/index.html
 ```
 
-Why the `.pth` dance: the `test_stdio_e2e.py` fixture launches
-`python -m relay_shell` as a subprocess and speaks MCP over its stdio.
-Without subprocess collection, `server.py`'s `@mcp.tool()` wrappers
-register as uncovered even though they run on every e2e tool call.
-The `.pth` file calls `coverage.process_startup()` at every
-interpreter start; `COVERAGE_PROCESS_START` gates the actual recording
-to runs that opt in.
+Why the `.pth`: the `test_stdio_e2e.py` fixture launches `python -m relay_shell`
+as a subprocess, so without subprocess collection `server.py`'s `@mcp.tool()`
+wrappers register as uncovered. The `.pth` file calls
+`coverage.process_startup()` at every interpreter start;
+`COVERAGE_PROCESS_START` gates the actual recording.
 
 Modules to bring to and hold above 90%: `policy.py`, `redaction.py`,
-`audit.py`, `sessions.py`. Anything that handles secrets or admission.
+`audit.py`, `sessions.py`: anything that handles secrets or admission.
 Last measured (2026-10-14, as root so the live `seccomp` tests ran, no subprocess
 collection): 93% total; `policy`, `redaction`, `patterns`, `broker`, `metrics`,
 `auth/admin` at 100%; `sshpool.py` 97%, `server.py` 97%, `seccomp.py` 96%,
@@ -500,8 +488,8 @@ collection): 93% total; `policy`, `redaction`, `patterns`, `broker`, `metrics`,
 OS-specific BlockingIOError + NotImplementedError fallbacks), `inventory.py` (~91%) and
 `__main__.py` (~56% without subprocess collection: the CLI tests run the program as a
 subprocess, so use the recipe above). A non-root runner (GitHub Actions) skips the live
-`seccomp` tests and reports less for `seccomp.py`. `branch = true` is not enabled, so
-untaken branches inside covered lines are not reported.
+`seccomp` tests and reports less for `seccomp.py`. `branch = true` is set in
+`pyproject.toml`, so the report includes branch coverage.
 
 ### 4.4 Type-checking notes
 
@@ -523,8 +511,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}' \
   | python -m relay_shell
 ```
 
-Easier: run `pytest tests/test_stdio_e2e.py -v` - it does exactly this and
-asserts on the response.
+Easier: `pytest tests/test_stdio_e2e.py -v` does exactly this and asserts on the response.
 
 ### 4.6 Manual smoke (HTTP)
 
@@ -552,23 +539,21 @@ Before tagging a release:
 - [ ] `git tag -s vX.Y.Z` (signed) and `git push --tags`.
 
 When the tag lands, `.github/workflows/release.yml` builds and publishes to
-PyPI via OIDC trusted publishing (verify → build → attest → publish; the full
-procedure and the one-time PyPI / `pypi`-environment setup are in §6.6), and
+PyPI via OIDC trusted publishing (verify → build → attest → publish; procedure
+and one-time PyPI / `pypi`-environment setup in §6.6), and
 `.github/workflows/sbom.yml` generates a CycloneDX SBOM (JSON + XML, CDX
 spec 1.5, pinned) for the package's runtime environment, attaches both files to the
 GitHub release, and attests their build provenance. Both workflows install their
 tooling from the hash-locked `requirements-build.txt` / `requirements-sbom.txt`
-(§6.6 says how to regenerate them). B-005 (PyPI publish automation)
-closed in 0.1.0 with `release.yml`; the one-time PyPI trusted-publisher /
-`pypi`-environment setup is documented in §6.6.
+(regeneration in §6.6). B-005 (PyPI publish automation) closed in 0.1.0 with
+`release.yml`.
 
 ---
 
 ## 5. Enhance (consolidation and cleanup)
 
-Discrete, low-risk improvements you can ship without changing the public
-surface. The intent is to leave the next contributor a smaller surface area
-and clearer code, not to land a refactor for its own sake.
+Low-risk improvements that leave the public surface unchanged and the code
+smaller and clearer; no refactor for its own sake.
 
 ### 5.1 Consolidation candidates
 
@@ -605,11 +590,9 @@ None open from the runbook. The 2026-10-14 pass records its remaining coverage g
 
 ## 6. Extend (recipes for new capability)
 
-Anything in this section that adds a new transport, auth provider,
-policy category, or changes the audit-record shape needs an ADR
-under `docs/adr/` before code lands. The
-[ADR index](adr/README.md) documents the criteria and the next free
-number.
+A new transport, auth provider or policy category, or a change to the
+audit-record shape, needs an ADR under `docs/adr/` before code lands; the
+[ADR index](adr/README.md) documents the criteria and the next free number.
 
 ### 6.1 Add a new tool
 
@@ -677,7 +660,7 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
    for TIER2/TIER3, or `\b` for `PRIV_ESC_PATTERN`, does not fire).
 3. Document the addition in `docs/adr/0003-tiered-authority.md` if the
    heuristic represents a new category (not just another verb).
-4. Never replaces the deny list as a security control. The heuristics
+4. A heuristic never replaces the deny list as a security control. The heuristics
    are advisory in `open` mode (they drive the audit tier and the `[NOTICE]` text, ADR 0013);
    the deny list is the only guarantee. A new pattern must not make `open` refuse anything.
 5. Keep the pattern linear. The classifier runs synchronously on the event loop before
@@ -721,9 +704,9 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
 
 ### 6.6 Cut a release (PyPI via OIDC trusted publishing)
 
-The release path is driven by `.github/workflows/release.yml`. It runs
-on any `v*` tag push (and on `workflow_dispatch` with an existing tag
-as input; a dispatch run is only trusted from `main`). The workflow has four gated jobs:
+`.github/workflows/release.yml` runs on any `v*` tag push (and on
+`workflow_dispatch` with an existing tag as input; a dispatch run is only
+trusted from `main`). It has four gated jobs:
 
   1. **verify** - the tag is annotated, GPG/SSH-signed and verified by
      GitHub, and matches the `[project] version` in `pyproject.toml`.
@@ -738,8 +721,8 @@ as input; a dispatch run is only trusted from `main`). The workflow has four gat
      never share a job with package installs.
   4. **publish** - runs in the `pypi` GitHub environment; uses OIDC
      (`pypa/gh-action-pypi-publish`) to upload to PyPI. No long-lived
-     token. The environment is configured with a required reviewer so
-     a human approval clicks between tag push and PyPI publish.
+     token. The environment has a required reviewer, so a human approves
+     between tag push and PyPI publish.
 
 Pre-conditions (one-time setup, already done):
 
@@ -748,8 +731,8 @@ Pre-conditions (one-time setup, already done):
   `project=relay-shell`, `owner=rmednitzer`, `repository=relay-shell`,
   `workflow=release.yml`, `environment=pypi`.
 - GitHub repo Settings -> Environments -> `pypi` exists with a required
-  reviewer rule (so an unauthorized push of a malicious commit followed
-  by a signed tag still needs a human click).
+  reviewer rule (an unauthorized push followed by a signed tag still needs
+  a human approval).
 
 The hash-locked tooling files are generated, not hand-edited. To refresh after a tooling
 bump (Renovate proposes updates; regenerate to keep transitive hashes consistent):
@@ -784,26 +767,23 @@ git push origin v0.1.1
 #    + sdist appear at https://pypi.org/project/relay-shell/.
 ```
 
-If the workflow fails mid-flight (e.g. PyPI is briefly down), re-run
-it from the Actions UI via `workflow_dispatch` with the same tag. The
-verify + build jobs are idempotent; the publish step passes
-`skip-existing: true` to `pypa/gh-action-pypi-publish`, so any file
-that already landed on PyPI from a previous attempt is silently
-skipped instead of producing a "file already exists" failure. PyPI
-itself enforces version immutability - this flag is the documented
-way to make the re-run path safe.
+If the workflow fails mid-flight (e.g. PyPI is briefly down), re-run it from
+the Actions UI via `workflow_dispatch` with the same tag. The verify + build
+jobs are idempotent; the publish step passes `skip-existing: true` to
+`pypa/gh-action-pypi-publish`, so a file that already landed on PyPI is skipped
+instead of failing with "file already exists" (PyPI enforces version
+immutability).
 
-If you need to yank a release, do it from the PyPI project page; this
-project does not maintain a yank automation because yanks are rare and
-the manual click is the appropriate friction.
+Yank a release from the PyPI project page; there is no yank automation because
+yanks are rare and the manual click is the appropriate friction.
 
 ---
 
 ## 7. Backlog
 
-Prioritized. "P0" = blocking the next release. "P1" = should land in the
-next milestone. "P2" = good-to-have, not blocking. "P3" = nice idea, no
-commitment.
+Priorities: P0 blocks the next release; P1 should land in the next milestone;
+P2 is good-to-have; P3 is a nice idea with no commitment. Many items below are
+also registered in [`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md).
 
 ### 7.1 Capability
 
@@ -813,8 +793,7 @@ commitment.
   timed-out transfer returns `[TIMEOUT after Ns]`. `0` (default) disables the
   per-call cap (connection keepalive still applies), so existing callers are
   unaffected. Wiring tests in `tests/test_sshpool_unit.py` assert the cap fires
-  (put + get) and that `timeout=0` completes. Originally deferred from the
-  2026-05-27 engagement (`audit/2026-05-27-engagement.md` §8.2 F-6).
+  (put + get) and that `timeout=0` completes. Deferred from the 2026-05-27 engagement (`audit/2026-05-27-engagement.md` §8.2 F-6).
 - **L1 confirmation broker (P1)** — **Closed** by
   [ADR 0009](adr/0009-tier3-confirmation-broker.md) (2026-07-15 pass): an opt-in,
   default-off two-step confirmation gate for Tier-3 (IRREVERSIBLE) operations
@@ -823,7 +802,7 @@ commitment.
   caller arms it via the new `operation_confirm` tool then re-issues the exact
   call (audited `confirm_execute`). Adapted from the sibling MCP planes'
   plan → authorize → execute broker; layered after the deny/mode check (never a
-  bypass); default-off byte-identical. `src/relay_shell/broker.py` (100%
+  bypass); default-off is byte-identical. `src/relay_shell/broker.py` (100%
   covered), `tests/test_broker.py`; tool contract 21 → 22.
 - **BRK-2 (P3)** — rollback/verify pairing for the confirmation broker
   (`rollback_command` / `verify_command` / `auto_rollback`), the part of the
@@ -832,9 +811,9 @@ commitment.
   design and the seven invariants a build must satisfy (chiefly: rollback/verify
   are themselves fully deny-list/tier-gated, never a policy bypass; bound into
   the confirmation identity; three distinct audit records; bounded, non-recursive
-  loop) and **decides to defer** until a concrete trigger — an autonomous /
+  loop) and **decides to defer** until a concrete trigger (an autonomous /
   unattended deployment, or an operator ask for operation-bound remediation that
-  survives the issuing turn — since a model can already sequence verify/rollback
+  survives the issuing turn), since a model can already sequence verify/rollback
   itself in the attended case. Move ADR 0010 to Accepted with the implementing PR
   when a trigger is real.
 - **WIN-1** — first-class support for **Windows targets over OpenSSH with
@@ -851,15 +830,14 @@ commitment.
   `Verb-Noun` over-scrub guard; `PATTERNS_VERSION` 11) **landed**.
   Encoding/PTY (D/E) stay documented caveats (pwsh is UTF-8 by default). No
   command/path translation layer, no new transport/tool. Classification and
-  redaction stay heuristic (ADR 0003) — a positional secret with no keyword is
+  redaction stay heuristic (ADR 0003); a positional secret with no keyword is
   not redactable.
 
 ### 7.1a 2026-10-04 audit pass (register)
 
 Evidence: the PR descriptions of #189-#197 (no `audit/` pack was archived for this
-pass; H = high, M = medium, L = low). Every finding below was reproduced by running
-code before it was fixed; each fix landed with paired tests that fail against the old
-code. The 2026-10-14 pass is recorded in `BACKLOG.md` and `audit/2026-10-14-engagement.md`.
+pass; H = high, M = medium, L = low). Every finding was reproduced by running code
+before it was fixed; each fix landed with paired tests that fail against the old code. The 2026-10-14 pass is recorded in `BACKLOG.md` and `audit/2026-10-14-engagement.md`.
 
 | ID | Finding | Status |
 |----|---------|--------|
@@ -887,10 +865,9 @@ mode is on.
 
 ### 7.2 Quality + automation
 
-(Items in this category are tracked here as they land; the queue is
-currently empty. B-022 closed by the sshpool fault-injection PR -
-floor is now 90%, baseline ~92%. The 2026-06-12 audit pass — evidence
-under `audit/`, deferral register in `BACKLOG.md` — closed two more:
+(The queue is currently empty. B-022 closed by the sshpool fault-injection PR -
+floor is now 90%, baseline ~92%. The 2026-06-12 audit pass (evidence
+under `audit/`, deferral register in `BACKLOG.md`) closed two more:
 **QUAL-1** (PR #89), explicit observable asserts on the five seccomp
 termination tests in `tests/test_seccomp.py`; and **REL-1** (PR #92),
 the four HTTP `/metrics` tests migrated off the deprecated
@@ -931,15 +908,15 @@ closed three MEDIUM defence-in-depth / correctness gaps in the engagement PR
 - **PERF-4 (P2)** — **Closed** (follow-up). The single-host exec paths bound the
   output buffered in relay memory to `max_output_hard` (`shelltools._drive`'s
   bounded concurrent drain; `ssh_exec` passes `max_output_bytes`) instead of
-  buffering the whole child output before truncating — a memory DoS reachable by
-  a Tier-1 command `guarded` mode permits. Returned output byte-identical; child
-  runs to completion. 7 tests. (Raised from info to P2/MED on review — it crosses
-  the `guarded` boundary.) A later audit pass found the original PERF-4 fix
+  buffering the whole child output before truncating (a memory DoS reachable by
+  a Tier-1 command `guarded` mode permits). Returned output byte-identical; child
+  runs to completion. 7 tests. (Raised from info to P2/MED on review: it crosses
+  the `guarded` boundary.) A later audit pass found the original fix
   missed two other single-host exec call sites: `ssh_keyscan`'s `run_command()`
   call and `ssh_check`'s `SshPool.run()` call both still passed no cap
   (`output_cap`/`max_output_bytes` unset, `cap is None`). `ssh_check` is Tier 0
   (permitted even in `readonly` mode) and both take a caller-chosen `hosts`
-  argument, so this was a wider gap than the original: a malicious or
+  argument, a wider gap than the original: a malicious or
   compromised remote sshd could stream unbounded data back regardless of mode.
   Both now bound to a cap (`max_output_hard` for `ssh_keyscan`, a 4 KiB
   `_SSH_CHECK_PER_HOST_OUTPUT_CAP` for `ssh_check`'s substring-only probe).
@@ -950,7 +927,7 @@ closed three MEDIUM defence-in-depth / correctness gaps in the engagement PR
 `jsonl`/`cef`/`leef` formatters in `src/relay_shell/audit.py`.)
 
 - **AUD-1 (L2, P2)** — **Closed** as a split disposition (see `BACKLOG.md`).
-  Evaluated the "in-band audit verify/correlate" lesson against ADR 0007 and the
+  The "in-band audit verify/correlate" lesson, evaluated against ADR 0007 and the
   audit schema: **shipped** read-only triage filters on `audit_tail`
   (`tool`/`tier`/`denied`) for the operator-diagnostic case; **declined**
   in-band chain-verify (stays the CLI `--verify-audit`, ADR 0007 — the audited

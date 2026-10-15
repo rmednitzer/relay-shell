@@ -123,22 +123,18 @@ class _Store:
     def __init__(self, path: Path) -> None:
         self._path = path
         parent = self._path.parent
-        # Create the store dir private *at creation*: mkdir's mode is masked
-        # by umask, but 0o700 carries no group/other bits to begin with, so a
-        # dir we create is 0o700 regardless of the caller's umask — no
-        # world-readable window before the chmod below. `mode=` applies only
-        # to a freshly-created leaf, never to an existing dir.
+        # Create the dir private *at creation*: 0o700 has no group/other bits for
+        # the umask to mask, so there is no world-readable window before the
+        # chmod below. `mode=` applies only to a freshly-created leaf.
         parent.mkdir(mode=_DIR_MODE, parents=True, exist_ok=True)
         # Tighten a pre-existing dir too; best-effort, since a dir owned by
         # another user (e.g. operator-provisioned) is not ours to chmod.
         with contextlib.suppress(OSError):
             parent.chmod(_DIR_MODE)
-        # Fail closed on an actually-insecure store (SEC-8). The secret files
-        # are written 0o600 regardless, but a group/other-accessible store dir
-        # lets other local users list or tamper with the token files. If the
-        # dir is still group/other-accessible here — we could neither create
-        # nor tighten it to 0o700 — refuse rather than run with an exposed
-        # token store. A correctly-0o700 dir owned by any user passes.
+        # Fail closed on an insecure store (SEC-8). The files are written 0o600,
+        # but a group/other-accessible dir lets other local users list or tamper
+        # with them. If the dir could be neither created nor tightened to 0o700,
+        # refuse. A 0o700 dir owned by any user passes.
         mode = parent.stat().st_mode & 0o777
         if mode & 0o077:
             raise PermissionError(
@@ -225,11 +221,9 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         self._code_ttl = code_ttl
         self._migrate_secret_storage()
         self._migrate_legacy_approvals()
-        # Single per-provider lock serializes every read-modify-write
-        # against the JSON stores. The atomic `tmp.replace` inside
-        # ``_Store.save`` guarantees disk consistency for one writer; this
-        # lock guarantees cross-coroutine consistency under concurrent
-        # HTTP-transport traffic (token rotation, register-client, revoke).
+        # Serializes every read-modify-write against the JSON stores across
+        # coroutines (token rotation, register-client, revoke). The atomic
+        # `tmp.replace` in ``_Store.save`` covers disk consistency for one writer.
         self._lock = asyncio.Lock()
 
     def _migrate_secret_storage(self) -> None:
@@ -312,15 +306,13 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                 ) from exc
             incoming = json.loads(client_info.model_dump_json())
             # Single-client lockdown freezes registration once the first client
-            # is registered. The earlier guard only refused a *new* client_id
-            # (`cid not in clients`), so an attacker who learned the existing
-            # client_id (and reached the CIDR-allowed registration endpoint)
-            # could re-register it and overwrite its `redirect_uri` — steering
-            # the next authorization code to an attacker URL (AUTH-2). Refuse
-            # anything that would create or *modify* a client under lockdown; a
-            # byte-identical re-registration of an existing client_id stays a
-            # no-op (the SDK handler always mints a new client_id, so over HTTP a
-            # repeat registration is a new client and is refused).
+            # exists. Refusing only a *new* client_id would let an attacker who
+            # learned the existing one re-register it and overwrite its
+            # `redirect_uri`, steering the next authorization code to an attacker
+            # URL (AUTH-2). So anything that would create or *modify* a client is
+            # refused; a byte-identical re-registration stays a no-op (the SDK
+            # handler always mints a new client_id, so over HTTP a repeat
+            # registration is a new client and is refused).
             if self._single_client and clients and clients.get(cid) != incoming:
                 raise RegistrationError(
                     "invalid_client_metadata",
@@ -426,30 +418,24 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             if record is None and _SECRET_RE.match(raw):
                 record = codes.pop(raw, None)  # written before secrets were hashed
             if record is None:
-                # Race: two concurrent token requests both loaded the same
-                # code; the first removed it, the second finds it gone.
-                # An authorization code is one-shot per RFC 6749 §4.1.2;
-                # refuse via TokenError so the MCP token handler renders
-                # an OAuth ``invalid_grant`` response (HTTP 400), not 500.
+                # Race: two concurrent requests loaded the same code; the first
+                # removed it. One-shot per RFC 6749 §4.1.2; TokenError renders as
+                # ``invalid_grant`` (HTTP 400), not 500.
                 raise TokenError(
                     error="invalid_grant",
                     error_description="authorization code already used or expired",
                 )
             if record.get("client_id") != (client.client_id or ""):
-                # Defense in depth: ``load_authorization_code`` already
-                # validates the client, but re-check here in case a future
-                # caller skips that step.
+                # Defense in depth: ``load_authorization_code`` already checks
+                # the client; re-check in case a caller skips it.
                 raise TokenError(
                     error="invalid_grant",
                     error_description="authorization code does not belong to this client",
                 )
             if int(record.get("expires_at", 0)) < _now():
-                # Same defense-in-depth posture as the client check: enforce
-                # expiry atomically at exchange, not only at ``load``. A code
-                # valid when loaded can lapse in the load->exchange window (or a
-                # caller could reach exchange without load), and expiry, like
-                # client ownership, must gate token issuance. The code was
-                # already popped above, so this also removes the stale record.
+                # Defense in depth: enforce expiry at exchange, not only at
+                # ``load``; a code can lapse in the load->exchange window. The
+                # code was already popped, so this also removes the stale record.
                 self._codes.save(codes)
                 raise TokenError(
                     error="invalid_grant",
@@ -459,8 +445,7 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             scopes = list(record["scopes"])
             resource = self._checked_resource(record.get("resource"))
             # _issue is sync and does its own load/save on tokens.json; the
-            # caller's lock covers both stores atomically from a concurrent
-            # coroutine's view.
+            # caller's lock covers both stores.
             return self._issue(client.client_id or "", scopes, resource=resource)
 
     # --- tokens ---
@@ -503,17 +488,15 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
         )
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        # Refresh tokens live under the `refresh:` key prefix. Reject any bearer
-        # string carrying that prefix so a refresh token presented as an access
-        # token (`Authorization: Bearer refresh:<tok>`) cannot authenticate via
-        # this lookup — token-type confusion that would otherwise grant a
-        # refresh token full access-token scope for the (long) refresh TTL.
+        # Refresh tokens live under the `refresh:` key prefix. Rejecting that
+        # prefix stops a refresh token presented as an access token
+        # (`Authorization: Bearer refresh:<tok>`) from authenticating, which
+        # would grant it full access-token scope for the (long) refresh TTL.
         if token.startswith(_REFRESH_PREFIX) or not _SECRET_RE.match(token):
             return None
         async with self._lock:
-            # Called for every authenticated request: the whole-file read (and, on
-            # expiry, write) runs off the event loop. The asyncio lock still
-            # serializes it against every other store access in this process.
+            # Runs on every authenticated request: the whole-file read (and, on
+            # expiry, write) goes off the event loop; the lock still serializes it.
             return await asyncio.to_thread(self._load_access_token_sync, token)
 
     def _load_access_token_sync(self, token: str) -> AccessToken | None:
@@ -542,12 +525,10 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
     async def load_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
-        # Hold the per-provider lock for the read, like every other store
-        # access (SEC-6). Without it a concurrent revoke/rotation between this
-        # load and the subsequent exchange could surface a spurious
-        # invalid_grant to a legitimate refresh. asyncio.Lock is not reentrant,
-        # but no lock-holding path calls this method, so there is no nested
-        # acquire / deadlock.
+        # Hold the lock for the read like every other store access (SEC-6);
+        # without it a concurrent revoke/rotation could surface a spurious
+        # invalid_grant. asyncio.Lock is not reentrant, but no lock-holding path
+        # calls this method, so there is no deadlock.
         if not _SECRET_RE.match(refresh_token):
             return None
         async with self._lock:
@@ -610,11 +591,9 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
             if record is None and _SECRET_RE.match(raw):
                 record = tokens.pop(_REFRESH_PREFIX + raw, None)  # pre-hashing record
             if record is None:
-                # Race: two concurrent refresh requests both loaded the
-                # same token; the first rotated it, the second finds it
-                # gone. Refuse via TokenError (rendered as OAuth
-                # ``invalid_grant`` HTTP 400 by the MCP token handler)
-                # so rotation stays single-use.
+                # Race: two concurrent refreshes loaded the same token; the first
+                # rotated it. TokenError (``invalid_grant``, HTTP 400) keeps
+                # rotation single-use.
                 raise TokenError(
                     error="invalid_grant",
                     error_description="refresh token already used or expired",
@@ -625,11 +604,9 @@ class FileOAuthProvider(OAuthAuthorizationServerProvider):  # type: ignore[type-
                     error_description="refresh token does not belong to this client",
                 )
             if int(record.get("expires_at", 0)) < _now():
-                # Enforce expiry at exchange too, mirroring the client check and
-                # ``load_refresh_token``'s expiry gate — an expired refresh token
-                # must not mint a fresh access/refresh pair even if exchange is
-                # reached without load or the token lapsed in the load->exchange
-                # window. The token was already popped above, so this also
+                # Enforce expiry at exchange too: an expired refresh token must not
+                # mint a new pair if exchange is reached without load or it lapsed
+                # in the load->exchange window. Already popped, so this also
                 # removes the stale record.
                 self._tokens.save(tokens)
                 raise TokenError(

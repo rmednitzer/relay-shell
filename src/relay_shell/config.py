@@ -62,34 +62,29 @@ class Settings(BaseSettings):
     # intended (for example an authenticating proxy is the only way to the port).
     allow_unauth_network: bool = False
 
-    # Limits. Every bound carries an explicit `le=` upper cap (CFG-1): without
-    # one, an operator who env-sets an absurd value (e.g. a 1 TB output cap)
-    # gets a clamp that never bites and a self-inflicted memory/DoS footgun.
-    # The caps are deliberately generous — far above any real config — so they
-    # reject only nonsense, never a legitimate large deployment.
+    # Limits. Every bound has an explicit `le=` cap (CFG-1) so an absurd value
+    # (e.g. a 1 TB output cap) is rejected instead of becoming a memory/DoS
+    # footgun. The caps are far above any real config.
     max_output: int = Field(default=65536, ge=1024, le=16_777_216)
     max_output_hard: int = Field(default=1_048_576, ge=4096, le=134_217_728)
-    # Ceiling on the text a single call may put in front of the policy layer (the
-    # command, stdin, script body and env overlay together), in characters. The tier
-    # classifier and the deny regex run synchronously on the event loop at about
-    # 0.5 s per MiB, so an unbounded input would stall every other session; a call
-    # over the ceiling is refused (audited as denied) rather than scanned partially,
-    # which would let padding hide a command. Raise it for deployments that really
-    # pipe multi-MiB payloads through stdin or a script.
+    # Ceiling, in characters, on the text a single call may put in front of the
+    # policy layer (command, stdin, script body and env overlay together). The tier
+    # classifier and deny regex run synchronously on the event loop at about 0.5 s
+    # per MiB, so unbounded input would stall every session. A call over the ceiling
+    # is refused (audited as denied) rather than scanned partially, which would let
+    # padding hide a command. Raise it for deployments that pipe multi-MiB payloads.
     max_input: int = Field(default=2_097_152, ge=1024, le=134_217_728)
     default_timeout: int = Field(default=60, ge=1, le=86_400)
     max_timeout: int = Field(default=900, ge=1, le=86_400)
     max_sessions: int = Field(default=64, ge=1, le=1024)
     max_forwards: int = Field(default=64, ge=1, le=1024)
-    # Hard ceiling on the live SSH connection cache (`SshPool._conns`). Mirrors
-    # `max_sessions` / `max_forwards`: without it the cache is bounded only by
-    # opportunistic idle eviction (`ssh_idle_timeout`), so a caller varying the
-    # target or per-call auth (`user`/`port`/`key_path`) across many *real*
-    # reachable hosts can accumulate live TCP+SSH sessions (fds/memory) between
-    # sweeps. When the cache is full a new connect evicts the least-recently-used
-    # *unpinned* entry first; entries in active use (a session, forward, or
-    # in-flight run pins them) are never evicted, so the cap can be transiently
-    # exceeded only by connections that are actually in use.
+    # Hard ceiling on the live SSH connection cache (`SshPool._conns`). Without
+    # it only opportunistic idle eviction (`ssh_idle_timeout`) bounds the cache,
+    # so varying target or per-call auth (`user`/`port`/`key_path`) across many
+    # reachable hosts can accumulate live connections between sweeps. A full
+    # cache evicts the least-recently-used *unpinned* entry on a new connect;
+    # connections in use (session, forward, in-flight run) are never evicted, so
+    # the cap can be exceeded only by those.
     max_conns: int = Field(default=256, ge=1, le=4096)
     session_idle_timeout: int = Field(default=1800, ge=10, le=86_400)
     session_buffer_bytes: int = Field(default=262_144, ge=4096, le=16_777_216)
@@ -108,9 +103,8 @@ class Settings(BaseSettings):
     # Tier-3 (IRREVERSIBLE) operation that passes the deny list and mode check
     # is not executed on first request: the runner returns a single-use,
     # TTL-bounded token and the caller must arm it via the `operation_confirm`
-    # tool, then re-issue the exact same call. Default off keeps the record
-    # byte-identical and the behavior unchanged. `confirm_ttl` bounds how long
-    # a minted token stays valid before it must be re-planned.
+    # tool, then re-issue the exact same call. `confirm_ttl` bounds how long a
+    # minted token stays valid before it must be re-planned.
     confirm_tier3: bool = False
     confirm_ttl: int = Field(default=120, ge=5, le=3600)
 
@@ -125,28 +119,25 @@ class Settings(BaseSettings):
     audit_session_input: str = "redacted"
     # Tamper-evident audit: when true, each record carries a `seq`, the
     # previous record's chain hash (`prev`), and its own `chain` hash so a
-    # verifier can detect any insertion / deletion / reordering / edit of
-    # the on-disk log (see docs/adr/0007-audit-hash-chain.md). Default off
-    # keeps the record byte-identical to today. Only the `jsonl` format can
-    # resume the chain across restarts, so chaining requires it.
+    # verifier can detect insertion, deletion, reordering or edit of the
+    # on-disk log (see docs/adr/0007-audit-hash-chain.md). Only the `jsonl`
+    # format can resume the chain across restarts, so chaining requires it.
     audit_chain: bool = False
     # Write-ahead audit (opt-in, default off): append an `action="intent"` record
-    # *before* a call's work runs, in addition to the completion record. The
-    # completion record is only written once the work returns, so a crash or
-    # SIGKILL of the relay mid-command would otherwise leave an executed command
-    # with no audit trail. Default off keeps every record byte-identical and the
-    # one-record-per-call shape existing log consumers rely on.
+    # *before* a call's work runs, in addition to the completion record. Without
+    # it a crash or SIGKILL mid-command leaves an executed command with no audit
+    # trail. Default off keeps the one-record-per-call shape log consumers rely on.
     audit_intent: bool = False
 
     # Syscall-level audit channel (ADR 0006; opt-in, default off). When on,
     # locally-spawned children get a seccomp-bpf USER_NOTIF filter and the
-    # supervisor appends one `syscall_notify` audit line per observed
-    # syscall (execve, privilege/namespace/mount changes, write-opens). It
-    # never blocks a syscall and only activates when the process holds
-    # CAP_SYS_ADMIN (so set-uid/sudo behaviour is preserved verbatim);
-    # otherwise it cleanly no-ops. `seccomp_notify_cap` bounds the per-call
-    # event volume — beyond it, one `syscall_notify_overflow` line is written
-    # and emission stops (the child still runs to completion).
+    # supervisor appends one `syscall_notify` audit line per observed syscall
+    # (execve, privilege/namespace/mount changes, write-opens). It never blocks
+    # a syscall and activates only when the process holds CAP_SYS_ADMIN (so
+    # set-uid/sudo behaviour is preserved); otherwise it no-ops.
+    # `seccomp_notify_cap` bounds per-call event volume: beyond it one
+    # `syscall_notify_overflow` line is written and emission stops (the child
+    # still runs to completion).
     seccomp_notify: bool = False
     seccomp_notify_cap: int = Field(default=256, ge=1, le=65536)
 
@@ -155,16 +146,15 @@ class Settings(BaseSettings):
     inventory: str = ""
     ssh_known_hosts: str = "accept-new"
     # When false, a per-call `known_hosts` weaker than `ssh_known_hosts` (for
-    # example `ignore` against a `strict` server default) is refused at connect time,
-    # so a caller cannot downgrade host-key verification. A stronger per-call mode and
-    # an operator-written inventory entry are always honoured. Default true keeps the
-    # historical behaviour (per-call overrides in either direction).
+    # example `ignore` against a `strict` default) is refused at connect time, so
+    # a caller cannot downgrade host-key verification. A stronger per-call mode
+    # and an operator-written inventory entry are always honoured. Default true
+    # allows per-call overrides in either direction.
     ssh_allow_weaker_known_hosts: bool = True
     ssh_connect_timeout: int = Field(default=10, ge=1, le=120)
     ssh_keepalive: int = Field(default=30, ge=0, le=600)
-    # Idle eviction for cached SSH connections. 0 disables the reaper
-    # (matches the historical behavior). A non-zero value drops a cached
-    # connection that has not been used for that many seconds the next
+    # Idle eviction for cached SSH connections. 0 disables the reaper. A
+    # non-zero value drops a connection unused for that many seconds the next
     # time the pool is consulted; see SshPool._sweep_conns.
     ssh_idle_timeout: int = Field(default=1800, ge=0, le=86400)
 
@@ -175,13 +165,13 @@ class Settings(BaseSettings):
     auth_state_dir: str = "/var/lib/relay-shell/oauth"
     auth_single_client: bool = True
     # Operator approval gate. Dynamic client registration is open to whoever can
-    # reach /register, and /authorize issues a code to any registered client with
+    # reach /register and /authorize issues a code to any registered client with
     # no login step, so without this the first party to register obtains tokens
-    # (shell execution as the service user). When true, a newly registered client
-    # is *pending* and /authorize refuses it until the operator approves it on the
-    # host (`relay-shell --auth-approve CLIENT_ID`). Clients that already exist at
-    # upgrade are carried over as approved. Set false only where the edge itself
-    # authenticates the caller.
+    # (shell execution as the service user). When true, a new client is *pending*
+    # and /authorize refuses it until the operator approves it on the host
+    # (`relay-shell --auth-approve CLIENT_ID`). Clients that exist at upgrade are
+    # carried over as approved. Set false only where the edge itself authenticates
+    # the caller.
     auth_require_approval: bool = True
     auth_access_ttl: int = Field(default=3600, ge=60)
     auth_refresh_ttl: int = Field(default=2_592_000, ge=300)
@@ -215,7 +205,7 @@ class Settings(BaseSettings):
     @classmethod
     def _v_policy_regex(cls, v: str, info: ValidationInfo) -> str:
         # Compile at load so a bad pattern is a clean "invalid configuration"
-        # at startup instead of a raw traceback from deep inside server assembly.
+        # at startup, not a traceback from server assembly.
         try:
             re.compile(v)
         except re.error as exc:
@@ -256,11 +246,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _v_chain_requires_jsonl(self) -> Settings:
-        # The hash chain is defined over the on-disk `jsonl` record and is
-        # resumed across restarts by re-parsing the last line. CEF/LEEF are
-        # SIEM-ingest shapes where the aggregator owns integrity, so refuse
-        # the combination at startup rather than emit a chain that cannot be
-        # resumed. Fails fast (per the module contract) instead of mid-run.
+        # The chain is defined over the on-disk `jsonl` record and resumed by
+        # re-parsing the last line. CEF/LEEF are SIEM-ingest shapes where the
+        # aggregator owns integrity, so refuse the combination at startup.
         if self.audit_chain and self.audit_format != "jsonl":
             raise ValueError("audit_chain=true requires audit_format=jsonl")
         return self

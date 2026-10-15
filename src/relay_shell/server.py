@@ -60,44 +60,35 @@ _log = logging.getLogger("relay_shell.server")
 Work = Callable[[], Awaitable[tuple[str, int | None]]]
 _SUDO_SEARCH_PATHS = (Path("/usr/bin/sudo"), Path("/bin/sudo"), Path("/usr/local/bin/sudo"))
 
-# ssh_fanout: bound the per-call host count. A real production fleet
-# fan-out is almost always under this limit; raise if the use case
-# shows up. Without the cap a single tool call could open hundreds of
-# SSH connections (each with its own credential negotiation and remote
-# sshd auth log entry), turning the tool into a noisy sweep surface.
+# ssh_fanout: per-call host cap. Without it one call could open hundreds of SSH
+# connections (each with its own credential negotiation and remote sshd auth log
+# entry), making the tool a noisy sweep surface.
 _SSH_FANOUT_MAX_HOSTS = 100
 
-# ssh_check: like ssh_fanout, cap the per-call host count and bound how many
-# probes run at once (SSH-2). Without the cap the inventory-wide default could
-# fan a large fleet into one call; without bounded concurrency the probes ran
-# strictly sequentially, so a big list multiplied by the connect timeout into a
-# long-blocking call. The probe is read-only ("echo ok"); output order follows
-# the input list regardless of completion order.
+# ssh_check (SSH-2): per-call host cap and bounded probe concurrency. Without the
+# cap the inventory-wide default could fan a large fleet into one call; without
+# concurrency the probes ran sequentially, so a long list multiplied by the
+# connect timeout blocked the call. The probe is read-only ("echo ok"); output
+# order follows the input list regardless of completion order.
 _SSH_CHECK_MAX_HOSTS = 100
 _SSH_CHECK_CONCURRENCY = 8
-# PERF-4: bound the per-host buffered output, mirroring ssh_exec/ssh_fanout.
-# ssh_check is Tier 0 (permitted even in `readonly` mode) and its `hosts`
-# argument is caller-chosen, so a malicious or compromised remote sshd could
-# otherwise stream unbounded data back on the exec channel regardless of what
-# "echo ok" actually asked for; up to `_SSH_CHECK_CONCURRENCY` such streams run
-# concurrently. Only the "ok" substring is ever inspected, so a few KB is
-# generous for the probe's purpose.
+# PERF-4: bound the per-host buffered output. ssh_check is Tier 0 (permitted even
+# in `readonly` mode) and `hosts` is caller-chosen, so a malicious remote sshd
+# could otherwise stream unbounded data on the exec channel, up to
+# `_SSH_CHECK_CONCURRENCY` streams at once. Only the "ok" substring is inspected.
 _SSH_CHECK_PER_HOST_OUTPUT_CAP = 4096
 
-# ssh_keyscan: validate host tokens at the boundary so the eventual
-# shell concatenation is safe. Hostnames (and bracketed IPv6 literals) only;
-# no whitespace, no shell metacharacters, no path separators.
+# ssh_keyscan: host tokens are validated at the boundary so the shell
+# concatenation is safe. Hostnames and bracketed IPv6 literals only; no
+# whitespace, shell metacharacters or path separators.
 _HOSTNAME_RE = re.compile(r"^[A-Za-z0-9._\-\[\]:]+$")
 
-# ssh_keyscan: the key types ssh-keyscan emits. Restrict to algorithms
-# that appear in current OpenSSH; reject anything else at the boundary.
+# ssh_keyscan: key types accepted (algorithms in current OpenSSH); anything else
+# is rejected at the boundary.
 _ALLOWED_KEY_TYPES = frozenset({"rsa", "ecdsa", "ed25519", "dsa"})
 
-# ssh_keyscan: cap the per-call host count so a single tool invocation
-# cannot fan out thousands of outbound TCP SYNs. A real operator sweep
-# is almost always well under this limit; raise if the use case shows
-# up. Without the cap the tool is a free network-burst surface even at
-# Tier 1.
+# ssh_keyscan: per-call host cap. Without it one call could send thousands of
+# outbound TCP SYNs, a network-burst surface even at Tier 1.
 _SSH_KEYSCAN_MAX_HOSTS = 32
 
 
@@ -433,9 +424,8 @@ class Relay:
             chain=settings.audit_chain,
         )
         self.policy = Policy(settings.policy_mode, settings.policy_deny, settings.policy_allow)
-        # Tier-3 confirmation broker (ADR 0009). None unless opted in, so the
-        # default configuration never consults it and Relay.run stays
-        # byte-identical to the pre-broker path.
+        # Tier-3 confirmation broker (ADR 0009). None unless opted in; the default
+        # configuration never consults it.
         self.broker = ConfirmationBroker(settings.confirm_ttl) if settings.confirm_tier3 else None
         self.inventory = Inventory(settings.ssh_config, settings.inventory).load()
         self.sessions = SessionRegistry(
@@ -446,14 +436,12 @@ class Relay:
         self.ssh = SshPool(settings=settings, inventory=self.inventory)
         self.sudo_binary = _find_sudo_binary()
         self.metrics = Metrics()
-        # Gauges read live at scrape time: this guarantees /metrics never
-        # disagrees with the underlying registries.
+        # Gauges are read live at scrape time so /metrics matches the registries.
         self.metrics.register_gauge(ACTIVE_SESSIONS, lambda: float(self.sessions.count()))
         self.metrics.register_gauge(ACTIVE_FORWARDS, lambda: float(self.ssh.forward_count()))
         self.metrics.register_gauge(AUDIT_DEGRADED, lambda: 1.0 if self.audit.degraded else 0.0)
-        # Announce the seccomp-notify channel's status once at construction so
-        # an operator who set RELAY_SHELL_SECCOMP_NOTIFY learns immediately
-        # whether it actually engaged (or why it no-ops on this host).
+        # Announce the seccomp-notify channel status once, so an operator who set
+        # RELAY_SHELL_SECCOMP_NOTIFY learns whether it engaged (or why it no-ops).
         if settings.seccomp_notify:
             support = seccomp.platform_support()
             if support.ok:
@@ -538,16 +526,14 @@ class Relay:
             )
             return body
 
-        # Tier-3 confirmation gate (ADR 0009). Opt-in: when `self.broker` is
-        # None (the default) this whole block is skipped and the path below
-        # stays byte-identical. When enabled, an IRREVERSIBLE op that already
-        # passed the deny list and mode check is not executed on first
-        # request - the runner mints a single-use, TTL-bounded token (audited
-        # as `confirm_plan`, no work() side effect) and the caller must arm it
-        # via `operation_confirm` then re-issue the exact same call. A retried
-        # call whose armed token is found is executed and tagged
-        # `confirm_execute`. This is an added safeguard, never a bypass: the
-        # deny list and mode policy have already run above.
+        # Tier-3 confirmation gate (ADR 0009). Opt-in: skipped when `self.broker`
+        # is None (the default). When enabled, an IRREVERSIBLE op that already
+        # passed the deny list and mode check is not executed on first request:
+        # the runner mints a single-use, TTL-bounded token (audited as
+        # `confirm_plan`, no work() side effect) and the caller must arm it via
+        # `operation_confirm`, then re-issue the exact same call. A retry whose
+        # armed token is found is executed and tagged `confirm_execute`. An added
+        # safeguard, never a bypass: deny list and mode policy ran above.
         confirm_action = ""
         if self.broker is not None and decision.tier == Tier.IRREVERSIBLE:
             op_key = _confirm_op_key(policy_text, audit_args)
@@ -591,14 +577,12 @@ class Relay:
             )
 
         errored = False
-        # Activate the per-call seccomp-notify monitor (ADR 0006) for the
-        # duration of work(). It is None unless the channel is enabled AND
-        # supported; the executors consult it when they spawn a child. A
-        # ContextVar keeps concurrent calls isolated and avoids threading the
-        # monitor through every tool's work closure. Whoever arms the monitor
-        # owns stopping it: the one-shot executor (shelltools) stops it when
-        # the call's child is reaped, a PTY transport (sessions) adopts it
-        # for the session's lifetime and stops it at close (B-026).
+        # Activate the per-call seccomp-notify monitor (ADR 0006) for work(). None
+        # unless the channel is enabled and supported; executors consult it when
+        # they spawn a child. A ContextVar isolates concurrent calls without
+        # threading the monitor through every work closure. Whoever arms the
+        # monitor stops it: the one-shot executor (shelltools) when the child is
+        # reaped, a PTY transport (sessions) at session close (B-026).
         monitor = self._seccomp_monitor(request_id)
         token = seccomp.set_active(monitor)
         try:
@@ -1456,30 +1440,21 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             conc = clamp(concurrency, 1, 32)
             sem = asyncio.Semaphore(conc)
 
-            # Aggregate output budget guides every interior `truncate`
-            # call so the final serialized JSON is guaranteed to fit.
-            # The top-level Relay.run() truncates this tool's return
-            # value to `cfg.max_output` (clamped); if the JSON exceeds
-            # that, Relay.run() appends a [TRUNCATED ...] marker which
-            # turns the response into unparseable JSON. The arithmetic
-            # below errs on the conservative side so that does not
-            # happen even at the maximum host count and longest
-            # plausible per-host output. See review on #31.
+            # Aggregate output budget for the interior `truncate` calls. If the
+            # serialized JSON exceeded `cfg.max_output`, Relay.run() would append a
+            # [TRUNCATED ...] marker and the response would no longer parse. The
+            # arithmetic below is conservative so that cannot happen, even at the
+            # maximum host count. See review on #31.
             agg_budget = app.clamp_output(cfg.max_output)
-            # Cap the echoed command at a fraction of the budget so a
-            # very long command alone cannot blow the envelope.
+            # Cap the echoed command so it alone cannot blow the envelope.
             command_budget = min(2048, agg_budget // 4)
             command_echo = truncate(command, command_budget)
-            # Per-record framing reserve: compact JSON record framing
-            # `{"host":"X","exit_code":N,"output":"..."}` is ~50 bytes;
-            # the `truncate` marker `\n\n[TRUNCATED - X bytes total,
-            # Y shown]` adds another ~50 when the output is actually
-            # truncated; allow ~100 bytes of slack for JSON escape
-            # expansion (e.g. embedded quotes, newlines). 200 bytes/
-            # record is generous but bounded.
+            # Per-record reserve: record framing `{"host":"X","exit_code":N,
+            # "output":"..."}` is ~50 bytes, the `truncate` marker `\n\n[TRUNCATED -
+            # X bytes total, Y shown]` ~50 more, plus ~100 for JSON escape
+            # expansion (quotes, newlines).
             per_record_overhead = 200
-            # Top-level envelope: command echo + the integer fields
-            # + the results array brackets + slack. 1 KiB is plenty.
+            # Top-level envelope: command echo, integer fields, array brackets, slack.
             envelope_overhead = 1024 + len(command_echo) + len(names) * per_record_overhead
             remaining = max(agg_budget - envelope_overhead, 0)
             per_host_budget = max(128, remaining // max(len(names), 1))
@@ -1502,9 +1477,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                             "output": truncate(out, per_host_budget),
                         }
                     except Exception as exc:  # noqa: BLE001
-                        # codex P2 on #31: bound the exception message
-                        # too, otherwise a few hosts with long error
-                        # messages can blow the envelope.
+                        # codex P2 on #31: bound the exception message too, or long
+                        # errors from a few hosts can blow the envelope.
                         err = truncate(
                             f"[UNREACHABLE: {exc.__class__.__name__}: {exc}]",
                             per_host_budget,
@@ -1523,9 +1497,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 "host_count": len(names),
                 "results": results,
             }
-            # Compact JSON (no indent) so the per-record overhead
-            # estimate above is realistic. Operators wanting a
-            # pretty-printed view can pipe through `jq`.
+            # Compact JSON (no indent) keeps the per-record estimate above realistic.
             return (json.dumps(payload, default=str), None)
 
         return await app.run(
@@ -1533,10 +1505,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             ctx=ctx,
             audit_args={
                 "command": command,
-                # Record the raw input so the audit reflects the actual
-                # request parameters, not the resolved fallback. Copilot
-                # review on #31 noted that "hosts or 'inventory'" loses
-                # caller intent when the input was an empty string.
+                # Raw input, not the resolved fallback: "hosts or 'inventory'"
+                # would lose caller intent for an empty string (Copilot review on #31).
                 "hosts": hosts,
                 "timeout": timeout,
                 "concurrency": concurrency,
@@ -1570,10 +1540,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             host_list = [h for h in hosts.replace(",", " ").split() if h]
             if not host_list:
                 return ("[no hosts; pass hosts=<host>[,<host>...]]", None)
-            # Cap the host count to bound outbound network burst. The
-            # tool is operator-facing and a real production sweep is
-            # almost always under 32; raise this if the use case shows
-            # up. Without the cap a single call could initiate
+            # Bound outbound network burst: without the cap one call could send
             # thousands of SYNs to attacker-chosen destinations.
             if len(host_list) > _SSH_KEYSCAN_MAX_HOSTS:
                 return (
@@ -1582,9 +1549,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                     None,
                 )
             for h in host_list:
-                # Permitted: letters, digits, dot, dash, underscore,
-                # brackets, colon (for bracketed IPv6 literals). No
-                # whitespace, no shell metachars, no path separators.
+                # Letters, digits, dot, dash, underscore, brackets, colon (bracketed
+                # IPv6). No whitespace, shell metachars or path separators.
                 if not _HOSTNAME_RE.match(h):
                     return (
                         f"[ERROR: rejected host {h!r}: must match {_HOSTNAME_RE.pattern}]",
@@ -1604,16 +1570,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 return ("[ERROR: empty key_types]", None)
             tmo = clamp(timeout, 1, 60)
 
-            # Build the command using shlex.quote on every interpolated
-            # token. Every token has also passed the regex check, but
-            # quoting is defence in depth - the regex permits `-` so a
-            # future loosening that admits a leading-dash hostname
-            # would otherwise become an option-injection vector.
-            #
-            # The literal `--` separates options from positional
-            # arguments so getopt-style parsing cannot interpret a host
-            # that starts with `-` as a flag. ssh-keyscan accepts `--`
-            # per standard POSIX option conventions.
+            # shlex.quote on every token is defence in depth after the regex: the
+            # regex permits `-`, so a future loosening admitting a leading-dash
+            # hostname would otherwise allow option injection. The literal `--`
+            # likewise stops a leading-dash host being parsed as a flag.
             cmd_parts = [
                 "ssh-keyscan",
                 "-T",
@@ -1626,13 +1586,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 *(shlex.quote(h) for h in host_list),
             ]
             cmd = " ".join(cmd_parts)
-            # ssh-keyscan writes the keys to stdout and progress/error
-            # messages to stderr; merge so the operator sees both.
-            # PERF-4: bound the buffered output to the absolute ceiling
-            # (max_output_hard), matching shell_exec/shell_script - without
-            # it a malicious or misbehaving host could stream an unbounded
-            # banner before the handshake fails, growing relay memory
-            # without limit across the (up to 32) scanned hosts.
+            # Keys go to stdout, progress/errors to stderr; merge so the operator
+            # sees both. PERF-4: cap buffered output at max_output_hard, as in
+            # shell_exec/shell_script; otherwise a misbehaving host could stream an
+            # unbounded banner and grow relay memory across the scanned hosts.
             return await run_command(
                 cmd,
                 timeout=tmo,
@@ -1806,11 +1763,9 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         calls, only one tool) without shelling into the host. Returns the empty
         string if the log is absent/empty or nothing in the window matches.
         """
-        # Clamp to a generous but bounded ceiling so a misconfigured client
-        # cannot ask for the whole log. The output budget on the wrapper is
-        # the second line of defence: even at 1000 lines x worst-case
-        # record size, the bound truncates rather than the response
-        # blowing the transport.
+        # Clamp so a misconfigured client cannot ask for the whole log; the
+        # wrapper's output budget is the second line of defence (even 1000
+        # worst-case records get truncated, not sent whole).
         bounded = clamp(lines, 1, 1000)
         # Only the filters that are actually set reach the audit args, so an
         # unfiltered call records the same {"lines": N} shape as before.
@@ -1844,10 +1799,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
 
     # --- /metrics (HTTP transport only) -------------------------------------
     #
-    # MCPServer.custom_route bypasses the OAuth layer by design (the upstream
-    # docstring says health-check style endpoints are intended). The audit
-    # log is the source of truth; /metrics is for dashboards only and is
-    # firewalled by the Caddy edge in the supported deployment.
+    # MCPServer.custom_route bypasses the OAuth layer by design (upstream intends
+    # it for health-check style endpoints). The audit log is the source of truth;
+    # /metrics is for dashboards only and is firewalled by the Caddy edge in the
+    # supported deployment.
     if cfg.transport == "http":
         from starlette.requests import Request
         from starlette.responses import Response
@@ -1862,25 +1817,20 @@ def build_server(settings: Settings | None = None) -> MCPServer:
 
     # --- MCP resources ------------------------------------------------------
     #
-    # Resources are read-only context the client can list and pull on its
-    # own initiative - they do NOT go through Relay.run because there is no
-    # work to admit / tier / time out. Each read is still audited (tier 0,
-    # tool name prefixed with "resource:") so the operator sees what context
-    # the model is pulling in.
+    # Resources are read-only client-pulled context. They do not go through
+    # Relay.run (no work to admit, tier or time out), but each read is audited
+    # (tier 0, tool name prefixed "resource:") so the operator sees what context
+    # the model pulls in.
     #
-    # Resource reads ALSO bypass `Policy.check`: `RELAY_SHELL_POLICY_DENY`
-    # and `RELAY_SHELL_POLICY_MODE=readonly|guarded` do NOT apply to
-    # resource URIs. This is deliberate — the data exposed here is the same
-    # `ssh_hosts` / `ssh_config_file` metadata a Tier-0 tool already returns
-    # in any mode, so admission-controlling resources separately would be
-    # defense without depth. Documented in SECURITY.md §Scope. If a
-    # deployment ever needs to refuse a specific resource, route it through
-    # `Relay.run` with a `policy_text` that names the resource.
+    # Resource reads also bypass `Policy.check`: `RELAY_SHELL_POLICY_DENY` and
+    # `RELAY_SHELL_POLICY_MODE=readonly|guarded` do not apply to resource URIs.
+    # Deliberate: the data is the same `ssh_hosts` / `ssh_config_file` metadata a
+    # Tier-0 tool returns in any mode (SECURITY.md §Scope). To refuse a specific
+    # resource, route it through `Relay.run` with a `policy_text` naming it.
     #
-    # The audit `tool` field is kept STABLE per resource (no user-controlled
-    # data interpolated): the host parameter for the templated resource is
-    # carried in `args` instead, so `redact_args` can scrub embedded secrets
-    # and tool-name cardinality stays bounded for downstream audit consumers.
+    # The audit `tool` field is stable per resource (no user-controlled data); the
+    # host parameter of the templated resource goes in `args`, so `redact_args`
+    # can scrub embedded secrets and tool-name cardinality stays bounded.
 
     def _audit_resource_read(name: str, body: str, args: dict[str, Any] | None = None) -> None:
         tool_label = f"resource:{name}"
@@ -1891,10 +1841,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             exit_code=None,
             tier=0,
         )
-        # Tick the same counter tool calls use, with the same
-        # tool/tier/mode/outcome label set, so a flood of resource reads
-        # is visible on /metrics instead of being audit-only. Cardinality
-        # is bounded by the three registered resource names
+        # Same counter and label set as tool calls, so a flood of resource reads
+        # shows on /metrics. Cardinality is bounded by the three resource names
         # (resource:inventory, resource:inventory_host, resource:ssh-config).
         app.metrics.inc_tool_call(
             tool=tool_label,
@@ -1903,9 +1851,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             outcome="ok",
         )
 
-    # Bound every resource payload to the same cap tools observe via
-    # `Relay.run`. Without this, a huge inventory would produce arbitrarily
-    # large payloads (and audit-hashing work) in a single read.
+    # Bound every resource payload to the cap tools get via `Relay.run`; a huge
+    # inventory would otherwise yield arbitrarily large payloads and hashing work.
     _resource_cap = app.clamp_output(cfg.max_output)
 
     @mcp.resource(
@@ -1970,25 +1917,20 @@ def build_server(settings: Settings | None = None) -> MCPServer:
 
     # --- MCP prompts --------------------------------------------------------
     #
-    # A prompt is reusable, client-pullable guidance - the protocol-native home
-    # for *detailed* "when to use which tool" instructions (the MCPServer
-    # `instructions` string carries the concise version surfaced at initialize).
-    # Like a resource read, a prompt fetch does NOT flow through `Relay.run`:
-    # there is no work to admit, time out, or truncate. But a fetch IS a
-    # model-context pull, so it is audited (tier 0, tool="prompt:<name>") to
-    # preserve the invariant that every context the model pulls in is visible
-    # to the operator. The body is bounded by the same `max_output` cap
-    # resources observe. See ADR 0008.
+    # A prompt is client-pullable guidance: the detailed "when to use which tool"
+    # text (the `instructions` string carries the concise version). Like a
+    # resource read it does not flow through `Relay.run`, but a fetch is a
+    # model-context pull, so it is audited (tier 0, tool="prompt:<name>") to keep
+    # all pulled context visible to the operator. The body is bounded by the same
+    # `max_output` cap as resources. See ADR 0008.
     #
     # `list_prompts` returns metadata only and never calls the function, so the
-    # audit fires on `prompts/get` (a real fetch), not on discovery - mirroring
-    # how resource reads are audited on read, not on listing.
+    # audit fires on `prompts/get`, not on discovery, as with resource reads.
 
     def _audit_prompt_read(name: str, body: str) -> None:
         tool_label = f"prompt:{name}"
-        # No user-controlled arguments enter this prompt, so args is empty and
-        # the tool label is a stable constant (cardinality stays bounded for
-        # audit/metrics consumers, same contract as the resource reads above).
+        # No user-controlled arguments: args is empty and the tool label constant,
+        # keeping cardinality bounded (same contract as the resource reads).
         app.audit.record(
             tool=tool_label,
             args={},
@@ -2018,11 +1960,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         _audit_prompt_read("operating_guide", body)
         return body
 
-    # Expose the constructed Relay so `__main__` can wire graceful shutdown
-    # (sessions + ssh pool teardown) and `--check-config` can read the audit
-    # degraded flag without constructing a second Relay (which would open
-    # the audit log twice and double-load the inventory). The attribute is
-    # private-flavored but stable enough to depend on within the package.
+    # Expose the Relay so `__main__` can wire graceful shutdown (sessions + ssh
+    # pool teardown) and `--check-config` can read the audit degraded flag
+    # without a second Relay (which would open the audit log twice and reload the
+    # inventory). Not public API; stable within the package.
     mcp.relay = app  # type: ignore[attr-defined]
     return mcp
 

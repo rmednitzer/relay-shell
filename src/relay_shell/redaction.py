@@ -41,8 +41,7 @@ tokens, npm ``npm_`` tokens, PyPI ``pypi-`` upload tokens, Anthropic
 prefix and a length floor, never the value's character class, so the rule
 survives a provider rotating its alphabet.
 
-The compiled regex tables live in :mod:`relay_shell.patterns` so a security
-reviewer can audit "added a pattern" as a one-file diff.
+The compiled regex tables live in :mod:`relay_shell.patterns`.
 """
 
 from __future__ import annotations
@@ -53,10 +52,10 @@ from . import patterns
 
 __all__ = ["redact", "redact_args"]
 
-# Every whole-match rule has a fixed, case-sensitive structural anchor.  A
-# cheap substring gate avoids running all provider-token regexes over large
-# inputs that cannot possibly match.  Keep this tuple conservative: a false
-# positive only costs a regex pass, while a missing anchor could leak a secret.
+# Every whole-match rule has a fixed, case-sensitive structural anchor. This
+# substring gate skips the provider-token regexes on inputs that cannot match.
+# Keep it conservative: a false positive costs a regex pass, a missing anchor
+# could leak a secret.
 _WHOLE_MATCH_HINTS = (
     "-----BEGIN ",
     "gith_pat_",
@@ -102,13 +101,12 @@ def redact(text: str) -> str:
 
 
 # P1 (2026-07-15 perf pass): `_scrub_str` keeps only the first `max_len` chars
-# of the redacted result, so a secret that survives truncation must *start*
-# within the first `max_len` chars. Scanning only `max_len + margin` — instead
-# of running the ~two-dozen-regex table over a multi-MB `command`/`stdin`/
-# `env_json` argument synchronously on `Relay.run`'s hot path — removes the
-# dominant per-call CPU cost. Correctness rests on the redaction patterns being
-# *truncation-safe*: a secret that begins in the kept prefix must still be
-# collapsed when the scan window severs its far end. Two shapes exist:
+# of the redacted result, so a surviving secret must *start* within them.
+# Scanning only `max_len + margin`, instead of the ~two-dozen-regex table over a
+# multi-MB `command`/`stdin`/`env_json` argument on `Relay.run`'s hot path,
+# removes the dominant per-call CPU cost. This rests on the patterns being
+# *truncation-safe*: a secret beginning in the kept prefix must still collapse
+# when the scan window severs its far end. Two shapes exist:
 #   1. Greedy-run patterns (Bearer, `key=value`, provider tokens) match whatever
 #      is visible, so a truncated secret still collapses on its head.
 #   2. Delimiter-terminated patterns must be bounded or have an end fallback:
@@ -118,8 +116,8 @@ def redact(text: str) -> str:
 #      value still collapses instead of leaking its post-space tail.
 # The dropped tail is truncated out of the audit record regardless, so bounding
 # the scan cannot leak a secret the full-string scan would have caught. The
-# margin sits comfortably above the 8 KB PEM bound (the one span whose match
-# length the truncation-safety of a delimiter pattern still depends on).
+# margin sits above the 8 KB PEM bound, the one span whose match length the
+# truncation-safety of a delimiter pattern depends on.
 _REDACT_SCAN_MARGIN = 16384
 
 
@@ -129,26 +127,22 @@ def _scrub_str(text: str, max_len: int) -> str:
     overflow = len(red) - max_len  # redacted chars beyond the cap (scanned part)
     tail = len(text) - len(scanned)  # unscanned original chars (all dropped)
     if overflow > 0 or tail > 0:
-        # For any input up to the scan window (every realistic argument) this is
-        # byte-identical to the pre-P1 output; beyond it the count also reflects
-        # the unscanned tail so the "+N" hint is never misleadingly small.
+        # Beyond the scan window the count includes the unscanned tail, so the
+        # "+N" hint is never misleadingly small.
         red = red[:max_len] + f"...(+{max(overflow, 0) + tail})"
     return red
 
 
 def _scrub(value: Any, max_len: int) -> Any:
     if isinstance(value, bytes):
-        # RED-4: a bytes argument would otherwise fall through unredacted via
-        # the `return value` below. No current wrapper passes bytes in audit
-        # args, but decode defensively (lossy, never raises) so a future caller
-        # cannot smuggle a secret past redaction as raw bytes.
+        # RED-4: bytes would otherwise fall through unredacted. No wrapper
+        # passes bytes today; decode defensively (lossy, never raises).
         value = value.decode("utf-8", errors="replace")
     if isinstance(value, str):
         return _scrub_str(value, max_len)
     if isinstance(value, dict):
-        # RED-5: scrub keys too, not only values — a nested, caller-supplied
-        # dict (e.g. a parsed JSON body passed as an argument) could carry a
-        # secret in a key, not just a value.
+        # RED-5: scrub keys too; a nested caller-supplied dict could carry a
+        # secret in a key.
         return {
             (_scrub_str(k, max_len) if isinstance(k, str) else k): _scrub(v, max_len)
             for k, v in value.items()

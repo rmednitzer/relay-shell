@@ -17,8 +17,8 @@ wants the server to "just run it" had to infer that, and a caller that ran `rm -
 
 The request behind this ADR (2026-10-14, repository owner): no command is blocked by
 default, relay-shell can do everything, and it tells the caller what is unsafe. Per
-`AGENTS.md` a change to posture needs explicit scope and design review; this ADR is that
-record, and the owner's request is the explicit scope.
+`AGENTS.md` a posture change needs explicit scope and design review; this ADR is that
+record, and the request is the scope.
 
 ## Decision
 

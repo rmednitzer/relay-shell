@@ -43,8 +43,7 @@ Every tool body is identical in shape (`Relay.run`):
    no execution) and the caller must arm it via `operation_confirm` and re-issue
    the exact same call from the same authenticated client; a confirmed re-issue proceeds and is tagged
    `action=confirm_execute` ([ADR 0009](adr/0009-tier3-confirmation-broker.md)).
-   Layered *after* the deny/mode check — never a bypass; default off skips the
-   step entirely.
+   Layered *after* the deny/mode check, never a bypass; default off skips the step entirely.
 3. **Execute** - the work coroutine runs. `RelayError` and any other exception
    are converted to a bounded `[ERROR: ...]` string; nothing propagates into
    the transport.
@@ -66,8 +65,8 @@ Every tool body is identical in shape (`Relay.run`):
    for tamper-evidence ([ADR 0007](adr/0007-audit-hash-chain.md)); default off
    keeps the record byte-identical.
 
-This is the same discipline a production gateway uses: a tool may fail, time
-out, or be denied, but it always returns a single bounded, audited string.
+A tool may fail, time out, or be denied, but it always returns a single bounded, audited
+string.
 
 When `RELAY_SHELL_SECCOMP_NOTIFY=true` (and the host supports it),
 `Relay.run` also activates a per-call seccomp-notify monitor during step 3: a

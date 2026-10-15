@@ -1,10 +1,9 @@
 """Drift detection between shipped deploy templates and what's on disk.
 
-The ``relay-shell verify-deploy`` CLI subcommand uses this module to compare
-each template under ``deploy/`` against the file the installer is expected to
-have laid down (e.g. ``/etc/systemd/system/relay-shell.service``). Operators
-run this in production to confirm that no one has hand-edited the unit or
-that the package upgrade actually replaced the file.
+The ``relay-shell verify-deploy`` CLI subcommand compares each template under
+``deploy/`` against the file the installer is expected to have laid down (e.g.
+``/etc/systemd/system/relay-shell.service``), to confirm nobody hand-edited it
+and that a package upgrade replaced it.
 
 The comparison is byte-for-byte after stripping a single optional *leader
 line* that the installer prepends (the Caddyfile marker
@@ -45,9 +44,8 @@ class Pair:
     leader: str | None = None
 
 
-# The shipped templates this module knows about. The install paths match
-# what ``deploy/install.sh`` / ``deploy/install-edge.sh`` lay down. Adding a
-# new managed asset means appending a row here and adjusting the installer.
+# Shipped templates and the paths ``deploy/install.sh`` / ``deploy/install-edge.sh``
+# lay them down at. A new managed asset needs a row here and an installer change.
 DEFAULT_PAIRS: tuple[Pair, ...] = (
     Pair(
         name="systemd-unit",
@@ -150,12 +148,9 @@ def verify_pair(pair: Pair, templates_dir: Path, install_prefix: Path | None) ->
             detail=f"{install_path} does not exist",
         )
     try:
-        # Pin UTF-8: drift detection is byte-exact and the default
-        # locale encoding varies across hosts. Wrap the reads so a
-        # TOCTOU between ``is_file()`` above and these reads (or a
-        # permission-denied after the check) becomes a structured
-        # Finding rather than a raise - ``verify_deploy``'s contract
-        # is "never raises into the caller".
+        # Pin UTF-8: the comparison is byte-exact and the locale encoding
+        # varies. A TOCTOU after ``is_file()`` or a permission error becomes a
+        # Finding, since ``verify_deploy`` never raises into the caller.
         template = tpl_path.read_text(encoding="utf-8")
         installed = install_path.read_text(encoding="utf-8")
     except OSError as exc:

@@ -77,8 +77,7 @@ The HTTP transport also exposes `GET /metrics` (Prometheus text format):
 
 ### Resources
 
-Three MCP resources let clients read inventory and `ssh_config` views
-the protocol-native way (no tool call needed):
+Three MCP resources expose inventory and `ssh_config` views without a tool call:
 
 | URI                                  | meaning                              |
 |--------------------------------------|--------------------------------------|
@@ -86,19 +85,17 @@ the protocol-native way (no tool call needed):
 | `relay-shell://inventory/{host}`     | One host's resolved spec (JSON).     |
 | `relay-shell://ssh-config`           | ssh_config path + aliases (JSON).    |
 
-Resource reads are audited (tier 0). See
-[`docs/tools.md`](docs/tools.md) for the full reference.
+Resource reads are audited (tier 0).
 
 ### Prompts
 
-One MCP prompt, `operating_guide`, carries the detailed "when to use which
-tool" guidance (one-shot command vs persistent PTY session, the spawn+session
-workflow, fleet and transfer entry points) — the protocol-native counterpart
-to the concise `instructions` string handed to clients at initialize. A fetch
-is audited (tier 0, `prompt:operating_guide`) like a resource read; listing is
-not ([ADR 0008](docs/adr/0008-operating-guidance-prompt.md)).
+One MCP prompt, `operating_guide`, carries the detailed "when to use which tool" guidance
+(one-shot command vs persistent PTY session, the spawn+session workflow, fleet and transfer
+entry points), complementing the concise `instructions` string handed to clients at
+initialize. A fetch is audited (tier 0, `prompt:operating_guide`) like a resource read;
+listing is not ([ADR 0008](docs/adr/0008-operating-guidance-prompt.md)).
 
-Full reference: [`docs/tools.md`](docs/tools.md).
+Full reference for every tool, resource and prompt: [`docs/tools.md`](docs/tools.md).
 
 ## Quickstart
 
@@ -195,12 +192,11 @@ hosts you are authorized to administer, behind the network controls in
 for isolated administrative hosts with strict network controls and full audit shipping.
 [`SECURITY.md`](SECURITY.md) has the threat model and how to report a vulnerability.
 
-Because nothing is sandboxed or blocked by default, the controls are the ones that keep the
-record honest and the surface small:
+Nothing is sandboxed or blocked by default, so the controls keep the record honest and the
+surface small:
 
-- **Audit** - every invocation is appended as one JSON line (see above). Append-only on disk,
-  rotation-safe handler. An optional per-record hash chain
-  ([ADR 0007](docs/adr/0007-audit-hash-chain.md)) makes edits, insertions, reorders and
+- **Audit** - one JSON line per invocation, append-only on disk with a rotation-safe handler.
+  An optional per-record hash chain ([ADR 0007](docs/adr/0007-audit-hash-chain.md)) makes edits, insertions, reorders and
   interior deletions detectable with `relay-shell --verify-audit`, which is fail-closed;
   tail-truncation needs the off-host copy.
 - **Syscall visibility** (optional) - `RELAY_SHELL_SECCOMP_NOTIFY`
@@ -246,18 +242,15 @@ pytest
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for scope, branch naming,
-the local development loop, and how security-sensitive PRs are
-reviewed. [`docs/runbook.md`](docs/runbook.md) is the canonical
-procedure for audit, review, validate, enhance, and extend tasks.
-Participation is governed by the
-[Code of Conduct](CODE_OF_CONDUCT.md).
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for scope, branch naming, the local development loop
+and how security-sensitive PRs are reviewed. [`docs/runbook.md`](docs/runbook.md) is the
+canonical procedure for audit, review, validate, enhance and extend tasks, plus the
+prioritized backlog. Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## AI contributor guidance
 
-- [`AGENTS.md`](AGENTS.md) - repository-wide agent operating contract
-- [`CLAUDE.md`](CLAUDE.md) - Claude-focused development and review guidance
-- [`docs/runbook.md`](docs/runbook.md) - executable audit / review / validate / enhance / extend procedures plus the prioritized backlog
+[`AGENTS.md`](AGENTS.md) is the repository-wide agent operating contract;
+[`CLAUDE.md`](CLAUDE.md) adds Claude-focused development and review guidance.
 
 ## License
 

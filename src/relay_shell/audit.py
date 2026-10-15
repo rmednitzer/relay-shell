@@ -66,11 +66,10 @@ def _cef_escape(value: str) -> str:
 
 
 def _cef_header_escape(value: str) -> str:
-    # CEF *header* fields escape backslash and the `|` field separator only
-    # (not `=`, which is an extension-only escape). The header fields below are
-    # constants today, so this changes nothing on the wire (FMT-2, defensive):
-    # if any header field ever becomes dynamic, a stray `|` or `\` cannot break
-    # the header structure and split a record.
+    # CEF *header* fields escape backslash and the `|` separator only (`=` is
+    # an extension-only escape). The header fields are constants today, so this
+    # is defensive (FMT-2): a future dynamic field cannot break the header or
+    # split a record.
     return value.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "\\n").replace("\r", "\\r")
 
 
@@ -86,9 +85,7 @@ def _leef_escape(value: str) -> str:
 
 
 def _format_cef(entry: dict[str, Any]) -> str:
-    # Header fields (vendor|product|version|signatureID|name|severity) run
-    # through _cef_header_escape (FMT-2). They are constants, so the bytes are
-    # identical to the prior literal; the escape is structural insurance.
+    # Header fields: vendor|product|version|signatureID|name|severity (FMT-2).
     header = "|".join(
         _cef_header_escape(f)
         for f in ("relay-shell", "relay-shell", "1.0", "audit", "tool-call", "5")
@@ -98,11 +95,9 @@ def _format_cef(entry: dict[str, Any]) -> str:
 
 
 def _format_leef(entry: dict[str, Any]) -> str:
-    # LEEF 2.0 carries a mandatory delimiter field (the 6th header field) that
-    # declares the character separating the extension's key=value pairs. We use
-    # a tab, expressed as the hex form `x09` per the LEEF 2.0 spec, so a strict
-    # parser reads the extension correctly instead of treating `audit` as the
-    # delimiter (FMT-1).
+    # LEEF 2.0's 6th header field declares the extension delimiter. A tab is
+    # declared in the spec's hex form `x09` so a strict parser does not treat
+    # `audit` as the delimiter (FMT-1).
     ext = "\t".join(f"{k}={_leef_escape(_stringify(v))}" for k, v in sorted(entry.items()))
     return f"LEEF:2.0|relay-shell|relay-shell|1.0|audit|x09|{ext}"
 
@@ -112,9 +107,8 @@ _FORMATTERS = {"jsonl": _format_jsonl, "cef": _format_cef, "leef": _format_leef}
 
 # --- Tamper-evident hash chain (opt-in; see docs/adr/0007-audit-hash-chain.md) ---
 
-# Anchor for the first record of a from-scratch chain (seq 0). A rotated
-# file inherits its anchor from the last record of the prior file, carried
-# forward in that record's `chain` and the next record's `prev`.
+# Anchor for seq 0. A rotated file inherits its anchor from the last record of
+# the prior file (that record's `chain` becomes the next record's `prev`).
 _CHAIN_GENESIS = "0" * 64
 
 
@@ -210,18 +204,13 @@ class ChainResult:
     broken_at: int | None  # 1-based line number of the first break, else None
     reason: str
     # True iff the verified region begins at genesis (seq 0, prev == genesis).
-    # A keyless single-file chain can prove the records from its first to its
-    # last are unaltered and contiguous, but NOT that its first record is the
-    # true beginning (head-truncation) or its last the true end (tail-
-    # truncation). `anchored` is the head-truncation signal: a log that was
-    # built from genesis but no longer starts there has had leading records
-    # removed. Tail-truncation is undetectable from the file alone and is
-    # caught only by the off-host seam comparison. See ADR 0007.
+    # This is the head-truncation signal; tail-truncation is undetectable from
+    # the file alone and is caught only by the off-host seam comparison (see
+    # verify_chain and ADR 0007).
     anchored: bool = False
-    # Whether the audit file existed and was readable. `verify_chain` is
-    # structural and treats a missing file as "no break found" (ok=True,
-    # records=0); the CLI applies a fail-closed policy and rejects a missing
-    # or empty log so `--verify-audit` never blesses an absent audit trail.
+    # Whether the audit file existed and was readable. `verify_chain` treats a
+    # missing file as "no break found" (ok=True, records=0); the CLI fails
+    # closed and rejects a missing or empty log.
     present: bool = True
 
 
@@ -349,10 +338,8 @@ def verify_chain(path: str) -> ChainResult:
     if anchored:
         reason = f"chain intact and genesis-anchored: {records} record(s) from seq 0"
     else:
-        # Internally valid, but the first surviving record is not genesis:
-        # either leading records were excised (head-truncation) or this is a
-        # mid-stream rotation segment. The verifier cannot tell which from one
-        # file; the fail-closed CLI rejects this by default and the operator
+        # Head-truncation or a mid-stream rotation segment; one file cannot
+        # tell which. The fail-closed CLI rejects this unless the operator
         # asserts a rotation segment with `--segment`.
         reason = (
             f"chain internally consistent: {records} record(s) from seq {start_seq}, "
@@ -386,11 +373,9 @@ class AuditLogger:
         self.degraded = False
         self.degraded_reason = ""
         self.format = fmt
-        # Tamper-evident chain state. Serialized by `_chain_lock` so the
-        # ordering invariant (seq monotonic, prev == previous chain) holds
-        # even if a future caller records from another thread (e.g. the
-        # seccomp-notify supervisor in ADR 0006). When `chain` is off the
-        # lock is never taken and the record path is byte-identical to v0.1.
+        # `_chain_lock` keeps seq monotonic and prev == previous chain when
+        # another thread records (e.g. the seccomp-notify supervisor, ADR 0006).
+        # Never taken when `chain` is off.
         self.chain = chain
         self._chain_lock = threading.Lock()
         # Makes "first degraded reason wins" atomic across supervisor threads.
@@ -401,11 +386,9 @@ class AuditLogger:
         self._log.setLevel(logging.INFO)
         self._log.propagate = False
         for handler in list(self._log.handlers):
-            # Close before removing so the prior WatchedFileHandler releases
-            # its file descriptor deterministically instead of waiting on
-            # the next GC pass. Re-initializing AuditLogger on the same
-            # process-global logger (--check-config, tests) used to leak
-            # one fd per construction.
+            # Close before removing: re-initializing on the process-global
+            # logger (--check-config, tests) otherwise leaks one fd per
+            # construction until GC.
             with contextlib.suppress(Exception):
                 handler.close()
             self._log.removeHandler(handler)
@@ -414,20 +397,16 @@ class AuditLogger:
         try:
             target = Path(path).expanduser()
             target.parent.mkdir(parents=True, exist_ok=True)
-            # Pre-create using O_APPEND to stay compatible with append-only
-            # hardened files (e.g., chattr +a on Linux).
+            # O_APPEND keeps this compatible with `chattr +a` files.
             fd = os.open(str(target), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
             os.close(fd)
             # Defensive for existing files that might already be too permissive.
             with contextlib.suppress(OSError):
                 target.chmod(0o600)
-            # OBS-1: a non-regular sink (e.g. `/dev/null`, a device, a FIFO)
-            # opens and accepts writes but stores nothing durable — the audit
-            # trail is silently discarded. Flag it as degraded so the
-            # `relay_shell_audit_degraded` gauge and `server_info.audit`
-            # surface the misconfiguration instead of reporting a healthy log.
-            # The sink still points where the operator configured it; this only
-            # makes the "audit goes nowhere" case visible.
+            # OBS-1: a non-regular sink (`/dev/null`, device, FIFO) accepts
+            # writes but stores nothing durable. Flag it degraded so the
+            # `relay_shell_audit_degraded` gauge and `server_info.audit` show
+            # it; the sink itself is left as configured.
             if not target.is_file():
                 self.degraded = True
                 self.degraded_reason = (
@@ -639,10 +618,8 @@ class AuditLogger:
         """
         if lines <= 0:
             return ""
-        # Outer `except Exception` keeps the contract literal: even an
-        # exotic OSError subclass, a ValueError from a path with an
-        # embedded NUL, or an unexpected decoding failure must collapse
-        # to "" rather than propagate to the diagnostic tool's caller.
+        # Broad except: any failure (odd OSError, ValueError from an embedded
+        # NUL, decode error) must collapse to "" for the diagnostic tool.
         try:
             return _tail_path(Path(self.path).expanduser(), lines)
         except Exception:  # noqa: BLE001 - contract is "never raise"
