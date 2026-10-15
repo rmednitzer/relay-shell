@@ -14,7 +14,7 @@ MCP client (Claude / Inspector / SDK)
         v
    MCPServer (mcp>=2,<3)
         v
-   Relay.run()  ── policy.check ──> tier + admit/deny      (deny list first, always)
+   Relay.run()  ── policy.check ──> tier + admit/deny      (size gate, then deny list)
         |        ── redaction ───> audit args
         |        ── work() ──────> the actual operation
         |        ── truncate ────> output budget
@@ -32,9 +32,12 @@ MCP client (Claude / Inspector / SDK)
 
 Every tool body is identical in shape (`Relay.run`):
 
-1. **Identify** - best-effort `request_id` / `client_id` from the MCP context.
-2. **Classify + admit** - `policy.check(tool, text, min_tier)`. The deny list is applied
-   first in every mode. `readonly` permits only Tier 0; `guarded` refuses
+1. **Identify** - best-effort `request_id` from the MCP context; `client_id` only from the
+   verified OAuth access token (empty without OAuth), never from request metadata.
+2. **Classify + admit** - a policy text longer than `RELAY_SHELL_MAX_INPUT` is refused before
+   any regex runs (`[DENIED tier N (NAME): input is X characters, over RELAY_SHELL_MAX_INPUT
+   (Y)]`, audited as denied). Otherwise `policy.check(tool, text, min_tier)`: the deny list is
+   applied first in every mode. `readonly` permits only Tier 0; `guarded` refuses
    Tier 2+ unless an allow pattern matches; `open` permits all but still
    classifies. A refusal is audited and returned as a `[DENIED ...]` string.
 2a. **Confirm (opt-in)** - only when `RELAY_SHELL_CONFIRM_TIER3=true` and the
@@ -48,8 +51,8 @@ Every tool body is identical in shape (`Relay.run`):
    are converted to a bounded `[ERROR: ...]` string; nothing propagates into
    the transport.
    A client disconnect or MCP cancellation during this step terminates the work (the local
-   process group is killed, a remote command is sent a terminate) and is audited as
-   `action=cancelled`; with `RELAY_SHELL_AUDIT_INTENT=true` an `action=intent` record is also
+   process group is killed, a remote command is sent a terminate), is audited as
+   `action=cancelled`, and the cancellation is then re-raised to the SDK; with `RELAY_SHELL_AUDIT_INTENT=true` an `action=intent` record is also
    written before the work starts, so a relay crash mid-command still leaves a trace
    (`deployment.md` §6a).
 4. **Bound** - the body is truncated to the effective output budget (byte
@@ -60,13 +63,14 @@ Every tool body is identical in shape (`Relay.run`):
    `RELAY_SHELL_UNSAFE_NOTICES`).
 5. **Audit** - one JSON line: timestamp, tool, tier, denied flag, redacted and
    length-bounded args, SHA-256 of the final output, output byte length, exit
-   code, request and client id. The output body is never written. With
+   code, plus `request_id`, `client_id` and an `action` marker (`intent`, `confirm_plan`,
+   `confirm_execute`, `cancelled`) when set. The output body is never written. With
    `RELAY_SHELL_AUDIT_CHAIN=true` the line additionally carries `seq`/`prev`/`chain`
    for tamper-evidence ([ADR 0007](adr/0007-audit-hash-chain.md)); default off
    keeps the record byte-identical.
 
 A tool may fail, time out, or be denied, but it always returns a single bounded, audited
-string.
+string; the one exception is a cancelled call, which is audited and then re-raised.
 
 When `RELAY_SHELL_SECCOMP_NOTIFY=true` (and the host supports it),
 `Relay.run` also activates a per-call seccomp-notify monitor during step 3: a
@@ -74,7 +78,9 @@ spawned local child's forensically-interesting syscalls are appended as
 *additional* `syscall_notify` lines (tier 0) tied to the same `request_id`,
 never replacing the per-call record
 ([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)). For the one-shot
-executors the monitor lives exactly as long as the call; a `shell_spawn` PTY
+executors auditing ends with the call (if a backgrounded job still carries the filter, its
+listener is handed to one shared thread that keeps answering CONTINUE, unaudited, until the
+kernel reports hang-up; at most 1024 such listeners are kept); a `shell_spawn` PTY
 transport *adopts* it, so the monitor follows the session and its events keep
 the spawning call's `request_id` until the session closes. It never blocks a
 syscall and is default off, so the lifecycle above is otherwise unchanged.
@@ -113,13 +119,13 @@ section.
 
 ### Where the lifecycle maps in code
 
-The five `Relay.run` steps above correspond to specific call sites in
+The main `Relay.run` steps above correspond to specific call sites in
 `src/relay_shell/server.py`:
 
 | Step | Where |
 |------|-------|
-| 1 Identify | `_ctx_ids(ctx)` (best-effort `request_id` / `client_id` from `Context`). |
-| 2 Classify + admit | `self.policy.check(tool, policy_text, min_tier)` from `policy.Policy.check`. |
+| 1 Identify | `_ctx_ids(ctx)` (`request_id` from `Context`, `client_id` from `get_access_token()`). |
+| 2 Classify + admit | the `max_input` length check, then `self.policy.check(tool, policy_text, min_tier)` from `policy.Policy.check`. |
 | 3 Execute | `await work()` - the per-tool coroutine captured by the wrapper. |
 | 4 Bound | `truncate(body, self.clamp_output(max_output))` from `util.truncate`. |
 | 5 Audit | `self.audit.record(...)` from `audit.AuditLogger.record`. |
@@ -138,10 +144,17 @@ produced.
 
 - Async throughout; SSH is natively async (`asyncssh`), local one-shot
   execution uses `asyncio` subprocesses, local PTYs use a non-blocking master
-  fd driven by the event loop (with an executor fallback).
-- The session registry bounds the number of sessions, the per-session ring
-  buffer, and idle/lifetime, and sweeps opportunistically on create/list so
-  there is no fragile always-on reaper task.
+  fd driven by the event loop (`loop.add_reader`).
+- The session registry bounds the number of sessions and the per-session ring
+  buffer, reaps idle sessions (`RELAY_SHELL_SESSION_IDLE_TIMEOUT`) and exited ones once
+  their output is drained (there is no maximum lifetime), and sweeps opportunistically on
+  create/list so there is no fragile always-on reaper task. Closing a local PTY sends
+  SIGTERM, then SIGHUP after 0.5 s, then SIGKILL at 5 s to whatever is left of its process group
+  ([ADR 0012](adr/0012-cancel-safe-session-teardown.md)).
+- The SSH connection cache holds at most `RELAY_SHELL_MAX_CONNS` (default 256) entries: a new
+  connection evicts the least-recently-used entry not in use, and a cache whose entries are
+  all in use (sessions, forwards, running calls) exceeds the cap briefly rather than drop a
+  live connection. `RELAY_SHELL_MAX_FORWARDS` (default 64) caps active forwards.
 - Every tool clamps its own timeout and output to the configured limits;
   background/blocking filesystem work is offloaded with `asyncio.to_thread`.
 
