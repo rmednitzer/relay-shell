@@ -223,8 +223,8 @@ from relay_shell.server import build_server
 mcp = build_server(Settings(audit_path='/tmp/a.jsonl'))
 # Call the live server_info tool and print its JSON response so the
 # bounds reported here include any runtime overrides, not just Settings.
-content, _ = asyncio.run(mcp.call_tool('server_info', {}))
-for block in content:
+result = asyncio.run(mcp.call_tool('server_info', {}))  # a CallToolResult (SDK v2)
+for block in result.content:
     if getattr(block, 'type', '') == 'text':
         print(block.text)
 "
@@ -407,7 +407,7 @@ Check these explicitly:
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
+pip install -c requirements.txt -e ".[dev]"   # the same constraints CI uses
 
 ruff check .
 ruff format --check .
@@ -454,7 +454,7 @@ sudo systemd-run --wait --pipe --collect \
 Keep the transient unit scoped to `CAP_SYS_ADMIN`; do not disable the running
 Relay channel or relax its service posture just to execute the tests.
 
-### 4.3 Coverage (CI floor: 90%, last measured 93%)
+### 4.3 Coverage (CI floor: 90%, last measured ~96% lines / ~95% branches)
 
 `coverage` is in the dev extra and runs in the CI loop; a drop below the 90%
 floor fails the workflow. Reproduce locally:
@@ -481,11 +481,13 @@ wrappers register as uncovered. The `.pth` file calls
 
 Modules to bring to and hold above 90%: `policy.py`, `redaction.py`,
 `audit.py`, `sessions.py`: anything that handles secrets or admission.
-Last measured (2026-10-14, as root so the live `seccomp` tests ran, no subprocess
-collection): 93% total; `policy`, `redaction`, `patterns`, `broker`, `metrics`,
+Last measured (2026-10-14): ~96% by lines and ~95% with branches with subprocess
+collection (the recipe above; recorded in `pyproject.toml`). Without subprocess collection,
+as root so the live `seccomp` tests ran: 93% total; `policy`, `redaction`, `patterns`, `broker`, `metrics`,
 `auth/admin` at 100%; `sshpool.py` 97%, `server.py` 97%, `seccomp.py` 96%,
 `auth/oauth.py` 93%, `audit.py` 95%. The remaining gaps are `sessions.py` (~88%;
-OS-specific BlockingIOError + NotImplementedError fallbacks), `inventory.py` (~91%) and
+OS-specific BlockingIOError fallbacks; the thread reader and the `NotImplementedError`
+branch were removed in 0.4.0, A14-X3), `inventory.py` (~91%) and
 `__main__.py` (~56% without subprocess collection: the CLI tests run the program as a
 subprocess, so use the recipe above). A non-root runner (GitHub Actions) skips the live
 `seccomp` tests and reports less for `seccomp.py`. `branch = true` is set in
@@ -494,7 +496,8 @@ subprocess, so use the recipe above). A non-root runner (GitHub Actions) skips t
 ### 4.4 Type-checking notes
 
 `mypy` is **strict** for the package and relaxed only for `relay_shell.server`
-(FastMCP's `Context` typing varies by SDK minor version) and the `asyncssh`
+(the SDK's `Context` typing varies by minor version; the server is `MCPServer`, the SDK v2
+successor to FastMCP) and the `asyncssh`
 module (no stubs). When upgrading `mcp`:
 
 1. Run `mypy` first.
@@ -533,10 +536,12 @@ Before tagging a release:
 - [ ] `CHANGELOG.md` `[Unreleased]` section moved under the version + date.
 - [ ] `pyproject.toml` `version` bumped and matches `__init__.__version__`.
 - [ ] Full local loop green on a clean checkout.
-- [ ] `pip install build && python -m build` produces a wheel + sdist that
-      installs cleanly into a fresh venv and exposes the `relay-shell` CLI.
+- [ ] `pip install --require-hashes -r requirements-build.txt && python -m build --no-isolation`
+      (what `release.yml` runs) produces a wheel + sdist that installs cleanly into a
+      fresh venv and exposes the `relay-shell` CLI.
 - [ ] ADRs that informed the release are linked from the changelog entry.
-- [ ] `git tag -s vX.Y.Z` (signed) and `git push --tags`.
+- [ ] `git tag -s vX.Y.Z` (annotated, SSH-signed with the key in
+      `deploy/release-signing.pub`; see §6.6) and `git push origin vX.Y.Z`.
 
 When the tag lands, `.github/workflows/release.yml` builds and publishes to
 PyPI via OIDC trusted publishing (verify → build → attest → publish; procedure
@@ -581,10 +586,10 @@ transport when the registry refuses).
 
 ### 5.3 Tests to add (gap analysis)
 
-None open from the runbook. The 2026-10-14 pass records its remaining coverage gaps
-(auth expiry / `client_id` mismatch branches, `verify_chain` `prev` mismatch,
-`session_kill` signal parsing, `ssh_spawn` / transfer success wrappers) in
-`BACKLOG.md`.
+None open. The coverage gaps the 2026-10-14 pass found (auth expiry / `client_id`
+mismatch branches, `verify_chain` `prev` mismatch, `session_kill` signal parsing,
+`ssh_spawn` / transfer success wrappers) were closed by `tests/test_a14_t1_gaps.py`
+(A14-T1 in `BACKLOG.md`).
 
 ---
 
@@ -622,7 +627,8 @@ audit-record shape, needs an ADR under `docs/adr/` before code lands; the
 
 ### 6.2 Add a new transport
 
-FastMCP today supports `stdio` and `streamable-http`. Adding a third
+The MCP SDK's `MCPServer` supports `stdio` and streamable HTTP (`RELAY_SHELL_TRANSPORT`
+`stdio` or `http`). Adding a third
 (e.g. a unix socket transport) means:
 
 1. Validate value in `Settings._v_transport` and `_TRANSPORTS`.
@@ -708,10 +714,13 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
 `workflow_dispatch` with an existing tag as input; a dispatch run is only
 trusted from `main`). It has four gated jobs:
 
-  1. **verify** - the tag is annotated, GPG/SSH-signed and verified by
-     GitHub, and matches the `[project] version` in `pyproject.toml`.
-     A lightweight tag or an unsigned annotated tag fails here, before
-     anything is built.
+  1. **verify** - the tag matches `vX.Y.Z` and the `[project] version` in
+     `pyproject.toml` at the tagged commit, is annotated, its commit is an ancestor of
+     protected `main`, and `git tag -v` accepts its SSH signature against
+     `deploy/release-signing.pub` read from `main` (not from the tag's checkout;
+     GitHub's "Verified" badge plays no part). A lightweight, unsigned, GPG-signed or
+     retired-key tag fails here, before anything is built
+     ([`release-trust.md`](release-trust.md)).
   2. **build** - dev install on Python 3.14 (direct pins from `requirements.txt` as
      constraints), full test suite, then `python -m build --no-isolation` +
      `twine check`. The build tooling (`build`, `twine`, `hatchling`) comes from the
@@ -744,8 +753,10 @@ pytest -q tests/test_release_workflows.py   # pins shared with requirements.txt 
 ```
 
 The lock files are fetched by SHA (`gh api .../contents/<lock>?ref=$GITHUB_SHA`) from the
-commit the workflow runs at, not from the release checkout, so recovering or backfilling an
-older tag that predates them still works (a dispatch is only trusted from `main`). The SBOM
+commit the workflow runs at, not from the release checkout, so re-running a failed release
+from `main` still works for a tag that predates the lock files (a dispatch is only trusted
+from `main`). A tag signed with a retired key fails verify by design; do not replay
+historical tags through the publisher ([`release-trust.md`](release-trust.md)). The SBOM
 spec version is pinned with `--sv 1.5` because `cyclonedx-bom` 7.x defaults to 1.6.
 
 `sbom.yml` is split the same way: a read-only `sbom` job builds the runtime-only SBOM with
@@ -755,20 +766,23 @@ OIDC, no installs) attests it and creates the release.
 Per-release procedure:
 
 ```bash
-# 1. Bump pyproject.toml version (e.g. 0.1.0 -> 0.1.1).
-# 2. Update CHANGELOG.md: rename `[Unreleased]` to `[0.1.1] - YYYY-MM-DD`
+# 1. Bump the version in pyproject.toml and src/relay_shell/__init__.py
+#    (e.g. 0.4.0 -> 0.4.1).
+# 2. Update CHANGELOG.md: rename `[Unreleased]` to `[0.4.1] - YYYY-MM-DD`
 #    and start a fresh empty `[Unreleased]` block above it.
 # 3. Commit + open PR + land it via the normal review path.
-# 4. After the bump is on main, sign-tag from main:
-git tag -s v0.1.1 -m "Release v0.1.1"
-git push origin v0.1.1
+# 4. After the bump is on main, sign-tag from main with the SSH key listed in
+#    deploy/release-signing.pub (git config gpg.format ssh; user.signingkey <that key>):
+git tag -s v0.4.1 -m "Release v0.4.1"
+git push origin v0.4.1
 # 5. The release workflow starts. Approve the `pypi` environment when
 #    GitHub asks. Watch the run; when publish turns green the wheel
 #    + sdist appear at https://pypi.org/project/relay-shell/.
 ```
 
 If the workflow fails mid-flight (e.g. PyPI is briefly down), re-run it from
-the Actions UI via `workflow_dispatch` with the same tag. The verify + build
+the Actions UI via `workflow_dispatch` from `main` with the same tag (the current
+release only; see above for historical tags). The verify + build
 jobs are idempotent; the publish step passes `skip-existing: true` to
 `pypa/gh-action-pypi-publish`, so a file that already landed on PyPI is skipped
 instead of failing with "file already exists" (PyPI enforces version
@@ -810,7 +824,7 @@ Closed:
 | ID | What | Record |
 |----|------|--------|
 | F-6 (P2) | `ssh_upload` / `ssh_download` take `timeout=` (clamped to the server max; `0`, the default, disables the per-call cap) | CHANGELOG; `audit/2026-05-27-engagement.md` §8.2 |
-| L1 confirmation broker (P1) | Opt-in, default-off Tier-3 confirmation (`RELAY_SHELL_CONFIRM_TIER3`, `operation_confirm`); single-use, TTL-bounded token bound to `sha256(tool \0 policy_text)`, layered after the deny/mode check, never a bypass; tool contract 21 → 22 | [ADR 0009](adr/0009-tier3-confirmation-broker.md) |
+| L1 confirmation broker (P1) | Opt-in, default-off Tier-3 confirmation (`RELAY_SHELL_CONFIRM_TIER3`, `operation_confirm`); single-use, TTL-bounded token bound to `sha256(tool \0 op_key)` (the policy text plus the full audited arguments) and to the planning client, layered after the deny/mode check, never a bypass; tool contract 21 → 22 | [ADR 0009](adr/0009-tier3-confirmation-broker.md) |
 | WIN-1 | Windows targets over OpenSSH with PowerShell 7: increments A (pwsh-aware Tier-2/3 and priv-esc patterns, `PATTERNS_VERSION` 10), B (docs §8b) and C (PowerShell credential redaction, `PATTERNS_VERSION` 11) landed. D/E (encoding, PTY) stay documented caveats; no command translation layer, transport or tool. Classification and redaction stay heuristic; a positional secret with no keyword is not redactable | [ADR 0011](adr/0011-windows-openssh-powershell.md) |
 
 ### 7.1a 2026-10-04 audit pass (register)
@@ -836,8 +850,8 @@ code. The 2026-10-14 pass is recorded in `BACKLOG.md` and `audit/2026-10-14-enga
 | M7 | `ssh_check` was Tier 0 for any host | **Closed** (#195): Tier 1 for hosts outside the inventory |
 | M8 | OAuth tokens stored raw, files unbounded, per-request read on the event loop | **Closed** (#193): hashed at rest, purged on write, read off the loop. No in-memory cache (it would need cross-process invalidation) |
 | L1, L2, L3, L5, L6, L7, L9 | Unretrieved future, lingering channel reported as timeout, raw traceback on a bad deny regex, audit docstring, UTF-8 split in `session_recv`, `.env` from the working directory, `ProxyJump none` | **Closed** (#196) |
-| L4 | Seccomp (opt-in): `preexec_fn` in a multithreaded process, `openat2` / `creat` not notified, `monitor.stop()` joins on the event loop | **Deferred**: cannot be verified without `CAP_SYS_ADMIN`; needs a privileged host and its own PR |
-| L8 | No transitive dependency lock with hashes; Renovate extends an external preset | **Deferred**: a CI and release-process decision, not a code fix |
+| L4 | Seccomp (opt-in): `preexec_fn` in a multithreaded process, `openat2` / `creat` not notified, `monitor.stop()` joins on the event loop | **Deferred**: needs `CAP_SYS_ADMIN` to verify. CI now runs the seccomp end-to-end tests under `sudo` (py3.13 leg, A14-T1), so a privileged environment exists; the fixes still need their own PR |
+| L8 | No transitive dependency lock with hashes; Renovate extends an external preset | **Partly addressed** in 0.4.0: release and SBOM tooling are hash-locked (`requirements-build.txt`, `requirements-sbom.txt`; A14-D7/D8). Open: the package's transitive runtime dependencies are still resolved at build time, and the external Renovate preset is unreviewed (A14-D14) |
 
 Residual by design: classification and redaction stay heuristic (ADR 0003); the
 OAuth CLI and the server share no lock (a lost update is fail-safe); a secret typed
@@ -846,7 +860,13 @@ mode is on.
 
 ### 7.2 Quality + automation
 
-Open: none.
+Open (owner or repository-settings actions, tracked in `BACKLOG.md`):
+
+- **A14-D12**: add `Analyze (actions)` to the ruleset's required checks.
+- **A14-D14**: review the external Renovate preset.
+- **A14-X1**: the owner checks `.env.example` against `Settings` (drop the mention of a
+  nonexistent `--require-genesis` flag, confirm `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS`,
+  reword `RELAY_SHELL_DEFAULT_TIMEOUT`); agent sessions may not read the file.
 
 Closed:
 
@@ -901,6 +921,10 @@ Closed:
 
 Open:
 
+- **A14-D10 (residual)**: no rate limit on the public OAuth endpoints at the edge (the
+  64 KB body cap and the access-log filter landed).
+- **A14-A11b (residual)**: `client_secret` is stored as the SDK compares it (raw); hashing
+  it needs SDK support.
 - **B-025 (P3)**: `aarch64` support for the seccomp-notify channel, deferred from
   B-021 (v1 ships `x86_64`-validated syscall numbers only; other arches no-op). Add
   the arch's syscall-number and `AUDIT_ARCH` tables and validate the notify round
@@ -915,7 +939,7 @@ Closed:
 | B-026 (P3) | Local PTY sessions adopt the per-call monitor (lifetime follows the session; the cap bounds events per session). Correction 2026-10-14 (A14-RS): asyncssh honours `ProxyCommand` and `Match exec` from the operator's `ssh_config`, which start a local process this channel does not observe; the caller-supplied host, user and jump values that reach those tokens are validated (§3.2, `sshpool.py`) | ADR 0006; CHANGELOG |
 | B-023 (P2) | Opt-in tamper-evident audit hash chain (`RELAY_SHELL_AUDIT_CHAIN`) with `relay-shell --verify-audit`; closes the in-record integrity gap G-1 | [ADR 0007](adr/0007-audit-hash-chain.md) |
 | SEC-1 (P3) | `ssh_keyscan` targets reach `RELAY_SHELL_POLICY_DENY` (PR #89), closing the one gap in the R-002 policy-text contract. Accepted tradeoff: the same text feeds the classifier, so a host name with a destructive word can over-classify (bites only `guarded`; `RELAY_SHELL_POLICY_ALLOW` is the escape hatch) | `BACKLOG.md` (2026-06-12) |
-| TOOL-1 + TOOL-3 (P3) | gitleaks scan (`.gitleaks.toml` allowlists only synthetic-fixture paths; `.github/workflows/gitleaks.yml` on push, PR and daily), PRs #89/#90; also closes the P1-2 gate from `audit/2026-06-01-engagement.md` §7.2 | `BACKLOG.md` (2026-06-12) |
+| TOOL-1 + TOOL-3 (P3) | gitleaks scan (`.gitleaks.toml` allowlists five rules, each scoped to the synthetic fixtures in `tests/*.py`, A14-D12; `.github/workflows/gitleaks.yml` on push, PR and daily), PRs #89/#90; also closes the P1-2 gate from `audit/2026-06-01-engagement.md` §7.2 | `BACKLOG.md` (2026-06-12) |
 | SEC-2 (P3) | `dependency-review` runs with no checkout and no persisted token (PR #91) | `BACKLOG.md` (2026-06-12) |
 | F-G2 | Branch protection on `main` resolved 2026-06-12 via the `main-protection` ruleset, including `required_signatures` (closing P2-3) and the four required checks. Whether the later `ci-success` aggregate is itself required is repository state not visible in-tree: verify with `GET /repos/rmednitzer/relay-shell/rules/branches/main` | `BACKLOG.md` |
 | 2026-06-21 full pass | SEC-3, TOOL-4, SEC-4, SEC-6, SEC-7, SEC-8, CI-1, CI-2 closed. **SEC-5** (`/metrics` auth) accepted as designed by operator decision (default `127.0.0.1` plus the Caddy firewall). Info-only CI-3 / DOC-5 remain | `BACKLOG.md` (2026-06-21); `audit/2026-06-21-engagement.md` |
