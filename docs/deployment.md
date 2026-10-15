@@ -121,27 +121,27 @@ intentionally absent, **detection** is the compensating control, as the audit
 chain (§6a) is for the log. These are host-admin tools, not part of the relay;
 configure them on the host, outside the service.
 
-- **`etckeeper`** — put `/etc` under version control (git + a package-manager
+- **`etckeeper`**: put `/etc` under version control (git + a package-manager
   hook) so every config change is diffable and revertable. A privileged edit
   through the relay of `/etc/sudoers.d`, a systemd unit, or `sshd_config`
   then shows up as a committed diff instead of a silent mutation. Pair with a
   periodic `etckeeper vcs log` review or an off-host push of the `/etc` repo.
-- **`AIDE`** (or Tripwire) — a file-integrity baseline over the things that
+- **`AIDE`** (or Tripwire): a file-integrity baseline over the things that
   should *not* change between deploys: the relay binary / venv
   (`/var/lib/relay-shell/venv`), the systemd unit + `hardening.conf` drop-in, the
   `EnvironmentFile` under `/etc/relay-shell/`, and the OAuth state dir's
   permissions. A timer-driven `aide --check` alerts on an unexpected change (a
   swapped binary, a loosened unit, an altered drop-in). **Exclude the live audit
-  log** from the baseline — it grows by design; its integrity is the §6a hash
+  log** from the baseline (it grows by design); its integrity is the §6a hash
   chain's job, not AIDE's. Re-baseline (`aide --update`) as part of the release
   procedure so a legitimate upgrade is not a false positive.
-- **`fail2ban`** — watch `sshd` and the TLS edge (repeated Caddy 401/403 from
+- **`fail2ban`**: watch `sshd` and the TLS edge (repeated Caddy 401/403 from
   outside the CIDR allowlist, §4) and ban brute-force sources. The relay's own
   SSH is *outbound*, but the host still runs `sshd` for admin and exposes the
   HTTP edge; fail2ban bounds credential-guessing against both.
-- **`lynis`** — a periodic host hardening audit (run on a timer, track the score
-  across runs). It surfaces drift in the host's own posture — kernel params, PAM,
-  file perms — that sits underneath everything the relay depends on.
+- **`lynis`**: a periodic host hardening audit (run on a timer, track the score
+  across runs). It surfaces drift in the host's own posture (kernel params, PAM,
+  file perms) that sits underneath everything the relay depends on.
 
 None of these is installed by `deploy/`; host hardening is the operator's
 domain and the right tool set varies by distro and fleet-management stack. An
@@ -152,10 +152,10 @@ redaction, tiered policy) with host-level detection.
 ## 4. Network edge (HTTP transport)
 
 The HTTP transport binds `RELAY_SHELL_HTTP_HOST:RELAY_SHELL_HTTP_PORT`, which
-defaults to `127.0.0.1:8080` — loopback by design, so a reverse proxy (below)
+defaults to `127.0.0.1:8080` (loopback by design), so a reverse proxy (below)
 is the only thing that should face the network. You can retarget the bind (a
 different loopback port, a container's internal interface), but do **not** bind
-a non-loopback address without the edge protections here — the service stands up
+a non-loopback address without the edge protections here: the service stands up
 no TLS or source-IP filtering of its own. Terminate TLS and restrict by source
 IP at a reverse proxy. `deploy/Caddyfile` is shipped parameterized through
 environment variables and provides:
@@ -235,7 +235,7 @@ do, enable OAuth for any exposure beyond a trusted loopback + edge.
 
 ```bash
 RELAY_SHELL_TRANSPORT=http
-RELAY_SHELL_AUTH_ENABLED=true             # default false — opt in explicitly
+RELAY_SHELL_AUTH_ENABLED=true             # default false; opt in explicitly
 RELAY_SHELL_AUTH_ISSUER=https://relay-shell.example.org
 RELAY_SHELL_AUTH_STATE_DIR=/var/lib/relay-shell/oauth
 RELAY_SHELL_AUTH_SINGLE_CLIENT=true       # lock DCR after the first client registers
@@ -328,11 +328,11 @@ a break. If the log cannot be written, the chain still advances in memory and th
 missing record shows up as a `seq` gap on verification.
 
 **What the chain proves, and what it does not.** From a single file the chain
-detects any **edit, insertion, reorder, or interior deletion** by recomputation
-— including from the shipped copy, without trusting the relay host.
+detects any **edit, insertion, reorder, or interior deletion** by recomputation,
+including from the shipped copy, without trusting the relay host.
 **Head-truncation** (excising leading records) is caught by the genesis anchor.
 **Tail-truncation** (dropping the newest records) leaves a shorter but valid
-prefix and is *not* detectable from the file alone — catch it by comparing
+prefix and is *not* detectable from the file alone; catch it by comparing
 against the off-host copy, which has the later records. This split is by design
 (ADR 0007 delegates durability/truncation defense to off-host shipping).
 
@@ -368,19 +368,19 @@ The audit record covers *what the model asked for* and the SHA-256 of the
 output, but not what a spawned child does after `exec` returns. Set
 `RELAY_SHELL_SECCOMP_NOTIFY=true` to add an audit-only seccomp **user-notify**
 channel ([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)):
-locally-spawned children — one-shot (`shell_exec` / `shell_script` /
-`ssh_keyscan`) and local PTY sessions (`shell_spawn`) — get a BPF filter that
+locally-spawned children (one-shot: `shell_exec` / `shell_script` /
+`ssh_keyscan`; and local PTY sessions: `shell_spawn`) get a BPF filter that
 traps a small, high-signal syscall set (`execve`, the `set[re|res]?[ug]id`
 family, `mount`/`umount2`, `unshare`/`setns`, `chroot`/`pivot_root`,
 `ptrace`, write-`open`/`openat`, and `prctl` for privilege-relevant options
 such as `PR_SET_SECUREBITS` / `PR_CAP_AMBIENT` / `PR_SET_NO_NEW_PRIVS`), and
 a supervisor appends one `syscall_notify` line per observed call to the same
 JSONL stream (it extends the §6a hash chain when that is on). It **never
-blocks** a syscall — the supervisor always answers CONTINUE — so ADR 0002's
+blocks** a syscall (the supervisor always answers CONTINUE), so ADR 0002's
 no-sandbox posture is unchanged. For a PTY session the filter rides the
 session child (and everything it forks) for the session's whole life, and
 events carry the spawning call's `request_id`. SSH sessions have no local
-child (`asyncssh` runs in-process), so nothing is observed — or missed —
+child (`asyncssh` runs in-process), so nothing is observed (or missed)
 on that path.
 
 **Activation is gated, by design.** A seccomp filter installs with
@@ -389,13 +389,13 @@ disable set-uid escalation in the child (`sudo` would break). To preserve the
 privileged-admin posture verbatim, the channel installs **only** with
 `CAP_SYS_ADMIN` (e.g. running as root) and never latches `no_new_privs`. It
 also requires Linux / `x86_64` / kernel ≥ 5.5 and a notify ABI matching the
-build. Where any prerequisite is missing it **cleanly no-ops** — local spawns
-are byte-identical to the off path — and `server_info.seccomp.supported` is
+build. Where any prerequisite is missing it **cleanly no-ops**: local spawns
+are byte-identical to the off path, and `server_info.seccomp.supported` is
 `false` with a `reason` (also logged once at startup). There is no system
 package to install: the channel is pure `ctypes`.
 
 `RELAY_SHELL_SECCOMP_NOTIFY_CAP` (default 256, range 1..65536) bounds the
-event volume per spawned child — per call for the one-shot executors, per
+event volume per spawned child, counted per call for the one-shot executors and per
 session for `shell_spawn` (a long-lived interactive session runs many
 commands under one filter, so size the cap for the session, not the
 command): beyond it, one `syscall_notify_overflow` line is written
@@ -495,37 +495,37 @@ an editor / REPL inside the session evades it the same way obfuscation evades th
 deny list. If a `guarded` deployment must
 prevent Tier-2+ actions inside an interactive shell, deny the spawn tools
 (`^shell_spawn` / `^ssh_spawn`) outright, run `readonly`, or rely on OS/network
-controls — do not treat the `guarded` ceiling as airtight against a live shell.
+controls; do not treat the `guarded` ceiling as airtight against a live shell.
 
 `RELAY_SHELL_POLICY_DENY` is a regex evaluated first in **every** mode, against
 the probe text `"<tool> <command>"` (the tool name is prepended, so anchor with
 `\b`/substrings rather than `^command`; you can also deny a whole tool, e.g.
-`^ssh_keyscan`). Use it as an always-on first-line filter — but treat it as
+`^ssh_keyscan`). Use it as an always-on first-line filter, but treat it as
 **defence in depth, not an absolute prohibition**: it matches command *text*, so
 a determined caller can evade it with shell obfuscation (extra whitespace,
 quoting like `r''m`, `${IFS}`, `$(...)`, base64 `| sh`) or alternate encodings.
 `ssh_keyscan` normalizes any *literal* IP in its target list into the probe, so
 an IP deny (e.g. on the cloud metadata address) is not dodged by a
-decimal/hex/octal/IPv4-mapped spelling of the same address (SSRF-1) — but this
+decimal/hex/octal/IPv4-mapped spelling of the same address (SSRF-1), but this
 cannot help for hostnames (no DNS is resolved in the policy path; a DNS or
 rebinding answer can differ from the one the connection dials). Enforce hard
-prohibitions with OS/network controls — an egress firewall (DNS-rebinding-proof),
-seccomp/AppArmor, a restricted service account, `readonly`/`guarded` mode — not
+prohibitions with OS/network controls, such as an egress firewall (DNS-rebinding-proof),
+seccomp/AppArmor, a restricted service account or `readonly`/`guarded` mode, not
 the deny list alone. See ADR 0003.
 
 ### 8a. Tier-3 confirmation broker (optional)
 
 `open` runs Tier-3 (IRREVERSIBLE) commands on the first request (with a trailing notice);
-`guarded` refuses them wholesale. For the middle ground — *permit irreversible admin work, but
-require a deliberate second step per call* — set `RELAY_SHELL_CONFIRM_TIER3=true`
+`guarded` refuses them wholesale. For the middle ground (*permit irreversible admin work, but
+require a deliberate second step per call*), set `RELAY_SHELL_CONFIRM_TIER3=true`
 ([ADR 0009](adr/0009-tier3-confirmation-broker.md)). When on, a Tier-3 call that
 passed the deny list and mode check does not run on first request: it returns a
 single-use, TTL-bounded token (audited `action=confirm_plan`, no side effect),
 and the caller must arm it with the `operation_confirm` tool then re-issue the
 exact same call (audited `action=confirm_execute`). Tokens are bound to the
 exact operation and expire after `RELAY_SHELL_CONFIRM_TTL` seconds (default 120,
-range 5..3600). This is an added safeguard, never a bypass — the deny list and
-mode policy still run first — so it composes with any mode. Default off keeps
+range 5..3600). This is an added safeguard, never a bypass (the deny list and
+mode policy still run first), so it composes with any mode. Default off keeps
 the audit record byte-identical. `server_info.confirm` reports the live posture
 (`tier3`, `ttl`, `pending` token count).
 
@@ -538,7 +538,7 @@ Administering **Windows hosts over OpenSSH with PowerShell 7 (`pwsh`) as the
   `ssh_fanout` pass the command straight to the remote's own shell (no POSIX
   wrapping), so `pwsh` interprets it; SFTP paths (`ssh_upload` / `ssh_download`)
   pass through opaquely, so a caller uses `C:\...` remote paths as the server
-  expects. There is no command- or path-translation layer — the caller supplies
+  expects. There is no command- or path-translation layer; the caller supplies
   PowerShell-appropriate syntax.
 - **The tier classifier covers common Windows/pwsh destructive operations**
   so `guarded` / `readonly` mode and the Tier-3 confirmation broker apply to
@@ -552,7 +552,7 @@ Administering **Windows hosts over OpenSSH with PowerShell 7 (`pwsh`) as the
   `netsh advfirewall`, `reg add`, `New-LocalUser`, `Register-ScheduledTask`,
   `Set-ExecutionPolicy`. Privilege escalation: `runas` and `Start-Process -Verb
   RunAs` (the same tier bump as `sudo`).
-- **Classification stays heuristic — sharper caveat for PowerShell.** pwsh
+- **Classification stays heuristic, with a sharper caveat for PowerShell.** pwsh
   parameters are case-insensitive, abbreviatable (`-Recurse` → `-rec` → `-r`),
   and `:`-bindable, and cmdlets have aliases (`ri`, `del`, `rd`); a pipeline
   form (`Get-ChildItem -Recurse | Remove-Item`) hides the recursion from the
@@ -562,8 +562,8 @@ Administering **Windows hosts over OpenSSH with PowerShell 7 (`pwsh`) as the
   `Format-Volume`) and `readonly`/`guarded` mode remain the hard controls; the
   classifier is defence in depth.
 - **Secret redaction.** Audited command *arguments* redact the PowerShell
-  credential shapes — `-Credential` / `credential=`, and the
-  `ConvertTo-SecureString 'plaintext' -AsPlainText` inline-secret idiom — as
+  credential shapes (`-Credential` / `credential=`, and the
+  `ConvertTo-SecureString 'plaintext' -AsPlainText` inline-secret idiom) as
   well as the shared `-Password`/`-Token`/`-ApiKey` forms. As on POSIX this is
   best-effort: a positional secret with no keyword (`net user bob NewP@ss`)
   cannot be recognized and is not redacted, so prefer credential objects
@@ -571,7 +571,7 @@ Administering **Windows hosts over OpenSSH with PowerShell 7 (`pwsh`) as the
 - **Output encoding.** `pwsh` 7 defaults to **UTF-8**, so audited output is
   decoded correctly. The one edge: a legacy native `.exe` invoked *from* pwsh
   (e.g. `diskpart.exe`) may emit OEM-codepage bytes, which decode with `�`
-  replacement — a display artifact, not a correctness or security issue.
+  replacement; a display artifact, not a correctness or security issue.
 - **Interactive sessions (`ssh_spawn`).** Modern Windows OpenSSH + pwsh 7 handle
   the ConPTY-backed PTY and window resize. On older Windows OpenSSH builds the
   SSH `signal` request may be unimplemented, so `session_kill` degrades to a
@@ -590,7 +590,7 @@ covered above:
   caps), `RELAY_SHELL_DEFAULT_TIMEOUT` / `_MAX_TIMEOUT` (timeout used when a
   `shell_exec` / `ssh_exec` caller omits it, default 60 s, + the clamp for every
   call; other tools keep their own documented defaults), `RELAY_SHELL_MAX_SESSIONS` / `_MAX_FORWARDS` / `_MAX_CONNS`
-  (concurrency caps — sessions, port forwards, and the SSH connection cache;
+  (concurrency caps for sessions, port forwards, and the SSH connection cache;
   `_MAX_CONNS` defaults to 256 and evicts the least-recently-used idle
   connection when full), `RELAY_SHELL_SESSION_IDLE_TIMEOUT` /
   `_SESSION_BUFFER_BYTES` (PTY session reaping + per-session buffer),
@@ -623,7 +623,7 @@ logs `ignoring unknown setting ... (did you mean ...?)` at startup. Read the sta
 after changing a setting; `RELAY_SHELL_EDGE_*` names belong to the edge installer and are
 not reported.
 
-Tuning guidance for the bounds lives in [`runbook.md`](runbook.md) §7.
+To check the effective bounds against the deployment posture, see [`runbook.md`](runbook.md) §2.6.
 
 ## 9. Health
 
@@ -652,7 +652,7 @@ metrics are for dashboards only and reset on restart.
 
 `outcome` is one of `ok` (work returned), `denied` (policy refused),
 `error` (work raised), `cancelled` (the call was cancelled or the client disconnected), or `confirm_required` (a Tier-3 call returned a
-confirmation token instead of running — only emitted when the Tier-3
+confirmation token instead of running; only emitted when the Tier-3
 confirmation broker is on, §8a). Combine `mode + tier + outcome` for the
 classic "denied tier-3 calls per minute" panel, or alert on a rising
 `confirm_required` rate to see irreversible operations being challenged.
@@ -725,12 +725,12 @@ race with a write into the unmoved file. The drift-detection CLI
 
 What is **not** in scope for backup:
 
-- The Python venv under `/var/lib/relay-shell/venv/` — recreate with
+- The Python venv under `/var/lib/relay-shell/venv/`: recreate with
   `pip install relay-shell` (§2).
-- The Caddy data directory (`/var/lib/caddy/`) — Caddy will re-issue
+- The Caddy data directory (`/var/lib/caddy/`): Caddy will re-issue
   the certificate from ACME on first start. Backing it up is only
   worth doing if you are rate-limited on the ACME directory.
-- The SSH known_hosts file under the service account's `~/.ssh/` —
+- The SSH known_hosts file under the service account's `~/.ssh/`:
   reseed with `ssh_keyscan` (§7) rather than restoring stale entries.
 
 ## Emergency

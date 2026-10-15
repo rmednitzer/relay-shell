@@ -72,5 +72,5 @@ is hashed, never written, as everywhere else.
   every session's handshake and cannot be pulled on demand. The concise
   selection heuristic stays in `instructions`; the detailed form is the prompt.
 - **Routing prompt fetches through `Relay.run`.** There is no command to
-  classify, no timeout, and no exit code. The resource precedent — audited but
-  not admitted — is the correct shape.
+  classify, no timeout, and no exit code. The resource precedent (audited but
+  not admitted) is the correct shape.

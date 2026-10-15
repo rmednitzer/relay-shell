@@ -1,9 +1,8 @@
 """Wiring tests for the ``audit_tail`` tool (B-003).
 
-These exercise the tool through the FastMCP instance so the registration,
-tier classification, output budget, and audit-record shape are all
-covered together. The unit tests for :func:`AuditLogger.tail` itself
-live in ``tests/test_audit.py``.
+They go through the FastMCP instance, covering registration, tier
+classification, output budget and audit-record shape together. Unit tests
+for :func:`AuditLogger.tail` are in ``tests/test_audit.py``.
 """
 
 from __future__ import annotations
@@ -20,14 +19,12 @@ from relay_shell.server import build_server
 
 async def test_audit_tail_returns_existing_records(settings: Settings) -> None:
     mcp = build_server(settings)
-    # Seed: a couple of real tool calls populate the audit log.
+    # Seed the audit log with real tool calls.
     await mcp.call_tool("server_info", {})
     await mcp.call_tool("server_info", {})
 
     content = (await mcp.call_tool("audit_tail", {"lines": 5})).content
     text = "".join(b.text for b in content if getattr(b, "type", "") == "text")
-    # tail() output is JSONL; each line should parse and have the
-    # required audit-record keys.
     records = [json.loads(ln) for ln in text.splitlines() if ln.strip()]
     assert len(records) >= 2  # at least the two server_info calls
     for rec in records:
@@ -35,25 +32,21 @@ async def test_audit_tail_returns_existing_records(settings: Settings) -> None:
 
 
 def test_audit_tail_classified_tier_zero() -> None:
-    # Belt-and-braces: even if the wrapper omits classification, the
-    # tool registration must classify the tool as read-only.
-    # Synchronous on purpose: no await is needed and ruff's RUF029
-    # would otherwise flag an async-with-no-await function.
+    # Must classify as read-only even if the wrapper omits classification.
+    # Synchronous on purpose: ruff RUF029 flags an async def without await.
     assert classify("audit_tail") is Tier.READ_ONLY
 
 
 async def test_audit_tail_clamps_lines_argument(settings: Settings) -> None:
     mcp = build_server(settings)
-    # An out-of-bound argument must not crash; the wrapper clamps to
-    # [1, 1000].
+    # An out-of-bound argument must not crash; the wrapper clamps to [1, 1000].
     content = (await mcp.call_tool("audit_tail", {"lines": 999999})).content
-    assert content  # tool returned bounded output, not an error string
-    # The audit record for this call must show the *clamped* value, not
-    # the raw input.
+    assert content  # bounded output, not an error string
+    # The audit record shows the clamped value, not the raw input.
     last = _audit_lines(Path(settings.audit_path))[-1]
     assert last["tool"] == "audit_tail"
     assert last["args"]["lines"] == 1000
-    # And: zero / negative inputs collapse to 1.
+    # Zero and negative inputs collapse to 1.
     content2 = (await mcp.call_tool("audit_tail", {"lines": 0})).content
     assert content2
     last2 = _audit_lines(Path(settings.audit_path))[-1]
@@ -62,27 +55,20 @@ async def test_audit_tail_clamps_lines_argument(settings: Settings) -> None:
 
 async def test_audit_tail_empty_on_fresh_log(settings: Settings) -> None:
     mcp = build_server(settings)
-    # No tool has been called yet (build_server itself does not call
-    # tools), so the audit file exists but contains zero records.
+    # build_server calls no tools: the audit file exists with zero records.
     content = (await mcp.call_tool("audit_tail", {"lines": 50})).content
     text = "".join(b.text for b in content if getattr(b, "type", "") == "text")
-    # The tool's OWN call lands in the audit too, but it lands AFTER the
-    # tail() read (the audit.record() call happens after work() returns).
-    # So the returned text is empty.
+    # The tool's own call is audited after the tail() read (record() runs
+    # after work() returns), so the returned text is empty.
     assert text == ""
-    # Confirm by re-reading: now exactly one record exists.
     assert len(_audit_lines(Path(settings.audit_path))) == 1
 
 
 async def test_audit_tail_does_not_leak_output_body(settings: Settings) -> None:
-    # The audit log never stores output bodies, only hashes. audit_tail
-    # returns the log verbatim, so this is a structural invariant the
-    # tool wrapper must preserve.
-    #
-    # Use the same `echo $((21+21))-only` trick as test_stdio_e2e: the
-    # OUTPUT string ("body-42-only") is computed by the shell and never
-    # appears in the audit-logged `args.command` field. Anything that
-    # surfaces "body-42-only" in audit_tail output is a real body leak.
+    # The audit log stores output hashes, never bodies, and audit_tail returns
+    # it verbatim. As in test_stdio_e2e, the shell computes "body-42-only", so
+    # it never appears in the logged `args.command`; seeing it in audit_tail
+    # output is a real body leak.
     mcp = build_server(settings)
     await mcp.call_tool("shell_exec", {"command": "echo body-$((21 + 21))-only"})
     content = (await mcp.call_tool("audit_tail", {"lines": 10})).content
@@ -91,11 +77,9 @@ async def test_audit_tail_does_not_leak_output_body(settings: Settings) -> None:
 
 
 async def test_audit_tail_args_redacted_in_its_own_record(settings: Settings) -> None:
-    # audit_tail logs `args={"lines": N}`. N is an int, so redaction is
-    # a no-op; this test pins that the wrapper writes the audit args we
-    # expect rather than something fuzzy that future code might read.
-    # (AUD-1: an *unfiltered* call must still record exactly {"lines": N} —
-    # the filter keys are additive, present only when a filter is set.)
+    # audit_tail logs `args={"lines": N}`; N is an int, so redaction is a
+    # no-op. (AUD-1: an unfiltered call must still record exactly
+    # {"lines": N}; the filter keys are additive, present only when set.)
     mcp = build_server(settings)
     await mcp.call_tool("audit_tail", {"lines": 7})
     last = _audit_lines(Path(settings.audit_path))[-1]
@@ -130,7 +114,7 @@ async def test_audit_tail_filter_by_tool(tmp_path: Path) -> None:
     content = (await mcp.call_tool("audit_tail", {"lines": 50, "tool": "shell_exec"})).content
     recs = [json.loads(ln) for ln in _text(content).splitlines() if ln.strip()]
     assert recs and all(r["tool"] == "shell_exec" for r in recs)
-    assert len(recs) == 2  # the ok call + the denied call
+    assert len(recs) == 2  # the ok call and the denied call
 
 
 async def test_audit_tail_filter_by_denied(tmp_path: Path) -> None:
@@ -139,7 +123,7 @@ async def test_audit_tail_filter_by_denied(tmp_path: Path) -> None:
     content = (await mcp.call_tool("audit_tail", {"lines": 50, "denied": True})).content
     recs = [json.loads(ln) for ln in _text(content).splitlines() if ln.strip()]
     assert recs and all(r["denied"] is True for r in recs)
-    assert all(r["tool"] == "shell_exec" for r in recs)  # only the Tier-3 rm was denied
+    assert all(r["tool"] == "shell_exec" for r in recs)  # only the Tier-3 rm is denied
 
 
 async def test_audit_tail_filter_by_tier(tmp_path: Path) -> None:

@@ -1,9 +1,10 @@
 """OAuth state-store hardening (audit M8, 2026-10-04).
 
-Secrets used to be stored as the dictionary keys of ``tokens.json`` / ``codes.json``
-(and repeated in a ``token`` / ``code`` field), so any copy of the state directory
-yielded usable bearer credentials; expired records were only removed when presented
-and every authenticated request read the whole file on the event loop.
+Regressions covered: secrets stored as the dictionary keys of ``tokens.json`` /
+``codes.json`` (and repeated in a ``token`` / ``code`` field), so any copy of the
+state directory yielded usable bearer credentials; expired records removed only
+when presented; and every authenticated request reading the whole file on the
+event loop.
 """
 
 from __future__ import annotations

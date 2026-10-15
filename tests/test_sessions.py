@@ -76,29 +76,24 @@ async def test_closed_session_reports_exit() -> None:
 async def test_session_recv_ended_message_shape_with_exit() -> None:
     """Pin the exact wire shape of the ``ended`` sentinel when exit_code is known.
 
-    Client renderers grep for this marker; if the format ever drifts they
-    stop highlighting closed sessions and operators lose the visual cue.
-    Freeze the shape (leading newline, bracket pair, ``exit=N`` field).
-    Both branches (with/without exit) live next to each other in
-    ``SessionRegistry.recv`` so a single refactor could silently break
-    either; test both.
+    Client renderers grep for this marker, so the shape is frozen (leading
+    newline, bracket pair, ``exit=N`` field). Both branches (with and without
+    exit) sit side by side in ``SessionRegistry.recv``; test both.
     """
     reg = SessionRegistry(8, 60, 65536)
     pattern = re.compile(r"^\n\[session [A-Za-z0-9_\-]+ ended, exit=-?\d+\]$")
     try:
         sid = await _spawn(reg, ["/bin/sh", "-c", "exit 0"])
         sess = reg._sessions[sid]
-        # Drain any preamble so we hit the closed-buffer branch.
+        # Drain any preamble to reach the closed-buffer branch.
         for _ in range(40):
             await reg.recv(sid, timeout=0.2, max_bytes=4096)
             if sess.closed and not sess.buffer:
                 break
-        # Pin both branches at the public API by forcing exit_code
-        # directly. This bypasses the timing dance of waiting for the
-        # OS to set returncode on the asyncio.subprocess.Process; the
-        # branch we are testing is "closed and exit_code is not None"
-        # vs "closed and exit_code is None" — the source of exit_code
-        # is irrelevant to the wire-format contract.
+        # Force exit_code directly instead of waiting for the OS to set
+        # returncode on the asyncio process: the branch under test is
+        # "closed with exit_code set" vs "closed with exit_code None", and
+        # where exit_code came from is irrelevant to the wire format.
         sess.exit_code = 7
         out = await reg.recv(sid, timeout=0.1, max_bytes=4096)
         assert pattern.match(out), f"unexpected ended shape: {out!r}"
@@ -129,20 +124,18 @@ async def test_session_recv_ended_message_shape_without_exit() -> None:
 async def test_active_recv_waiter_not_reaped_by_idle_sweep() -> None:
     """A session with a live ``recv()`` waiter is in use and must survive the sweep.
 
-    Regression for the idle-reaper-vs-in-use bug: ``recv`` refreshed
-    ``last_used`` only at entry, so a long poll (``timeout`` > the registry
-    idle timeout) let the session age past idle *while a client was blocked
-    waiting on it*. A concurrent ``_sweep`` (fired by ``list``) then tore the
-    session down out from under the waiter — the client is killed precisely
-    because it is waiting. With the waiter guard the sweep skips any session
+    Regression: ``recv`` refreshed ``last_used`` only at entry, so a long poll
+    (``timeout`` > the registry idle timeout) let the session age past idle
+    while a client was blocked on it, and a concurrent ``_sweep`` (fired by
+    ``list``) tore it down under the waiter. The sweep now skips any session
     with ``_waiters > 0``.
     """
-    # idle_timeout=1s; the recv below polls for 3s — longer than idle.
+    # idle_timeout=1s; the recv below polls for 3s, longer than idle.
     reg = SessionRegistry(max_sessions=8, idle_timeout=1, buffer_cap=65536)
     try:
         sid = await _spawn(reg, ["/bin/cat"])  # stays alive, produces no output
         recv_task = asyncio.create_task(reg.recv(sid, timeout=3.0, max_bytes=4096))
-        # Let recv start long-polling and register itself as a waiter.
+        # Let recv register itself as a waiter.
         await asyncio.sleep(0.1)
         assert reg._sessions[sid]._waiters == 1, "recv must mark the session in-use"
 
@@ -154,8 +147,8 @@ async def test_active_recv_waiter_not_reaped_by_idle_sweep() -> None:
         )
         assert sid in reg._sessions
 
-        # The waiter runs to its own timeout and returns empty — NOT an
-        # 'ended' sentinel, which is what a mid-wait teardown would inject.
+        # The waiter times out and returns empty, not the 'ended' sentinel a
+        # mid-wait teardown would inject.
         out = await recv_task
         assert out == "", f"waiter should time out cleanly, got {out!r}"
         assert reg._sessions[sid]._waiters == 0, "waiter count released on return"
@@ -166,9 +159,8 @@ async def test_active_recv_waiter_not_reaped_by_idle_sweep() -> None:
 async def test_pty_spawn_failure_does_not_leak_master_fd() -> None:
     """A failed PTY spawn must release both pty ends, not just the slave.
 
-    Pre-fix, ``LocalPtyTransport.spawn`` closed only ``slave_fd`` in its
-    ``finally`` when ``create_subprocess_exec`` raised; the master fd
-    leaked once per failed spawn (e.g. a typo'd binary).
+    Regression: when ``create_subprocess_exec`` raised, ``LocalPtyTransport.spawn``
+    closed only ``slave_fd``, leaking the master fd once per failed spawn.
     """
     argv = ["/nonexistent-relay-shell-binary"]
     # Warm-up: the first spawn may lazily allocate event-loop plumbing
@@ -213,10 +205,9 @@ class _RecordingTransport:
 async def test_register_session_closes_transport_when_registry_refuses(tmp_path: Path) -> None:
     """The shared spawn-registration path reaps a refused transport (R-003).
 
-    Pre-fix, ``shell_spawn`` / ``ssh_spawn`` registered the freshly-spawned
-    transport directly with ``sessions.add``; a refusal (session limit)
-    propagated as the tool's error string while the already-running child
-    kept running unsupervised.
+    Regression: ``shell_spawn`` / ``ssh_spawn`` registered the new transport
+    directly with ``sessions.add``, so a refusal (session limit) surfaced as
+    the tool's error string while the running child stayed unsupervised.
     """
     from relay_shell.server import Relay
 
@@ -243,8 +234,8 @@ async def test_register_session_closes_transport_when_registry_refuses(tmp_path:
 
 
 async def test_oversized_winsize_is_clamped_not_leaked(monkeypatch: pytest.MonkeyPatch) -> None:
-    # struct.pack("H") raises struct.error above 65535, which is not an OSError and
-    # used to escape _set_winsize, leaking the pty fds in LocalPtyTransport.spawn.
+    # struct.pack("H") raises struct.error above 65535, which is not an OSError,
+    # so it escaped _set_winsize and leaked the pty fds in LocalPtyTransport.spawn.
     import fcntl
     import os
 
@@ -276,8 +267,8 @@ async def _timed_close(argv: list[str], settle: float = 0.4) -> tuple[float, int
 async def test_closing_an_interactive_shell_does_not_wait_out_the_sigterm_grace(
     shell: str,
 ) -> None:
-    """Interactive shells ignore SIGTERM. Pre-fix every close of one slept the full 5 s
-    grace and ended in SIGKILL; SIGHUP, which a closing terminal sends, ends it at once."""
+    """Interactive shells ignore SIGTERM, so closing one must not wait out the 5 s grace
+    and end in SIGKILL; SIGHUP, which a closing terminal sends, ends it at once."""
     if not Path(shell).exists():
         pytest.skip(f"{shell} not installed")
     elapsed, rc = await _timed_close([shell, "-i"])
@@ -334,8 +325,8 @@ def _live_group_members(pgid: int) -> list[int]:
 async def test_close_reaps_group_members_that_outlive_the_leader(
     monkeypatch: pytest.MonkeyPatch, script: str
 ) -> None:
-    """The leader exiting says nothing about descendants in its group that ignore SIGTERM and
-    SIGHUP. Pre-fix the close returned with them still running and their session removed."""
+    """The leader exiting says nothing about group descendants that ignore SIGTERM and
+    SIGHUP. Regression: close returned with them still running and the session removed."""
     from relay_shell import sessions
 
     monkeypatch.setattr(sessions, "_TERM_GRACE", 1.5)

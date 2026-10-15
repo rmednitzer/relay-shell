@@ -375,11 +375,11 @@ curl -s http://127.0.0.1:2020/api/v1/metrics/prometheus | grep -E '^fluentbit_(i
 
 ### Troubleshoot
 
-- **"file rotation event lost"** — confirm `Rotate_Wait` is at least
+- **"file rotation event lost"**: confirm `Rotate_Wait` is at least
   the time `logrotate` holds the old file before unlinking; 30 s is
   the value in the config above, not something the bundled
   `logrotate` config sets.
-- **Records replayed after restart** — `DB` must be on a persistent
+- **Records replayed after restart**: `DB` must be on a persistent
   path with `DB.Sync normal` (not `off`); the position is otherwise
   lost on crash.
 
@@ -395,13 +395,13 @@ by default). The recipe has two parts:
 
 1. A tiny forwarder unit `tail -F`s the audit file and pipes each
    line to journald. Each line is stored verbatim as the journal
-   record's `MESSAGE` field — journald does **not** parse JSON into
+   record's `MESSAGE` field; journald does **not** parse JSON into
    structured fields automatically; the JSON travels as a string and
    the receiving SIEM is responsible for re-parsing it. Pair with a
    `SYSLOG_IDENTIFIER` so the records are easy to query.
 2. `systemd-journal-upload.service` runs on the relay host and
    pushes journal entries over HTTPS to a collector. The collector
-   side runs `systemd-journal-remote.service` to receive — the two
+   side runs `systemd-journal-remote.service` to receive. The two
    service names are easy to confuse, but they sit on different
    hosts.
 

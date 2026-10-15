@@ -147,9 +147,10 @@ shell execution is not a containment boundary:
   a host such as `x -oProxyCommand=...` would otherwise run a local command; operator-written
   inventory and `ssh_config` aliases are trusted as written.
 - **Resource bounds.** Per-call timeout and output caps, a bounded number of
-  concurrent sessions, bounded per-session buffers, and idle/lifetime
-  reaping. Failure paths return a structured error string; a tool never
-  raises into the transport.
+  concurrent sessions, bounded per-session buffers, and reaping of idle
+  sessions and of exited sessions once drained (there is no maximum
+  session lifetime). Failure paths return a structured error string; a
+  tool never raises into the transport.
 - **Optional OAuth 2.1 edge** (HTTP transport): dynamic
   client registration with single-client lockdown, PKCE, file-backed
   access/refresh tokens (stored hashed, never raw) with rotation and expiry. **Opt-in, disabled by

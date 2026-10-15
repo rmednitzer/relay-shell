@@ -328,14 +328,14 @@ Use for every PR, your own or external.
 | `policy.py`          | Consumes `patterns`; deny list is still the first gate; `_READ_ONLY_TOOLS` / `_MUTATING_TOOLS` membership intact. |
 | `audit.py`           | Output body never written, only `sha256` + `len`. `degraded` path still degrades, not crashes, and a runtime write failure (not just a bad path at start-up) sets `degraded`, and so does a seccomp-notify monitor that fails open (`mark_degraded`, first reason kept; ADR 0006). With `audit_chain` on, `seq`/`prev`/`chain` are appended under `_chain_lock` and `verify_chain` round-trips (ADR 0007); the default-off path is byte-identical. |
 | `redaction.py`       | Consumes `patterns`; the loop order (URL creds → prefix patterns → whole-match patterns → MySQL family) is unchanged. |
-| `sessions.py`        | Lost-wakeup invariant: `recv` clears the event under the buffer lock before awaiting. PTY spawn adopts the active seccomp monitor; the transport stops it in `aclose()` — on the failure path too (B-026). A session that has left the registry (`close`, `_sweep`, `shutdown`) is torn down by its own shielded task, so a cancelled caller cannot strand it (ADR 0012, with the STPA trace); `LocalPtyTransport.aclose` sends SIGKILL if cancelled during the SIGTERM grace wait. |
+| `sessions.py`        | Lost-wakeup invariant: `recv` clears the event under the buffer lock before awaiting. PTY spawn adopts the active seccomp monitor; the transport stops it in `aclose()`, on the failure path too (B-026). A session that has left the registry (`close`, `_sweep`, `shutdown`) is torn down by its own shielded task, so a cancelled caller cannot strand it (ADR 0012, with the STPA trace); `LocalPtyTransport.aclose` sends SIGKILL if cancelled during the SIGTERM grace wait. |
 | `sshpool.py`         | `known_hosts` arg is validated and, when `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false`, may not weaken the server default. The connection cache key includes user, port, verification mode, identity key and jump host; a failed or cancelled connect always releases its single-flight slot. `L:`/`D:` forwards listen on loopback only. Forwards leak-free, including a cancel between binding a listener and tracking it, and between opening an `ssh_spawn` channel and its transport owning it. A caller-supplied host, user and jump hop must be a plain token (`_check_ssh_tokens`): they are substituted into the operator's `ProxyCommand`, so whitespace or a leading `-` would add local argv. |
 | `auth/oauth.py`      | File modes (0o700 dir / 0o600 files), atomic save (unique temp, fsync, rename; ownership of the state dir kept when run as root), approval written before the client, lazy expiry, single-client lockdown intact, refusals raised as `RegistrationError`/`TokenError` (never a bare exception), every grant bound to the configured resource. |
 | `auth/admin.py`      | Approve / reject only touch the named client's approval, codes and tokens; an unreadable store is an error, not empty. |
 | `shelltools.py`      | `start_new_session=True` preserved (so `killpg` works). Env overlay does not propagate JSON errors. |
 | `inventory.py`       | Wildcard `Host *` patterns are skipped in the flat listing. `resolve()` passthrough behavior holds. The raw ssh_config parse is retained so `ssh_config_aliases()` reports aliases that an inventory entry overrides. |
 | `metrics.py`         | Counter / gauge label cardinality stays bounded. The `tool` label on resource reads is the STABLE name, never a user-controlled string. Hand-rolled exposition stays compliant (HELP + TYPE per metric, label escaping). The `syscall` label on the seccomp counters comes from the fixed `NOTIFIED_SYSCALLS` set. |
-| `seccomp.py`         | Opt-in, default-off, `CAP_SYS_ADMIN`-gated; **never** latches `no_new_privs` (preserves set-uid/`sudo`). The supervisor only ever answers CONTINUE — it must never block/kill a child, and `stop()` must not close a listener that a surviving process still needs (it hands it to the detached server, ADR 0006 correction). `SECCOMP_FILTER_VERSION` bumps on any filter / notified-set change. `syscall_notify` events carry raw scalar register args only — no buffer dereference. Paired tests in `tests/test_seccomp.py`; the privileged paths are `seccomp`-marked. |
+| `seccomp.py`         | Opt-in, default-off, `CAP_SYS_ADMIN`-gated; **never** latches `no_new_privs` (preserves set-uid/`sudo`). The supervisor only ever answers CONTINUE: it must never block/kill a child, and `stop()` must not close a listener that a surviving process still needs (it hands it to the detached server, ADR 0006 correction). `SECCOMP_FILTER_VERSION` bumps on any filter / notified-set change. `syscall_notify` events carry raw scalar register args only (no buffer dereference). Paired tests in `tests/test_seccomp.py`; the privileged paths are `seccomp`-marked. |
 | `verifier.py`        | Template lookup tries packaged `_deploy` first, then source-tree `deploy/`. Each pair in `DEFAULT_PAIRS` has a stable `name`; new pairs must be reflected in `docs/deployment.md` §10. |
 
 ### 3.3 Security-sensitive diffs
@@ -656,7 +656,7 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
    `PATTERNS_VERSION` if the addition changes classification semantics.
 2. Add a paired test in `tests/test_patterns.py`: one *positive* case
    (classifies as expected) and one *negative* near-miss case (a form the
-   start anchor rejects — the keyword sitting mid-token, so `(?<![\w])`
+   start anchor rejects: the keyword sitting mid-token, so `(?<![\w])`
    for TIER2/TIER3, or `\b` for `PRIV_ESC_PATTERN`, does not fire).
 3. Document the addition in `docs/adr/0003-tiered-authority.md` if the
    heuristic represents a new category (not just another verb).
@@ -781,63 +781,44 @@ yanks are rare and the manual click is the appropriate friction.
 
 ## 7. Backlog
 
-Priorities: P0 blocks the next release; P1 should land in the next milestone;
-P2 is good-to-have; P3 is a nice idea with no commitment. Many items below are
-also registered in [`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md).
+The queue of ongoing work. Priorities: P0 blocks the next release; P1 should land in
+the next milestone; P2 is good-to-have; P3 is a nice idea with no commitment. Each
+subsection lists its **open** items in full, then a ledger of **closed** items. A
+closed entry keeps its ID, closing PR or ADR and residual caveats; the full write-up
+lives where the ledger points: [`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md)
+(audit-pass register), the ADR, [`CHANGELOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/CHANGELOG.md),
+or the dated `audit/` pack.
 
 ### 7.1 Capability
 
-- **F-6 (P2)** — **Closed**. `ssh_upload` / `ssh_download` gained an explicit
-  `timeout=` parameter (clamped to the server max), mirroring `ssh_exec`.
-  Threaded through `SshPool.sftp_put` / `sftp_get` via `asyncio.wait_for`; a
-  timed-out transfer returns `[TIMEOUT after Ns]`. `0` (default) disables the
-  per-call cap (connection keepalive still applies), so existing callers are
-  unaffected. Wiring tests in `tests/test_sshpool_unit.py` assert the cap fires
-  (put + get) and that `timeout=0` completes. Deferred from the 2026-05-27 engagement (`audit/2026-05-27-engagement.md` §8.2 F-6).
-- **L1 confirmation broker (P1)** — **Closed** by
-  [ADR 0009](adr/0009-tier3-confirmation-broker.md) (2026-07-15 pass): an opt-in,
-  default-off two-step confirmation gate for Tier-3 (IRREVERSIBLE) operations
-  (`RELAY_SHELL_CONFIRM_TIER3`). `Relay.run` returns a single-use, TTL-bounded
-  token bound to `sha256(tool \0 policy_text)` (audited `confirm_plan`) and the
-  caller arms it via the new `operation_confirm` tool then re-issues the exact
-  call (audited `confirm_execute`). Adapted from the sibling MCP planes'
-  plan → authorize → execute broker; layered after the deny/mode check (never a
-  bypass); default-off is byte-identical. `src/relay_shell/broker.py` (100%
-  covered), `tests/test_broker.py`; tool contract 21 → 22.
-- **BRK-2 (P3)** — rollback/verify pairing for the confirmation broker
-  (`rollback_command` / `verify_command` / `auto_rollback`), the part of the
-  sibling brokers deferred from ADR 0009. Now has its own ADR:
-  [ADR 0010](adr/0010-rollback-verify-broker.md) (**Proposed**) specifies the
-  design and the seven invariants a build must satisfy (chiefly: rollback/verify
-  are themselves fully deny-list/tier-gated, never a policy bypass; bound into
-  the confirmation identity; three distinct audit records; bounded, non-recursive
-  loop) and **decides to defer** until a concrete trigger (an autonomous /
-  unattended deployment, or an operator ask for operation-bound remediation that
-  survives the issuing turn), since a model can already sequence verify/rollback
-  itself in the attended case. Move ADR 0010 to Accepted with the implementing PR
-  when a trigger is real.
-- **WIN-1** — first-class support for **Windows targets over OpenSSH with
-  PowerShell 7**, per [ADR 0011](adr/0011-windows-openssh-powershell.md)
-  (**Accepted**). Execution + SFTP already work (asyncssh passes the raw command
-  to the remote's own shell); the gap was that the tier classifier was
-  POSIX-only, so pwsh destructive cmdlets (`Remove-Item -Recurse -Force`,
-  `Clear-Disk`, `Stop-Computer`, `Remove-Service`, …) under-classified as Tier 1
-  and escaped `guarded`/`readonly` mode and the ADR 0009 broker. Increments
-  **A** (pwsh-aware Tier-2/3 + priv-esc patterns — same anchoring/ReDoS
-  discipline, POSIX byte-identical, `PATTERNS_VERSION` 9→10, paired FP tests) +
-  **B** (docs §8b) and **C** (PowerShell credential redaction —
-  `credential` keyword + `ConvertTo-SecureString` inline-plaintext rule +
-  `Verb-Noun` over-scrub guard; `PATTERNS_VERSION` 11) **landed**.
-  Encoding/PTY (D/E) stay documented caveats (pwsh is UTF-8 by default). No
-  command/path translation layer, no new transport/tool. Classification and
-  redaction stay heuristic (ADR 0003); a positional secret with no keyword is
-  not redactable.
+Open:
+
+- **BRK-2 (P3)**: rollback/verify pairing for the confirmation broker
+  (`rollback_command` / `verify_command` / `auto_rollback`), the part of the sibling
+  brokers deferred from ADR 0009. [ADR 0010](adr/0010-rollback-verify-broker.md)
+  (**Proposed**) specifies the design and the seven invariants a build must satisfy
+  (chiefly: rollback/verify are themselves fully deny-list/tier-gated, never a policy
+  bypass; bound into the confirmation identity; three distinct audit records;
+  bounded, non-recursive loop) and **defers** it until a concrete trigger: an
+  autonomous or unattended deployment, or an operator ask for operation-bound
+  remediation that survives the issuing turn. In the attended case a model can
+  already sequence verify/rollback itself. Move ADR 0010 to Accepted with the
+  implementing PR when a trigger is real.
+
+Closed:
+
+| ID | What | Record |
+|----|------|--------|
+| F-6 (P2) | `ssh_upload` / `ssh_download` take `timeout=` (clamped to the server max; `0`, the default, disables the per-call cap) | CHANGELOG; `audit/2026-05-27-engagement.md` §8.2 |
+| L1 confirmation broker (P1) | Opt-in, default-off Tier-3 confirmation (`RELAY_SHELL_CONFIRM_TIER3`, `operation_confirm`); single-use, TTL-bounded token bound to `sha256(tool \0 policy_text)`, layered after the deny/mode check, never a bypass; tool contract 21 → 22 | [ADR 0009](adr/0009-tier3-confirmation-broker.md) |
+| WIN-1 | Windows targets over OpenSSH with PowerShell 7: increments A (pwsh-aware Tier-2/3 and priv-esc patterns, `PATTERNS_VERSION` 10), B (docs §8b) and C (PowerShell credential redaction, `PATTERNS_VERSION` 11) landed. D/E (encoding, PTY) stay documented caveats; no command translation layer, transport or tool. Classification and redaction stay heuristic; a positional secret with no keyword is not redactable | [ADR 0011](adr/0011-windows-openssh-powershell.md) |
 
 ### 7.1a 2026-10-04 audit pass (register)
 
 Evidence: the PR descriptions of #189-#197 (no `audit/` pack was archived for this
 pass; H = high, M = medium, L = low). Every finding was reproduced by running code
-before it was fixed; each fix landed with paired tests that fail against the old code. The 2026-10-14 pass is recorded in `BACKLOG.md` and `audit/2026-10-14-engagement.md`.
+before it was fixed; each fix landed with paired tests that fail against the old
+code. The 2026-10-14 pass is recorded in `BACKLOG.md` and `audit/2026-10-14-engagement.md`.
 
 | ID | Finding | Status |
 |----|---------|--------|
@@ -865,233 +846,80 @@ mode is on.
 
 ### 7.2 Quality + automation
 
-(The queue is currently empty. B-022 closed by the sshpool fault-injection PR -
-floor is now 90%, baseline ~92%. The 2026-06-12 audit pass (evidence
-under `audit/`, deferral register in `BACKLOG.md`) closed two more:
-**QUAL-1** (PR #89), explicit observable asserts on the five seccomp
-termination tests in `tests/test_seccomp.py`; and **REL-1** (PR #92),
-the four HTTP `/metrics` tests migrated off the deprecated
-`starlette.testclient` onto httpx's own `ASGITransport`, taking the
-default suite from one warning to zero with no dependency change.)
+Open: none.
 
-The 2026-06-21 full audit pass closed **QUAL-2 (P3)** (`ssh_forward` now raises a
-bounded error on a malformed spec) and **FMT-1 (P3)** (the LEEF formatter emits
-the mandatory LEEF 2.0 delimiter field) in the P2/P3 follow-up PR. **FMT-2
-(info)** (CEF header-field escaping — no runtime defect) is **Closed** (PR #111,
-`_cef_header_escape`; header fields are constants so the bytes are byte-identical,
-the escape is structural insurance against a future dynamic header field). Full
-detail in [`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md) (2026-06-21 section) and
-[`audit/2026-06-21-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-21-engagement.md).
+Closed:
 
-The **2026-08-04 audit + gap-analysis pass** (`audit/2026-08-04-engagement.md`)
-closed three MEDIUM defence-in-depth / correctness gaps in the engagement PR
-(CONN-1/CONN-2/EDGE-3); the **2026-08-04 backlog follow-up**
-(`audit/2026-08-04-backlog-followup.md`) then closed the two deferred items
-(EVID-1, PERF-4):
-
-- **CONN-1 (P2)** — **Closed**. `RELAY_SHELL_MAX_CONNS` (default 256) hard-bounds
-  the `SshPool._conns` connection cache with LRU-unpinned eviction, mirroring
-  `max_sessions` / `max_forwards` for the cache beneath them (idle eviction was
-  the only prior bound and is opportunistic + unbounded in count).
-- **CONN-2 (P2)** — **Closed**. `SshPool.run()`'s output cap is now a single
-  budget shared across stdout+stderr, so peak transient memory is `cap` not 2×cap.
-- **EDGE-3 (P2)** — **Closed**. The edge Caddyfile proxies `/revoke` before the
-  CIDR gate so a remote OAuth client can self-revoke a leaked token (the provider
-  advertises `revocation_endpoint`; RFC 7009 makes public reachability safe).
-- **EVID-1 (P2)** — **Closed** (follow-up). The audit-evidence verifier now
-  orders retained segments by the first record's `ts` (chain-authoritative,
-  immune to the logrotate `delaycompress` mtime inversion) via a two-phase
-  `verify_segment()` restructure, and tolerates a single torn trailing record on
-  the live segment (`torn_tails` counter). Removes the spurious "broken rotation
-  seam" / "invalid JSON" false failures that silently suppressed the off-host
-  sync (the anti-tail-truncation control, ADR 0007). 4 verifier tests.
-- **PERF-4 (P2)** — **Closed** (follow-up). The single-host exec paths bound the
-  output buffered in relay memory to `max_output_hard` (`shelltools._drive`'s
-  bounded concurrent drain; `ssh_exec` passes `max_output_bytes`) instead of
-  buffering the whole child output before truncating (a memory DoS reachable by
-  a Tier-1 command `guarded` mode permits). Returned output byte-identical; child
-  runs to completion. 7 tests. (Raised from info to P2/MED on review: it crosses
-  the `guarded` boundary.) A later audit pass found the original fix
-  missed two other single-host exec call sites: `ssh_keyscan`'s `run_command()`
-  call and `ssh_check`'s `SshPool.run()` call both still passed no cap
-  (`output_cap`/`max_output_bytes` unset, `cap is None`). `ssh_check` is Tier 0
-  (permitted even in `readonly` mode) and both take a caller-chosen `hosts`
-  argument, a wider gap than the original: a malicious or
-  compromised remote sshd could stream unbounded data back regardless of mode.
-  Both now bound to a cap (`max_output_hard` for `ssh_keyscan`, a 4 KiB
-  `_SSH_CHECK_PER_HOST_OUTPUT_CAP` for `ssh_check`'s substring-only probe).
+| ID | What | Record |
+|----|------|--------|
+| B-022 | sshpool fault-injection tests; coverage floor 90% (baseline ~92%) | CHANGELOG |
+| QUAL-1 | Observable asserts on the five seccomp termination tests (PR #89) | `BACKLOG.md` (2026-06-12) |
+| REL-1 | `/metrics` tests moved from `starlette.testclient` to httpx `ASGITransport`; default suite at zero warnings (PR #92) | `BACKLOG.md` (2026-06-12) |
+| QUAL-2 (P3) | `ssh_forward` raises a bounded error on a malformed spec | `BACKLOG.md` (2026-06-21) |
+| FMT-1 (P3) | LEEF formatter emits the mandatory LEEF 2.0 delimiter field | `BACKLOG.md` (2026-06-21) |
+| FMT-2 (info) | CEF header-field escaping (`_cef_header_escape`, PR #111); structural insurance, output bytes unchanged | `BACKLOG.md` (2026-06-21) |
+| CONN-1 (P2) | `RELAY_SHELL_MAX_CONNS` (default 256) bounds the `SshPool._conns` cache with LRU eviction of unpinned entries | `BACKLOG.md` (2026-08-04); `audit/2026-08-04-engagement.md` |
+| CONN-2 (P2) | `SshPool.run()` output cap is one budget shared by stdout and stderr | as CONN-1 |
+| EDGE-3 (P2) | The edge Caddyfile proxies `/revoke` before the CIDR gate, so a remote OAuth client can self-revoke (RFC 7009) | as CONN-1 |
+| EVID-1 (P2) | Evidence verifier orders segments by first-record `ts` and tolerates one torn trailing record (`torn_tails`), removing false failures that suppressed the off-host sync | `BACKLOG.md`; `audit/2026-08-04-backlog-followup.md` |
+| PERF-4 (P2) | Single-host exec paths bound buffered output to `max_output_hard`; a later pass also capped `ssh_keyscan` and `ssh_check` (`_SSH_CHECK_PER_HOST_OUTPUT_CAP`, 4 KiB), which a remote sshd could otherwise flood even in `readonly` mode | as EVID-1 |
 
 ### 7.3 Operations + observability
 
-(B-014 closed by PR #47 — `RELAY_SHELL_AUDIT_FORMAT` shipped with
-`jsonl`/`cef`/`leef` formatters in `src/relay_shell/audit.py`.)
+Open:
 
-- **AUD-1 (L2, P2)** — **Closed** as a split disposition (see `BACKLOG.md`).
-  The "in-band audit verify/correlate" lesson, evaluated against ADR 0007 and the
-  audit schema: **shipped** read-only triage filters on `audit_tail`
-  (`tool`/`tier`/`denied`) for the operator-diagnostic case; **declined**
-  in-band chain-verify (stays the CLI `--verify-audit`, ADR 0007 — the audited
-  model must not drive verification of its own trail); correlate-by-input-hash is
-  **N/A** (relay-shell hashes output, not input).
-- **OPS-2 (L4, P3)** — layer KEV/EPSS exploit-prioritization signal on top of
-  the existing `pip-audit` gate (advisory only; `pip-audit` already fails
-  closed). Low value for the small pinned set; revisit if it grows.
-- **PERF-1/2/3 (P3, low)** — deferred from the 2026-07-15 adversarial+perf pass
-  (`BACKLOG.md`), none on a measured hot path: the synchronous audit
-  write+flush on the event loop (offload like the read path only if a slow sink
-  appears); `SshPool._sweep_conns` O(n)-under-lock per connect; and
-  `Session.buffer` `bytearray` front-deletion. The hot-path redaction/classify
-  costs from that pass (RED-6a/P1/POL-2 ReDoS + the unbounded scan) were
-  **fixed** in the pass PR — see
+- **OPS-2 (L4, P3)**: layer KEV/EPSS exploit-prioritization signal on top of the
+  existing `pip-audit` gate (advisory only; `pip-audit` already fails closed). Low
+  value for the small pinned set; revisit if it grows.
+- **PERF-1/2/3 (P3, low)**: deferred from the 2026-07-15 adversarial+perf pass
+  (`BACKLOG.md`), none on a measured hot path: the synchronous audit write+flush on
+  the event loop (offload like the read path only if a slow sink appears);
+  `SshPool._sweep_conns` O(n) under lock per connect; and `Session.buffer`
+  `bytearray` front-deletion. The hot-path redaction/classify costs from that pass
+  (RED-6a/P1/POL-2 ReDoS and the unbounded scan) were fixed in the pass PR; see
   [`audit/2026-07-15-adversarial-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-07-15-adversarial-engagement.md).
+
+Closed:
+
+| ID | What | Record |
+|----|------|--------|
+| B-014 | `RELAY_SHELL_AUDIT_FORMAT` with `jsonl` / `cef` / `leef` formatters (PR #47) | `audit/2026-05-27-engagement.md` |
+| AUD-1 (L2, P2) | Split disposition: **shipped** read-only `audit_tail` filters (`tool`/`tier`/`denied`); **declined** in-band chain verify (stays `--verify-audit`; the audited model must not drive verification of its own trail, ADR 0007); correlate-by-input-hash **N/A** (only output is hashed) | `BACKLOG.md` |
 
 ### 7.4 Docs and contribution
 
-- **DOC-6 (L3, P2)** — **Closed**. `docs/deployment.md` §3a "Host integrity +
-  config-drift monitoring" documents deploy-host file-integrity + config-drift
-  monitoring (etckeeper / AIDE / fail2ban / lynis) as detection compensating for
-  the intentionally-partial systemd confinement (ADR 0002). Lesson from the
-  2026-07-15 Vertex/Axiom comparison; in scope per the CLAUDE.md GitHub checklist
-  ("docs clearly explain secure deployment"). Docs only.
-- **ENV-1 (P3, XS)** — **Closed** (PR #129). Added `RELAY_SHELL_CONFIRM_TIER3` /
-  `RELAY_SHELL_CONFIRM_TTL` to `.env.example` (mirroring `Settings` +
-  `docs/deployment.md` §8a); the 2026-07-15 session was blocked from editing
-  `.env*` paths, so it landed as a follow-up.
+Open: none.
+
+Closed:
+
+| ID | What | Record |
+|----|------|--------|
+| DOC-6 (L3, P2) | `docs/deployment.md` §3a documents host file-integrity and config-drift monitoring (etckeeper / AIDE / fail2ban / lynis) as detection compensating for the intentionally partial systemd confinement (ADR 0002) | `BACKLOG.md` |
+| ENV-1 (P3) | `RELAY_SHELL_CONFIRM_TIER3` / `RELAY_SHELL_CONFIRM_TTL` added to `.env.example` (PR #129) | `BACKLOG.md` |
 
 ### 7.5 Security hardening (incremental, no posture change)
 
-- **B-021 (P3)** — **Closed** by
-  [ADR 0006](adr/0006-seccomp-notify-audit-channel.md) (now Accepted): the
-  opt-in, audit-only seccomp-notify channel shipped in
-  `src/relay_shell/seccomp.py` (`RELAY_SHELL_SECCOMP_NOTIFY`, default off). A
-  per-call BPF USER_NOTIF filter + supervisor appends `syscall_notify` /
-  `syscall_notify_overflow` lines for a spawned child's syscalls, never
-  blocking (always answers CONTINUE). `CAP_SYS_ADMIN`-gated and never latches
-  `no_new_privs`, so set-uid/`sudo` posture is preserved verbatim;
-  Linux/`x86_64`/kernel ≥ 5.5; pure `ctypes`, no new dependency. Follow-ups
-  below (B-024/B-025/B-026).
-- **B-024 (P3)** — **Closed**. `prctl` joined the notified set, gated on the
-  privilege-relevant `option` values (`PRCTL_NOTIFIED_OPTIONS` in
-  `seccomp.py`: `PR_SET_DUMPABLE`, `PR_SET_KEEPCAPS`, `PR_SET_SECCOMP`,
-  `PR_CAPBSET_DROP`, `PR_SET_SECUREBITS`, `PR_SET_NO_NEW_PRIVS`,
-  `PR_CAP_AMBIENT`) via a new `eq-any` BPF predicate on `args[0]`, so
-  high-volume benign options (`PR_SET_NAME`, glibc's `PR_SET_VMA`) never
-  trap. `SECCOMP_FILTER_VERSION` bumped to 2. Paired positive / near-miss
-  tests run portably through a classic-BPF simulator in
-  `tests/test_seccomp.py` (the near-misses include the numerically-adjacent
-  `GET` twins), plus a `seccomp`-marked live test that drives a real child
-  through one notified and one near-miss `prctl`.
-- **B-025 (P3)** `aarch64` support for the seccomp-notify channel. Deferred
-  from B-021 (v1 ships `x86_64`-validated syscall numbers only; other arches
-  no-op). Add the arch's syscall-number + `AUDIT_ARCH` tables and validate the
-  notify round-trip on a live `aarch64` host before `platform_support()`
-  admits it.
-- **B-026 (P3)** — **Closed**. The seccomp-notify channel now covers local
-  PTY sessions: `sessions.LocalPtyTransport.spawn` consults the same
-  per-call monitor the one-shot executor uses, and the transport *adopts*
-  it — the monitor lifetime follows the session (stopped in `aclose()`),
-  the session child and everything it forks carry the filter, and events
-  keep the spawning call's `request_id`. The cap therefore bounds events
-  per session, not per call. The "SSH-local half" deferred from B-021 turned
-  out to be vacuous as implemented: `asyncssh` runs in-process and
-  `sshpool.py` spawns no local child of its own,
-  so there is nothing local to observe on that path; if a local-subprocess
-  proxy path ever lands, the ambient-monitor pattern covers it the same way.
-  Correction (2026-10-14, A14-RS): asyncssh does honour `ProxyCommand` and
-  `Match exec` from the operator's `ssh_config`, which start a local process
-  that this channel does not observe; the caller-supplied host, user and jump
-  values that reach those tokens are now validated (runbook §3.2, `sshpool.py`).
-  Tests: portable adoption/lifetime tests + a `seccomp`-marked end-to-end
-  `shell_spawn` session test in `tests/test_seccomp.py`.
-- **B-023 (P2)** — **Closed** by
-  [ADR 0007](adr/0007-audit-hash-chain.md): an opt-in, additive
-  tamper-evident audit hash chain (`RELAY_SHELL_AUDIT_CHAIN`, default
-  off) — `seq`/`prev`/`chain` per record plus offline verification via
-  `relay-shell --verify-audit`. Closes the in-record integrity gap (G-1)
-  the 2026-06-01 audit pass surfaced: `chattr +a` + off-host shipping do
-  not make a single altered record detectable, the chain does.
-  Default-off keeps the record byte-identical, so no posture change.
-- **SEC-1 (P3)** — **Closed** (PR #89; from the 2026-06-12 audit pass,
-  IDs per `BACKLOG.md`). `ssh_keyscan` target hosts now reach the policy
-  layer: `_policy_text_ssh_keyscan(hosts)` in `server.py` feeds the scan
-  targets to `RELAY_SHELL_POLICY_DENY` (audited `denied=True` on a match,
-  short-circuiting before any subprocess), closing the one gap in the
-  R-002 contract and matching the transfer tools. Accepted tradeoff,
-  documented in the builder docstring: the same text feeds the tier
-  classifier, so a host name embedding a destructive word at a token start
-  over-classifies above Tier 1 (bites only `guarded`;
-  `RELAY_SHELL_POLICY_ALLOW` is the escape hatch). Paired tests in
-  `tests/test_ssh_keyscan_tool.py`.
-- **TOOL-1 + TOOL-3 (P3)** — **Closed** (PRs #89/#90). Secret scanning:
-  `.gitleaks.toml` allowlists exactly the synthetic-fixture paths
-  (`tests/*.py`, `docs/runbook.md`, `audit/*.md`; a canary under `src/`
-  still trips), and `.github/workflows/gitleaks.yml` runs the scan on
-  push to `main`, PRs, and daily — pinned gitleaks installed via the
-  release's own checksums file, `permissions: contents: read`, fails on
-  any finding. This also closes the **P1-2 gitleaks** CI gate deferred in
-  `audit/2026-06-01-engagement.md` §7.2. The required-check decision was
-  made and applied 2026-06-12 (see the F-G2 status note below).
-- **SEC-2 (P3)** — **Closed** (PR #91). The `dependency-review` job
-  dropped its checkout step and `persist-credentials: true` entirely:
-  source-verified at the pinned action SHA that for `pull_request`
-  events it reads base/head SHAs from the event payload and uses the
-  Dependency Graph API only (no git subprocess, no working-tree read
-  without a local `config-file` input). Self-validated on its own PR's
-  check. The job now runs with no token persisted and no repo bytes on
-  disk.
-- Status note: **F-G2** (branch protection on `main`, carried since the
-  2026-05-27 pack) is **fully resolved** as of 2026-06-12. Protection is
-  a repository ruleset (`main-protection`, id 17307996; classic
-  protection is unset), enforcing: pull_request (0 approvals,
-  stale-review dismissal, thread resolution), non_fast_forward, deletion,
-  required_linear_history, **required_signatures** (closing the prior
-  pack's deferred **P2-3**), and **required_status_checks** — exactly
-  `check (py3.12)`, `check (py3.13)`, `check (py3.14)`, and
-  `gitleaks (secret scan)` (the precise check-run names), all bound to
-  GitHub Actions, strict=false. At that date pip-audit / dependency-review /
-  CodeQL were advisory by operator choice (an upstream CVE disclosure must not
-  block unrelated merges). `.github/workflows/ci-gate.yml` has since added a
-  `ci-success` aggregate that waits for them too; whether `ci-success` is itself a
-  required status in the ruleset is repository state not visible in-tree, so verify
-  it with `GET /repos/rmednitzer/relay-shell/rules/branches/main`. Enumerated and applied via the operator's
-  Vertex-held `gh` credential with explicit T3 confirmation; verified
-  effective after the change via
-  `GET /repos/rmednitzer/relay-shell/rules/branches/main`.
-- **2026-06-21 full audit pass** — incremental hardening, no posture change.
-  Full register in [`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md) (2026-06-21 section) and
-  [`audit/2026-06-21-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-21-engagement.md). Closed:
-  SEC-3 (dependency floors) + TOOL-4 (CODEOWNERS → Renovate) in the pass PR;
-  SEC-4 (Anthropic/HuggingFace redaction) in a follow-up; SEC-6 (refresh-token
-  lock), SEC-7 (RFC 8707 `resource` forwarding), CI-1 (`release.yml`
-  `persist-credentials`), CI-2 (`sbom.yml` interpolation + permissions) in the
-  P2/P3 follow-up. **SEC-5** (`/metrics` auth) was accepted as-designed (operator decision
-  2026-06-21: keep the default-`127.0.0.1` + Caddy-firewalled design rather than
-  gating in-app, preserving the standard unauthenticated Prometheus-scrape
-  model). **SEC-8** also closed in a follow-up: `_Store` creates the OAuth state dir
-  `mode=0o700` and fails closed if it remains group/other-accessible (a
-  correctly-`0o700` dir owned by another uid still passes). Remaining 2026-06-21
-  items are info-only (**CI-3** / **DOC-5**) and out-of-scope **B-025**
-  (aarch64); **FMT-2** closed in PR #111 (see §7.2 above); see `BACKLOG.md`.
-- **2026-06-21 adversarial (red-team) pass** — incremental hardening, no
-  posture change. Full register in [`BACKLOG.md`](https://github.com/rmednitzer/relay-shell/blob/main/BACKLOG.md) (2026-06-21
-  adversarial section) and
-  [`audit/2026-06-21-adversarial-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-21-adversarial-engagement.md).
-  The pass actively attacked the trust boundary with PoCs and found a systemic
-  Python `\b` word-boundary bug that independently broke **two** controls.
-  Closed in the engagement PR: **RED-1** (HIGH — compound `*_PASSWORD=` /
-  `*_SECRET=` / `*_TOKEN=` secrets leaked to the audit log because `\b` never
-  fired against a leading `_`; fixed by dropping the `\b`), **AUTH-1** (HIGH —
-  `Bearer refresh:<tok>` authenticated as an access token; `load_access_token`
-  now rejects the `refresh:` prefix), **POL-1** (MED — `>/dev/sda`, the fork
-  bomb, `>/etc/` classified Tier 1 in `guarded`; `TIER2/TIER3` anchor `\b(` →
-  `(?<![\w])(`), **RED-2** (MED — PEM-matcher ReDoS on the synchronous audit
-  path; body length-bounded), and the two doc overclaims **DOC-1**
-  (`SECURITY.md` keyless-chain / off-host caveat) and **DOC-2**
-  (`docs/deployment.md` deny-list defence-in-depth + probe-format footgun).
-  `PATTERNS_VERSION` 5→6. The MEDIUM/LOW deferrals (AUTH-2, SSH-1/2/3,
-  SSRF-1, RED-3/4/5, CFG-1, OBS-1, DEP-1/2, EDGE-1/2) were all closed in follow-up PRs;
-  their resolutions and the BY-DESIGN challenge results are in `BACKLOG.md`. No P0/critical, no
-  remote-unauthenticated RCE, no auth-bypass-without-a-secret.
+Open:
+
+- **B-025 (P3)**: `aarch64` support for the seccomp-notify channel, deferred from
+  B-021 (v1 ships `x86_64`-validated syscall numbers only; other arches no-op). Add
+  the arch's syscall-number and `AUDIT_ARCH` tables and validate the notify round
+  trip on a live `aarch64` host before `platform_support()` admits it.
+
+Closed:
+
+| ID | What | Record |
+|----|------|--------|
+| B-021 (P3) | Opt-in, audit-only seccomp-notify channel (`RELAY_SHELL_SECCOMP_NOTIFY`, default off): never blocks, `CAP_SYS_ADMIN`-gated, never latches `no_new_privs`; Linux `x86_64`, kernel ≥ 5.5 | [ADR 0006](adr/0006-seccomp-notify-audit-channel.md) |
+| B-024 (P3) | `prctl` notified for privilege-relevant options only (`PRCTL_NOTIFIED_OPTIONS`); `SECCOMP_FILTER_VERSION` 2 | ADR 0006 |
+| B-026 (P3) | Local PTY sessions adopt the per-call monitor (lifetime follows the session; the cap bounds events per session). Correction 2026-10-14 (A14-RS): asyncssh honours `ProxyCommand` and `Match exec` from the operator's `ssh_config`, which start a local process this channel does not observe; the caller-supplied host, user and jump values that reach those tokens are validated (§3.2, `sshpool.py`) | ADR 0006; CHANGELOG |
+| B-023 (P2) | Opt-in tamper-evident audit hash chain (`RELAY_SHELL_AUDIT_CHAIN`) with `relay-shell --verify-audit`; closes the in-record integrity gap G-1 | [ADR 0007](adr/0007-audit-hash-chain.md) |
+| SEC-1 (P3) | `ssh_keyscan` targets reach `RELAY_SHELL_POLICY_DENY` (PR #89), closing the one gap in the R-002 policy-text contract. Accepted tradeoff: the same text feeds the classifier, so a host name with a destructive word can over-classify (bites only `guarded`; `RELAY_SHELL_POLICY_ALLOW` is the escape hatch) | `BACKLOG.md` (2026-06-12) |
+| TOOL-1 + TOOL-3 (P3) | gitleaks scan (`.gitleaks.toml` allowlists only synthetic-fixture paths; `.github/workflows/gitleaks.yml` on push, PR and daily), PRs #89/#90; also closes the P1-2 gate from `audit/2026-06-01-engagement.md` §7.2 | `BACKLOG.md` (2026-06-12) |
+| SEC-2 (P3) | `dependency-review` runs with no checkout and no persisted token (PR #91) | `BACKLOG.md` (2026-06-12) |
+| F-G2 | Branch protection on `main` resolved 2026-06-12 via the `main-protection` ruleset, including `required_signatures` (closing P2-3) and the four required checks. Whether the later `ci-success` aggregate is itself required is repository state not visible in-tree: verify with `GET /repos/rmednitzer/relay-shell/rules/branches/main` | `BACKLOG.md` |
+| 2026-06-21 full pass | SEC-3, TOOL-4, SEC-4, SEC-6, SEC-7, SEC-8, CI-1, CI-2 closed. **SEC-5** (`/metrics` auth) accepted as designed by operator decision (default `127.0.0.1` plus the Caddy firewall). Info-only CI-3 / DOC-5 remain | `BACKLOG.md` (2026-06-21); `audit/2026-06-21-engagement.md` |
+| 2026-06-21 adversarial pass | RED-1 and AUTH-1 (HIGH), POL-1 and RED-2 (MED), DOC-1, DOC-2 closed in the engagement PR (`PATTERNS_VERSION` 5 → 6); the MEDIUM/LOW deferrals (AUTH-2, SSH-1/2/3, SSRF-1, RED-3/4/5, CFG-1, OBS-1, DEP-1/2, EDGE-1/2) closed in follow-ups. No P0/critical, no remote unauthenticated RCE, no auth bypass without a secret | `BACKLOG.md` (2026-06-21 adversarial); `audit/2026-06-21-adversarial-engagement.md` |
 
 ---
 

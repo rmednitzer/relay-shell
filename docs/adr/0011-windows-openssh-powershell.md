@@ -11,7 +11,7 @@ login/`DefaultShell`** surfaced where the POSIX assumption is a **safety** gap,
 not just a functional one. A code audit (2026-07-15) produced two findings:
 
 **Execution already works.** `SshPool.run` and `SshPool.open_process` pass the
-raw command string straight to asyncssh's `conn.create_process(command)` — no
+raw command string straight to asyncssh's `conn.create_process(command)`: no
 `/bin/sh -c` wrapping, no POSIX quoting, no `shlex`. asyncssh hands the string
 to whatever the SSH server runs as its command interpreter, so with
 `DefaultShell=pwsh` an `ssh_exec`/`ssh_spawn`/`ssh_fanout` command is
@@ -23,9 +23,9 @@ Windows/pwsh targets are already **functional**.
 tier heuristics in `patterns.py` (`TIER3_PATTERN`, `TIER2_PATTERN`,
 `PRIV_ESC_PATTERN`, consumed by `policy.classify`) are POSIX command-name
 matches: `rm -rf`, `mkfs`, `shutdown`, `systemctl`, `sudo`. A PowerShell 7
-target's destructive operations — `Remove-Item -Recurse -Force`, `Clear-Disk`,
+target's destructive operations (`Remove-Item -Recurse -Force`, `Clear-Disk`,
 `Format-Volume`, `Stop-Computer`, `Remove-Service`, `Remove-LocalUser`,
-`vssadmin delete shadows` — classify as **Tier 1**. Consequences: `guarded`
+`vssadmin delete shadows`) classify as **Tier 1**. Consequences: `guarded`
 mode does not refuse them, `readonly` mode's ceiling does not see them, and the
 opt-in Tier-3 confirmation broker (ADR 0009) never fires. The compensating
 controls that make the unsandboxed posture (ADR 0002) safe to operate are
@@ -42,7 +42,7 @@ documented edge, not a feature to build).
 ## Decision
 
 Adopt **Windows-over-OpenSSH-with-PowerShell-7 as a first-class target class**,
-delivered as compensating-control and documentation work — not a new transport,
+delivered as compensating-control and documentation work, not a new transport,
 not a command/path translation layer. Scope is deliberately bounded to the
 `pwsh` deployment; `cmd.exe` / Windows PowerShell 5.1 are out of scope except
 where a native `.exe` reachable from `pwsh` is already covered.
@@ -57,7 +57,7 @@ changes tracked here for coherence.
 
 Extend `TIER3_PATTERN` / `TIER2_PATTERN` / `PRIV_ESC_PATTERN` with Windows/pwsh
 alternatives, under the **same discipline as the POSIX rules**: `(?<![\w])`
-anchoring, bounded quantifiers (no catastrophic backtracking — the RED-7/POL-2
+anchoring, bounded quantifiers (no catastrophic backtracking; the RED-7/POL-2
 ReDoS ceiling tests apply), paired positive **and** negative (false-positive)
 tests, and a `PATTERNS_VERSION` bump. POSIX matching stays byte-identical
 (pure additions).
@@ -94,7 +94,7 @@ Add `credential` and `asplaintext` to the CLI-flag redaction keyword list so
 `-Credential` and `ConvertTo-SecureString -AsPlainText '…'` do not reach the
 audit log ( `-Password`/`-Token`/`-ApiKey` are already caught by the single-dash
 `--?` rule). Document the residue the audit found (positional secrets like
-`net user <name> <pass>` remain unredactable — a POSIX-shared limitation).
+`net user <name> <pass>` remain unredactable, a POSIX-shared limitation).
 
 ### D / E. Encoding and PTY (documented caveats, not features)
 
@@ -162,7 +162,7 @@ audit log ( `-Password`/`-Token`/`-ApiKey` are already caught by the single-dash
 Increments **A** (classification) and **B** (docs) implemented in the PR that
 moves this ADR to Accepted:
 
-- `patterns.py` — `TIER3_PATTERN` / `TIER2_PATTERN` / `PRIV_ESC_PATTERN` gained
+- `patterns.py`: `TIER3_PATTERN` / `TIER2_PATTERN` / `PRIV_ESC_PATTERN` gained
   the Windows/pwsh alternatives above as pure additions; `PATTERNS_VERSION`
   9 → 10. The bounded-gap rules (`Remove-Item … -Recurse`, `del … /s`,
   `format … <drive>`) use the RED-7 `{0,N}?` ReDoS ceiling.

@@ -51,9 +51,9 @@ uniformly.
   command/content probe (`policy_text`) **and** a canonical serialization of the
   full audited argument set (`audit_args`). `policy_text` fixes *what* runs
   (command + stdin + env + script body, via the `_policy_text_*` builders);
-  `audit_args` fixes the operation's *target* — the `host` (SSH tools), `hosts`
+  `audit_args` fixes the operation's *target*: the `host` (SSH tools), `hosts`
   (`ssh_fanout`), `cwd` (shell tools), `session_id` (`session_send`),
-  `local`/`remote` (transfer tools) — which `policy_text` deliberately omits.
+  `local`/`remote` (transfer tools), which `policy_text` deliberately omits.
   Binding to both means a token armed for one target cannot be consumed against
   another (no confused-deputy replay), and the gate covers every current *and
   future* Tier-3-capable tool with **no per-wrapper token threading** and no
@@ -61,15 +61,15 @@ uniformly.
   list and classifier already gate centrally.
 
 - **The flow (three audited steps on the normal stream).**
-  1. **plan** — a Tier-3 call with no armed confirmation returns
+  1. **plan**: a Tier-3 call with no armed confirmation returns
      `[CONFIRM REQUIRED tier 3 …: call operation_confirm(token="…") then
      re-issue this exact call within Ns.]` and is audited with
-     `action=confirm_plan`. `work()` does **not** run — no side effect.
-  2. **arm** — a new `operation_confirm(token)` MCP tool marks that token
+     `action=confirm_plan`. `work()` does **not** run, so there is no side effect.
+  2. **arm**: a new `operation_confirm(token)` MCP tool marks that token
      armed. It is Tier 0 (it mutates only ephemeral broker state and authorizes
      nothing on its own); its audit record carries only a non-replayable token
      *fingerprint*, never the raw token.
-  3. **execute** — re-issuing the *exact* same call finds the armed token,
+  3. **execute**: re-issuing the *exact* same call finds the armed token,
      burns it (single-use), and proceeds to `work()`; the executed record is
      tagged `action=confirm_execute`.
 
@@ -122,7 +122,7 @@ layered on the deny list, never a replacement for it.
 - One new tool (`operation_confirm`) and one new module (`broker.py`, paired
   with `tests/test_broker.py`). `server_info` reports the live `confirm` block.
 - The `inc_tool_call` metric gains a bounded `confirm_required` outcome value
-  (a fixed constant, never user-controlled — the label-cardinality invariant
+  (a fixed constant, never user-controlled; the label-cardinality invariant
   holds).
 
 ## Rejected alternatives
@@ -154,15 +154,15 @@ layered on the deny list, never a replacement for it.
 Implemented and validated in the same PR (evidence in
 `audit/2026-07-15-engagement.md`):
 
-- `ruff check`, `ruff format --check`, `mypy --strict` clean. `pytest -q` —
+- `ruff check`, `ruff format --check`, `mypy --strict` clean. `pytest -q`:
   **391 passed / 13 deselected** (up from 374; +17 broker/wiring tests).
-  `pytest -m fuzz` — 13 invariants pass. `coverage` — **94%** with subprocess
+  `pytest -m fuzz`: 13 invariants pass. `coverage`: **94%** with subprocess
   collection (floor 90%); `broker.py` **100%**, `server.py` 96%.
 - **22** MCP tools (was 21): `operation_confirm` added; `_EXPECTED`, the stdio
   e2e count, `docs/tools.md`, README, and `_INSTRUCTIONS` updated in lockstep.
 - Behavior validation: default-off Tier-3 runs unchanged and the record carries
   **no** `action` field (byte-identical); enabled, a Tier-3 call is challenged
-  (`confirm_plan`, no side effect — a target file survives the plan step),
+  (`confirm_plan`, no side effect; a target file survives the plan step),
   arming then re-issuing the exact call executes it (`confirm_execute`, the
   target is removed), a mismatched/expired/bad token re-challenges, a non-Tier-3
   call is unaffected, and the raw token never appears in the audit log.
@@ -173,7 +173,7 @@ A security review of the diff (bundled `/security-review`) caught one HIGH:
 the initial draft bound the token to `sha256(tool \0 policy_text)` only. Because
 `policy_text` is the *command-content* probe and deliberately omits the target
 (`host`, `cwd`, `session_id`, `hosts`), a token armed for one target could be
-consumed against another — confirm `cwd=/tmp` then execute `cwd=/`, or confirm
+consumed against another: confirm `cwd=/tmp` then execute `cwd=/`, or confirm
 one host then fan `ssh_fanout` out to the whole inventory, defeating the gate's
 own "bound to the exact operation" promise. The fix widened the binding to
 `op_key = policy_text \0 canonical(audit_args)` (`_confirm_op_key` in
@@ -191,11 +191,11 @@ tools) are not part of the binding: they change *how* the relay connects, not
 The adversarial pass (`audit/2026-07-15-adversarial-engagement.md`) reversed the
 "out of scope" call above. A concrete escalation makes it matter: confirm
 `ssh_exec(host, "DROP DATABASE prod", user=readonly)`, arm, then re-issue with
-`user=root` — same host+command, so the op-key matched and the token was
+`user=root`; same host+command, so the op-key matched and the token was
 consumed against the escalated credential, invisible in the `confirm_plan`
 record. The fix adds `user`/`port`/`key_path` to the `ssh_exec`/`ssh_spawn`
 audit_args, which (since the op-key hashes `audit_args`) folds them into the
-binding **and** surfaces the credential in the audit trail — a strictly better
+binding **and** surfaces the credential in the audit trail, a strictly better
 outcome than the original scoping. Pinned by
 `test_confirm_op_key_binds_ssh_identity`.
 

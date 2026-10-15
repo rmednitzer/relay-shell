@@ -17,7 +17,7 @@ SCRIPT = Path(__file__).parents[1] / "scripts" / "healthcheck.sh"
         ("401", 0, True),
         ("403", 0, True),
         ("404", 0, True),
-        ("503", 0, True),  # This is liveness, not application readiness.
+        ("503", 0, True),  # liveness, not application readiness
         ("000", 7, False),  # Connection refused: curl itself emits 000.
         ("000", 28, False),  # Timeout.
         ("200", 28, False),  # Headers arrived, but the request failed later.

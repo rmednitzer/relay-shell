@@ -48,8 +48,8 @@ async def _add(reg: SessionRegistry, tr: _Gated) -> str:
 
 
 async def test_cancelled_sweep_still_tears_down_every_doomed_session() -> None:
-    """Pre-fix: ``_sweep`` popped all doomed sessions, then a cancel during the first
-    teardown left the rest unregistered and never closed (orphaned children and fds)."""
+    """``_sweep`` pops all doomed sessions up front; a cancel during the first teardown
+    must not leave the rest unregistered and never closed (orphaned children and fds)."""
     reg = SessionRegistry(max_sessions=8, idle_timeout=0.05, buffer_cap=65536)
     gate = asyncio.Event()
     first, second = _Gated(gate), _Gated(gate)
@@ -116,8 +116,8 @@ async def test_cancelled_shutdown_still_tears_down_every_session() -> None:
 
 
 async def test_cancelled_aclose_kills_a_term_ignoring_child() -> None:
-    """Pre-fix: a cancel during the SIGTERM grace wait skipped SIGKILL, so a child that
-    ignores SIGTERM kept running after its session was gone."""
+    """A cancel during the SIGTERM grace wait must still SIGKILL, or a child that
+    ignores SIGTERM keeps running after its session is gone."""
     tr = await LocalPtyTransport.spawn(
         ["/bin/sh", "-c", 'trap "" TERM; echo up; while :; do sleep 0.1; done'],
         cwd=None,

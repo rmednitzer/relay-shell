@@ -1,6 +1,6 @@
-"""OAuth provider tests - file store, token lifecycle, single-client lockdown.
+"""OAuth provider tests: file store, token lifecycle, single-client lockdown.
 
-These run fully offline against the installed mcp SDK models.
+Fully offline, against the installed mcp SDK models.
 """
 
 from __future__ import annotations
@@ -41,15 +41,14 @@ def test_make_provider_from_settings(tmp_path: Path) -> None:
 def test_state_dir_permission_enforcement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # SEC-8: refuse a group/other-accessible token-store dir we cannot tighten,
     # but accept a correctly-0o700 dir even when we cannot chmod it (e.g. one
-    # provisioned by the operator and owned by another uid) — so the check
-    # hardens real exposure without breaking a legitimate locked-down setup.
+    # provisioned by the operator and owned by another uid).
     def make(mode: int) -> Path:
         d = tmp_path / f"oauth{mode:o}"
         d.mkdir()
         os.chmod(d, mode)
         return d
 
-    # Simulate "cannot tighten" (chmod is a no-op, as for a dir we don't own).
+    # Simulate "cannot tighten": chmod is a no-op, as for a dir we don't own.
     monkeypatch.setattr(Path, "chmod", lambda self, mode: None)
 
     loose = make(0o755)
@@ -108,7 +107,7 @@ async def test_single_client_lockdown(tmp_path: Path, single: bool) -> None:
 async def test_single_client_lockdown_refuses_redirect_uri_overwrite(tmp_path: Path) -> None:
     # AUTH-2: under lockdown, re-registering the *existing* client_id with a
     # different redirect_uri must be refused (it would steer the next auth code
-    # to an attacker URL) — and the stored redirect_uri must be unchanged.
+    # to an attacker URL), and the stored redirect_uri must be unchanged.
     from mcp.shared.auth import OAuthClientInformationFull
 
     p = _provider(tmp_path, single_client=True)
@@ -124,15 +123,14 @@ async def test_single_client_lockdown_refuses_redirect_uri_overwrite(tmp_path: P
 
 
 async def test_single_client_lockdown_allows_identical_reregistration(tmp_path: Path) -> None:
-    # AUTH-2: a byte-identical re-registration of the existing client is a
-    # harmless no-op and stays allowed, so a client that re-runs DCR with the
-    # same metadata is not broken by the lockdown tightening.
+    # AUTH-2: a byte-identical re-registration is a harmless no-op and stays
+    # allowed, so a client that re-runs DCR with the same metadata keeps working.
     from mcp.shared.auth import OAuthClientInformationFull
 
     p = _provider(tmp_path, single_client=True)
     c1 = OAuthClientInformationFull(client_id="c1", redirect_uris=["https://good/cb"])
     await p.register_client(c1)
-    # Same fields again — must not raise.
+    # Same fields again: must not raise.
     await p.register_client(
         OAuthClientInformationFull(client_id="c1", redirect_uris=["https://good/cb"])
     )
@@ -141,8 +139,7 @@ async def test_single_client_lockdown_allows_identical_reregistration(tmp_path: 
 
 
 async def test_non_lockdown_still_allows_client_update(tmp_path: Path) -> None:
-    # Guard against over-tightening: with lockdown OFF, updating a client's
-    # metadata still works (the freeze only applies under single-client mode).
+    # Guard against over-tightening: the freeze applies only under single-client mode.
     from mcp.shared.auth import OAuthClientInformationFull
 
     p = _provider(tmp_path, single_client=False)
@@ -160,9 +157,9 @@ async def test_non_lockdown_still_allows_client_update(tmp_path: Path) -> None:
 async def test_revoke_access_token_removes_only_access(tmp_path: Path) -> None:
     """Revoking an access token must not cascade to its paired refresh token.
 
-    RFC 7009 leaves that direction unspecified and the provider opts out;
-    the symmetric no-cascade in the other direction (refresh -> access) is
-    asserted in ``test_revoke_refresh_token_removes_refresh`` below.
+    RFC 7009 leaves that direction unspecified and the provider opts out; the
+    refresh -> access direction is asserted in
+    ``test_revoke_refresh_token_removes_refresh``.
     """
     from mcp.server.auth.provider import AccessToken
     from mcp.shared.auth import OAuthClientInformationFull
@@ -179,7 +176,6 @@ async def test_revoke_access_token_removes_only_access(tmp_path: Path) -> None:
         )
     )
     assert await p.load_access_token(issued.access_token) is None
-    # The paired refresh token survives a plain access-token revocation.
     client = OAuthClientInformationFull(client_id="client-a", redirect_uris=["https://x/cb"])
     assert issued.refresh_token is not None
     assert await p.load_refresh_token(client, issued.refresh_token) is not None
@@ -203,9 +199,7 @@ async def test_revoke_refresh_token_removes_refresh(tmp_path: Path) -> None:
         )
     )
     assert await p.load_refresh_token(client, issued.refresh_token) is None
-    # Symmetric to the access-token case: revoking a refresh token must not
-    # invalidate the paired access token. The provider opts out of cascading
-    # revocation in either direction.
+    # No cascade: the paired access token stays valid.
     assert await p.load_access_token(issued.access_token) is not None
 
 
@@ -222,7 +216,7 @@ async def test_refresh_exchange_rotates_tokens(tmp_path: Path) -> None:
     rotated = await p.exchange_refresh_token(client, refresh, ["mcp:tools"])
     assert rotated.access_token != issued.access_token
     assert rotated.refresh_token != issued.refresh_token
-    # Old refresh must no longer load.
+    # The old refresh token is single-use.
     assert await p.load_refresh_token(client, issued.refresh_token) is None
 
 
@@ -239,9 +233,8 @@ async def test_load_refresh_token_mismatched_client_returns_none(tmp_path: Path)
 def test_state_dir_and_files_are_private(tmp_path: Path) -> None:
     """Permissions on the state dir and JSON files must not depend on umask.
 
-    Run with a deliberately wide umask to prove the explicit chmod / open
-    mode are in effect: the directory must be 0o700 and saved files 0o600
-    regardless of how the surrounding process was launched.
+    A deliberately wide umask proves the explicit chmod / open mode are in
+    effect: directory 0o700, saved files 0o600.
     """
     old = os.umask(0o000)
     try:
@@ -289,14 +282,13 @@ async def test_exchange_authorization_code_consumes_code(tmp_path: Path) -> None
     )
     token = await p.exchange_authorization_code(client, code)
     assert token.access_token
-    # Code must be one-shot.
+    # One-shot.
     assert await p.load_authorization_code(client, code.code) is None
 
 
 async def test_authorization_code_forwards_resource(tmp_path: Path) -> None:
     # SEC-7: the RFC 8707 `resource` indicator stored at authorize() time must
-    # be threaded back through load_authorization_code so the SDK can bind the
-    # token to the resource (it was stored but dropped before).
+    # be returned by load_authorization_code so the SDK can bind the token to it.
     from mcp.shared.auth import OAuthClientInformationFull
 
     p = _provider(tmp_path)
@@ -339,14 +331,11 @@ async def test_authorization_code_forwards_resource(tmp_path: Path) -> None:
 async def test_register_client_concurrent_no_lost_update(tmp_path: Path) -> None:
     """F-4 regression: concurrent register_client calls don't lose updates.
 
-    Pre-fix the ``_Store.save`` was atomic for disk consistency but the
-    load -> modify -> save sequence in ``register_client`` (and the other
-    read-modify-write paths) had no cross-coroutine serialization. Two
-    concurrent calls could both load() the same state, modify their own
-    copy, and the second save() would lose the first's write.
-
-    Under the buggy interleaving 20 concurrent registrations would
-    typically persist a handful of clients; the lock guarantees all 20.
+    ``_Store.save`` is atomic on disk, but the load -> modify -> save sequence in
+    ``register_client`` (and the other read-modify-write paths) needs
+    cross-coroutine serialization. Without it, two concurrent calls load() the
+    same state and the second save() drops the first's write; 20 concurrent
+    registrations would persist only a handful. The lock must keep all 20.
     """
     from mcp.shared.auth import OAuthClientInformationFull
 
@@ -371,13 +360,11 @@ async def test_register_client_concurrent_no_lost_update(tmp_path: Path) -> None
 async def test_exchange_authorization_code_is_single_use_under_race(tmp_path: Path) -> None:
     """Two concurrent exchanges of the same code: exactly one succeeds.
 
-    Pre-fix ``exchange_authorization_code`` did ``codes.pop(..., None)``
-    without checking the return value, so a second concurrent caller
-    would silently mint a token from a code the first call had already
-    consumed. The in-lock revalidation now refuses the second exchange.
-    The losing caller receives ``TokenError(error="invalid_grant")``
-    (renders as OAuth invalid_grant by the MCP token handler), not a
-    bare ``ValueError`` that would surface as HTTP 500.
+    A ``codes.pop(..., None)`` whose result is unchecked would let a second
+    concurrent caller mint a token from an already-consumed code; the in-lock
+    revalidation must refuse it. The loser receives
+    ``TokenError(error="invalid_grant")`` (rendered as OAuth invalid_grant by the
+    MCP token handler), not a bare ``ValueError`` that would surface as HTTP 500.
     """
     import time as _time
 
@@ -429,10 +416,10 @@ async def test_exchange_authorization_code_is_single_use_under_race(tmp_path: Pa
 async def test_exchange_refresh_token_is_single_use_under_race(tmp_path: Path) -> None:
     """Two concurrent exchanges of the same refresh token: exactly one succeeds.
 
-    Same shape as the authorization-code race fix: ``exchange_refresh_token``
-    used to ``pop(..., None)`` without checking, letting a second caller
-    mint a token from an already-rotated refresh. The losing caller now
-    receives ``TokenError(error="invalid_grant")``.
+    Same shape as the authorization-code race: an unchecked ``pop(..., None)`` in
+    ``exchange_refresh_token`` would let a second caller mint from an
+    already-rotated refresh token. The loser receives
+    ``TokenError(error="invalid_grant")``.
     """
     from mcp.server.auth.provider import TokenError
     from mcp.shared.auth import OAuthClientInformationFull
@@ -462,9 +449,8 @@ async def test_exchange_refresh_token_is_single_use_under_race(tmp_path: Path) -
 
 async def test_load_access_token_rejects_refresh_prefixed_bearer(tmp_path: Path) -> None:
     # AUTH-1 (adversarial audit): a refresh token presented as a bearer access
-    # token (`Authorization: Bearer refresh:<tok>`) must not authenticate.
-    # load_access_token rejects the `refresh:` key prefix so a refresh token
-    # cannot be used as an access token (token-type confusion).
+    # token (`Authorization: Bearer refresh:<tok>`) must not authenticate
+    # (token-type confusion); load_access_token rejects the `refresh:` key prefix.
     from relay_shell.auth.oauth import _REFRESH_PREFIX
 
     p = _provider(tmp_path)
@@ -475,11 +461,10 @@ async def test_load_access_token_rejects_refresh_prefixed_bearer(tmp_path: Path)
 
 
 async def test_exchange_authorization_code_refuses_expired_code(tmp_path: Path) -> None:
-    # AUTH-3: the exchange path must enforce expiry atomically, not lean on
-    # load_authorization_code having run first. A code valid when loaded can
-    # lapse in the load->exchange window (or a caller could reach exchange
-    # without load); an expired code must never mint a token. Mirrors the
-    # existing client-ownership re-check in exchange_authorization_code.
+    # AUTH-3: the exchange path must enforce expiry itself, not rely on
+    # load_authorization_code having run first: a code can lapse in the
+    # load->exchange window, or exchange can be reached without load. Mirrors the
+    # client-ownership re-check in exchange_authorization_code.
     import time
 
     from mcp.server.auth.provider import AuthorizationCode, TokenError
@@ -513,15 +498,14 @@ async def test_exchange_authorization_code_refuses_expired_code(tmp_path: Path) 
     )
     with pytest.raises(TokenError):
         await p.exchange_authorization_code(client, code)
-    # The stale record is also cleaned out of the store.
+    # The stale record is also removed from the store.
     assert "expired-code" not in p._codes.load()
 
 
 async def test_exchange_refresh_token_refuses_expired_token(tmp_path: Path) -> None:
-    # AUTH-3: symmetric to the auth-code case — an expired refresh token must
-    # not mint a fresh access/refresh pair at exchange, even if exchange is
-    # reached without load_refresh_token or the token lapsed in the
-    # load->exchange window.
+    # AUTH-3: symmetric to the auth-code case. An expired refresh token must not
+    # mint a new access/refresh pair, even if exchange is reached without
+    # load_refresh_token or the token lapsed in the load->exchange window.
     import time
 
     from mcp.server.auth.provider import RefreshToken, TokenError

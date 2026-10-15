@@ -31,14 +31,14 @@ def test_audit_writes_jsonl_with_hash_not_body(tmp_path: Path) -> None:
     assert rec["tier"] == 1
     assert rec["request_id"] == "r1"
     assert rec["output_sha256"] == sha256_hex(secret_output)
-    assert "SECRET-BODY" not in lines[0]  # body never written
+    assert "SECRET-BODY" not in lines[0]
     assert rec["output_len"] == len(secret_output.encode())
 
 
 def test_audit_degrades_on_unwritable_path() -> None:
     log = AuditLogger("/proc/cannot/write/here/audit.jsonl")
     assert log.degraded is True
-    # Must not raise even when degraded.
+    # Must not raise when degraded.
     log.record(tool="t", args={}, output="x", exit_code=None, tier=0)
 
 
@@ -77,7 +77,6 @@ def test_tail_returns_last_n_records(tmp_path: Path) -> None:
     out = log.tail(3)
     lines = out.splitlines()
     assert len(lines) == 3
-    # Oldest first; last record has i=9.
     recs = [json.loads(ln) for ln in lines]
     assert [r["args"]["i"] for r in recs] == [7, 8, 9]
 
@@ -91,19 +90,15 @@ def test_tail_returns_all_when_lines_exceeds_record_count(tmp_path: Path) -> Non
 
 
 def test_tail_returns_empty_when_file_missing(tmp_path: Path) -> None:
-    # AuditLogger.__init__ pre-creates its audit file via os.open(...,
-    # O_APPEND | O_CREAT, ...), so we cannot reach the missing-file path
-    # by simply constructing one. Build a hollow instance whose `path`
-    # points at a file that was never created, exercise tail() against
-    # that path, and confirm it returns "" without raising.
+    # __init__ pre-creates the audit file (O_APPEND | O_CREAT), so a normal
+    # instance never reaches the missing-file path. Use a hollow instance
+    # whose `path` was never created.
     log = AuditLogger(str(tmp_path / "a.jsonl"))
     other = AuditLogger.__new__(AuditLogger)
     other.path = str(tmp_path / "never-created.jsonl")
     other.degraded = False
     other.degraded_reason = ""
-    # tail() on the path that does not exist must return "" without raising.
     assert other.tail(10) == ""
-    # And the real instance with zero records must also return "".
     assert log.tail(10) == ""
 
 
@@ -116,10 +111,9 @@ def test_tail_rejects_non_positive_lines(tmp_path: Path) -> None:
 
 
 def test_tail_does_not_leak_output_body(tmp_path: Path) -> None:
-    # Output bodies are never written to the audit log, so they cannot
-    # show up here. Belt-and-braces regression: confirm at the tail()
-    # layer (not just record()) since this tool exposes the log to a
-    # caller that may itself be untrusted.
+    # Bodies are never written, so they cannot appear here. Asserted at the
+    # tail() layer as well as record() because audit_tail exposes the log to
+    # a caller that may be untrusted.
     path = tmp_path / "audit.jsonl"
     log = AuditLogger(str(path))
     log.record(
@@ -133,15 +127,12 @@ def test_tail_does_not_leak_output_body(tmp_path: Path) -> None:
 
 
 def test_tail_bounded_by_requested_lines_not_file_size(tmp_path: Path) -> None:
-    # Codex review on #29: tail() must read at most O(lines * record_size)
-    # from disk, NOT the whole file. Verify by writing many records and
-    # asking for a small tail. Even if the read-backwards implementation
-    # subtly over-reads, this test pins that we never load anything close
-    # to the full file into Python-level memory.
+    # Codex review on #29: tail() must read O(lines * record_size) from disk,
+    # not the whole file.
     path = tmp_path / "audit.jsonl"
     log = AuditLogger(str(path))
-    # ~10 000 records; each line is ~250 bytes after JSON serialization,
-    # so the file is roughly 2.5 MiB. The tail of 5 is well under 2 KiB.
+    # ~10 000 records of ~250 bytes each: a file of roughly 2.5 MiB, against
+    # a 5-line tail of well under 2 KiB.
     for i in range(10_000):
         log.record(
             tool="shell_exec",
@@ -154,37 +145,30 @@ def test_tail_bounded_by_requested_lines_not_file_size(tmp_path: Path) -> None:
     lines = out.splitlines()
     assert len(lines) == 5
     recs = [json.loads(ln) for ln in lines]
-    # Oldest of the returned five should be record 9995; newest 9999.
     assert recs[0]["args"]["command"] == "echo seq-9995"
     assert recs[-1]["args"]["command"] == "echo seq-9999"
-    # The tail output size is comfortably under the file size: the
-    # implementation read backwards, not forwards.
     file_size = path.stat().st_size
-    assert file_size > 1_000_000  # sanity: file really is big
-    assert len(out.encode()) < 4_000  # tail is small regardless
+    assert file_size > 1_000_000  # sanity: the file really is big
+    assert len(out.encode()) < 4_000
 
 
 def test_audit_logger_closes_prior_handler_on_reinit(tmp_path: Path) -> None:
-    """F-7 regression: re-init releases the prior WatchedFileHandler's fd.
+    """F-7 regression: re-init closes, not just removes, the prior handler.
 
     The audit logger is process-global (``logging.getLogger("relay_shell.audit")``);
-    re-initializing previously called ``removeHandler`` without ``close()``,
-    leaking one open fd per construction (visible from
-    ``--check-config`` and any test that builds multiple AuditLoggers).
+    ``removeHandler`` without ``close()`` leaked one fd per construction
+    (``--check-config``, tests that build several AuditLoggers).
     """
     path = tmp_path / "a.jsonl"
     log1 = AuditLogger(str(path))
     handler1 = log1._log.handlers[0]
-    # Force at least one write so the WatchedFileHandler opens its stream
-    # (some Python versions open lazily on first emit).
+    # Force a write: some Python versions open the stream lazily on first emit.
     log1.record(tool="t", args={}, output="x", exit_code=0, tier=0)
     assert handler1.stream is not None
 
-    # Re-init the same process-global logger.
-    AuditLogger(str(path))
+    AuditLogger(str(path))  # re-init the same process-global logger
 
-    # FileHandler.close() sets self.stream = None; the assertion pins the
-    # contract that the prior handler is closed, not just removed.
+    # FileHandler.close() sets self.stream = None.
     assert handler1.stream is None
 
 
@@ -261,7 +245,7 @@ def test_record_syscall_event_shape(tmp_path: Path) -> None:
         "0x0000000000000006",
     ]
     assert rec["request_id"] == "r9"
-    # A distinct shape from a tool-call record: no output hash, no args dict.
+    # Distinct from a tool-call record: no output hash, no args dict.
     assert "output_sha256" not in rec
     assert "args" not in rec
 
@@ -331,7 +315,7 @@ def _rewrite(path: Path, recs: list[dict]) -> None:
 
 
 def test_chain_off_by_default_has_no_extra_fields(tmp_path: Path) -> None:
-    # Default (chain off) must stay byte-identical to v0.1: no seq/prev/chain.
+    # Chain off stays byte-identical to v0.1: no seq/prev/chain.
     path = tmp_path / "audit.jsonl"
     log = AuditLogger(str(path))
     assert log.chain is False
@@ -347,7 +331,6 @@ def test_chain_emits_seq_prev_chain_with_genesis_anchor(tmp_path: Path) -> None:
     recs = _write_chained(path, 3)
     assert [r["seq"] for r in recs] == [0, 1, 2]
     assert recs[0]["prev"] == _GENESIS
-    # Each record links to the previous record's chain hash.
     assert all(recs[i]["prev"] == recs[i - 1]["chain"] for i in range(1, 3))
 
 
@@ -362,7 +345,7 @@ def test_chain_record_still_hashes_output_not_body(tmp_path: Path) -> None:
 
 
 def test_chain_resumes_across_reinit(tmp_path: Path) -> None:
-    # A restart continues the chain from the last on-disk record, not genesis.
+    # A restart continues from the last on-disk record, not genesis.
     path = tmp_path / "audit.jsonl"
     log = AuditLogger(str(path), chain=True)
     for i in range(2):
@@ -372,7 +355,7 @@ def test_chain_resumes_across_reinit(tmp_path: Path) -> None:
     )
     recs = [json.loads(ln) for ln in path.read_text().strip().splitlines()]
     assert [r["seq"] for r in recs] == [0, 1, 2]
-    assert recs[2]["prev"] == recs[1]["chain"]  # continued, not reset
+    assert recs[2]["prev"] == recs[1]["chain"]
     assert verify_chain(str(path)).ok
 
 
@@ -565,24 +548,24 @@ def test_verify_chain_genesis_log_is_anchored(tmp_path: Path) -> None:
 
 
 def test_verify_chain_head_truncation_is_valid_but_not_anchored(tmp_path: Path) -> None:
-    # Excising leading records (incl. seq 0) leaves a valid sub-chain that the
-    # recompute/linkage checks accept — but it is no longer genesis-anchored,
-    # which is the head-truncation signal (ADR 0007). The fail-closed CLI
-    # rejects this by default (`--segment` opts out for a rotation segment).
+    # Excising leading records (incl. seq 0) leaves a sub-chain that the
+    # recompute/linkage checks accept but that is no longer genesis-anchored:
+    # the head-truncation signal (ADR 0007). The fail-closed CLI rejects it by
+    # default (`--segment` opts out for a rotation segment).
     path = tmp_path / "audit.jsonl"
     recs = _write_chained(path, 5)
     _rewrite(path, recs[2:])  # drop seq 0 and 1
     r = verify_chain(str(path))
-    assert r.ok  # internally consistent
-    assert r.anchored is False  # head-truncation signal
+    assert r.ok
+    assert r.anchored is False
     assert r.start_seq == 2
 
 
 def test_verify_chain_tail_truncation_is_a_valid_prefix(tmp_path: Path) -> None:
     # Dropping the newest records leaves a valid genesis-anchored prefix. A
-    # single file CANNOT detect this (documented limitation in ADR 0007); the
-    # off-host copy is the defense. This test pins the limitation honestly so a
-    # future change that claims otherwise has to update it deliberately.
+    # single file cannot detect this (limitation documented in ADR 0007); the
+    # off-host copy is the defence. Pinned so a change that claims otherwise
+    # must update this test deliberately.
     path = tmp_path / "audit.jsonl"
     recs = _write_chained(path, 5)
     _rewrite(path, recs[:3])  # drop the last two
@@ -593,9 +576,9 @@ def test_verify_chain_tail_truncation_is_a_valid_prefix(tmp_path: Path) -> None:
 
 
 def test_audit_degrades_on_non_regular_sink() -> None:
-    # OBS-1: /dev/null opens and accepts writes but stores nothing durable, so
-    # the logger must flag `degraded` (surfaced on /metrics + server_info)
-    # rather than report a healthy audit trail. Must not raise.
+    # OBS-1: /dev/null accepts writes but stores nothing, so the logger must
+    # flag `degraded` (surfaced on /metrics and server_info) rather than
+    # report a healthy trail. Must not raise.
     log = AuditLogger("/dev/null")
     assert log.degraded is True
     assert "regular file" in log.degraded_reason
@@ -603,10 +586,10 @@ def test_audit_degrades_on_non_regular_sink() -> None:
 
 
 def test_cef_header_escape_neutralizes_pipe_and_backslash() -> None:
-    # FMT-2: the header fields are constants today (byte-identical output is
-    # pinned by test_audit_cef_format), but the header escaper must neutralize
-    # the `|` separator and backslash so a future dynamic header field cannot
-    # split a record. `=` is an extension-only escape, untouched in the header.
+    # FMT-2: header fields are constants today (output pinned by
+    # test_audit_cef_format), but the escaper must neutralize the `|` separator
+    # and backslash so a future dynamic header field cannot split a record.
+    # `=` is an extension-only escape, untouched in the header.
     from relay_shell.audit import _cef_header_escape
 
     assert _cef_header_escape("a|b") == "a\\|b"
@@ -617,9 +600,9 @@ def test_cef_header_escape_neutralizes_pipe_and_backslash() -> None:
 def test_unicode_line_separators_do_not_fragment_a_record_or_reset_the_chain(
     tmp_path: Path,
 ) -> None:
-    # json.dumps(ensure_ascii=False) writes U+2028/U+2029/U+0085 raw; str.splitlines()
-    # splits on them, which made tail() return a fragment and reset the chain's
-    # seq to 0 on the next start (indistinguishable from tampering).
+    # json.dumps(ensure_ascii=False) writes U+2028/U+2029/U+0085 raw and
+    # str.splitlines() splits on them. That made tail() return a fragment and
+    # reset the chain's seq to 0 on the next start (looks like tampering).
     path = tmp_path / "audit.jsonl"
     cmd_with_separators = "echo a" + chr(0x2028) + "b" + chr(0x2029) + "c" + chr(0x85) + "d"
     log = AuditLogger(str(path), chain=True)

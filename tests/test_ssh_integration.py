@@ -399,8 +399,8 @@ async def test_ssh_connect_options_keepalive_and_ssh_config(ssh_port: int, tmp_p
         audit_path=str(tmp_path / "a.jsonl"),
         ssh_known_hosts="ignore",
         ssh_connect_timeout=5,
-        ssh_keepalive=15,  # exercise line 158
-        ssh_config=str(cfg),  # exercise line 169
+        ssh_keepalive=15,  # sets keepalive_interval
+        ssh_config=str(cfg),  # passes the config file to asyncssh
     )
     inv = Inventory(settings.ssh_config, "").load()
     pool = SshPool(settings=settings, inventory=inv)
@@ -428,7 +428,7 @@ async def test_ssh_connect_options_key_path(ssh_port: int, tmp_path: Path) -> No
             connect_kwargs={
                 "user": "tester",
                 "port": ssh_port,
-                "key_path": str(key_path),  # exercise line 164
+                "key_path": str(key_path),
                 "known_hosts": "ignore",
                 "jump": "",
             },
@@ -457,11 +457,10 @@ async def test_close_forward_swallows_listener_close_exception(
 ) -> None:
     """If the listener's close() itself raises, close_forward() degrades gracefully.
 
-    Direct unit-level fault injection: swap the listener for an object
-    whose .close() always raises and .wait_closed() always raises.
-    close_forward() must still return the "closed forward" message and
-    pop the handle from the registry (best-effort teardown is the
-    contract, recorded in sshpool.py around the suppress block).
+    Fault injection: the listener is swapped for an object whose .close()
+    and .wait_closed() always raise. close_forward() must still return the
+    "closed forward" message and pop the handle from the registry
+    (best-effort teardown, per the suppress block in sshpool.py).
     """
     pool = _pool(tmp_path)
     handle = await pool.add_forward(
@@ -475,8 +474,7 @@ async def test_close_forward_swallows_listener_close_exception(
         async def wait_closed(self) -> None:
             raise RuntimeError("wait_closed failed")
 
-    # Replace the underlying listener with one that fails on teardown.
-    # The handle is a dataclass with a `listener` field — swap it.
+    # The handle is a dataclass with a `listener` field; swap it.
     handle.listener = _BrokenListener()  # type: ignore[assignment]
     try:
         msg = await pool.close_forward(handle.id)
@@ -505,7 +503,7 @@ async def test_connection_cache_evicts_idle_entries(ssh_port: int, tmp_path: Pat
         ssh_known_hosts="ignore",
         ssh_connect_timeout=5,
         ssh_keepalive=0,
-        ssh_idle_timeout=1,  # one-second idle window so the test runs fast
+        ssh_idle_timeout=1,  # short window keeps the test fast
         ssh_config=str(tmp_path / "none"),
     )
     inv = Inventory(settings.ssh_config, "").load()
@@ -574,20 +572,19 @@ async def test_live_pty_session_connection_survives_idle_sweep(
 ) -> None:
     """A live ``ssh_spawn`` session pins its connection against the idle reaper.
 
-    End-to-end regression through the real asyncssh stack for the
-    idle-reaper-vs-in-use bug: a spawned session drives its channel directly
-    and never re-``connect()``s, so its cache entry ages past the idle window
-    while the session is very much alive. Before the pin-count fix the next
-    sweep evicted and closed the connection out from under the running
-    session. With the fix the pinned entry survives the sweep, and only
-    becomes evictable once the session's transport is closed.
+    End-to-end regression (real asyncssh stack) for the idle-reaper-vs-in-use
+    bug: a spawned session drives its channel directly and never
+    re-``connect()``s, so its cache entry ages past the idle window while the
+    session is alive. Without the pin count the next sweep closed the
+    connection under the running session. A pinned entry survives the sweep
+    and becomes evictable only once the session's transport is closed.
     """
     settings = Settings(
         audit_path=str(tmp_path / "a.jsonl"),
         ssh_known_hosts="ignore",
         ssh_connect_timeout=5,
         ssh_keepalive=0,
-        ssh_idle_timeout=1,  # one-second window so the test runs fast
+        ssh_idle_timeout=1,  # short window keeps the test fast
         ssh_config=str(tmp_path / "none"),
     )
     inv = Inventory(settings.ssh_config, "").load()
@@ -602,13 +599,13 @@ async def test_live_pty_session_connection_survives_idle_sweep(
         key = next(iter(pool._conns))
         assert pool._conns[key].pins == 1, "the live session must pin its connection"
 
-        # Age the entry well past the idle window and sweep. The pin holds.
+        # Age the entry past the idle window and sweep; the pin holds.
         pool._conns[key].last_used -= 1000
         await pool._sweep_conns()
         assert key in pool._conns, "pinned session connection must survive the sweep"
         assert not pool._conns[key].conn.is_closed(), "connection must stay open"
 
-        # The session is still usable across the sweep: input still echoes.
+        # The session is still usable after the sweep.
         await reg.send(sess.id, b"hello\n")
         echoed = ""
         for _ in range(10):
@@ -633,23 +630,20 @@ async def test_connection_cache_sweep_treats_is_closed_exception_as_closed(
 ) -> None:
     """If ``is_closed()`` raises, the sweep treats the entry as dead and evicts it.
 
-    Defensive branch: a connection that has slipped into an exotic state
-    (e.g. asyncssh internal invariant violation, garbage collection
-    race) should not wedge the pool. The sweep absorbs the exception
-    and drops the entry; the next connect() opens a fresh one.
+    Defensive branch: a connection in an exotic state (asyncssh invariant
+    violation, GC race) must not wedge the pool. The sweep absorbs the
+    exception and drops the entry; the next connect() opens a fresh one.
 
-    Drive ``_sweep_conns`` directly rather than going through ``connect()``
-    (which would orphan the real cached conn behind the swap and leak
-    background tasks into the test teardown). The behavior under test
-    is the exception path inside the sweep itself.
+    ``_sweep_conns`` is driven directly: going through ``connect()`` would
+    orphan the real cached conn behind the swap and leak background tasks
+    into teardown.
     """
     from relay_shell.sshpool import _ConnEntry
 
     pool = _pool(tmp_path)
     try:
-        # Seed the cache with a real connection so close_all() can
-        # release it through the normal path; we only swap the entry
-        # under test, not the real conn1.
+        # A real connection, so close_all() releases it normally; only the
+        # entry under test is swapped in.
         await pool.connect("127.0.0.1", **_ck(ssh_port))
 
         class _BadConn:
@@ -665,8 +659,7 @@ async def test_connection_cache_sweep_treats_is_closed_exception_as_closed(
 
         await pool._sweep_conns()
 
-        # The defensive branch evicted the bad entry; the real
-        # connection survived (is_closed() returns False).
+        # The bad entry is evicted; the real connection survives.
         assert bad_key not in pool._conns
         assert len(pool._conns) == 1
     finally:

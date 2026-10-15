@@ -2,9 +2,9 @@
 
 Dynamic registration is open to whoever can reach ``/register``, and the
 authorization endpoint issues a code to any registered client with no login step.
-Before this gate the first party to register obtained tokens (shell execution as
-the service user), and a corrupt ``clients.json`` read as "no clients", which
-reopened registration and let a caller replace the real client.
+Without the gate, the first party to register obtains tokens (shell execution as
+the service user), and a corrupt ``clients.json`` reads as "no clients", which
+reopens registration and lets a caller replace the real client.
 """
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ async def test_clients_registered_before_the_gate_are_carried_over_as_approved(
 ) -> None:
     old = _provider(tmp_path, approval=False)  # an install from before the gate existed
     await old.register_client(_client())
-    (tmp_path / "oauth" / "approvals.json").unlink()  # exactly what such an install has on disk
+    (tmp_path / "oauth" / "approvals.json").unlink()  # what such an install has on disk
 
     upgraded = _provider(tmp_path, approval=True)
     assert "code=" in await upgraded.authorize(_client(), _params())

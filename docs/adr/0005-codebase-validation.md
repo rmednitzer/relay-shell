@@ -75,9 +75,9 @@ All four steps passed without code-level regressions:
   `docs/tools.md`.
 - 3 MCP resources registered, matching `docs/tools.md` §Resources.
 - `ruff check`, `ruff format --check`, `mypy --strict` clean.
-- `pytest -q` — 195 passed, 13 deselected (the `fuzz` marker is
+- `pytest -q`: 195 passed, 13 deselected (the `fuzz` marker is
   nightly-only by design; see `pyproject.toml`).
-- `coverage` — 89% with subprocess collection enabled (floor is 85%).
+- `coverage`: 89% with subprocess collection enabled (floor is 85%).
 - Every upstream symbol in step 3 resolved on the pinned versions.
 - The audit record schema and the redaction / tier samples in step 4
   match the documented behavior verbatim.
@@ -87,7 +87,7 @@ PR that lands this ADR**, so they do not survive past 0005:
 
 | ID    | Severity | Subject                                                                                   | Resolution |
 |-------|----------|-------------------------------------------------------------------------------------------|------------|
-| F-001 | P2       | `requirements.txt` pinned `starlette==1.0.0` / `PyJWT==2.12.1` / `ruff==0.15.13` while `pip install -e ".[dev]"` resolved `1.1.0` / `2.13.0` / `0.15.14` — the file header claimed "validated build set" but the pins did not match reality. | Pins refreshed to the actually-tested set; header reworded to "validated against the current development matrix". |
+| F-001 | P2       | `requirements.txt` pinned `starlette==1.0.0` / `PyJWT==2.12.1` / `ruff==0.15.13` while `pip install -e ".[dev]"` resolved `1.1.0` / `2.13.0` / `0.15.14`; the file header claimed "validated build set" but the pins did not match reality. | Pins refreshed to the actually-tested set; header reworded to "validated against the current development matrix". |
 | F-002 | P2       | `docs/runbook.md` §4.3 still said "CI floor: 75%, current ~78%". The floor moved to 85% in B-022 and measured coverage is 89%.                                                                | Header and body of §4.3 updated to "CI floor: 85%, current ~89%". |
 | F-003 | P3       | `docs/runbook.md` §3.4 referenced the obsolete tool-count assertion `len(names) == 18`. Actual: `tests/test_server.py:36` asserts `21`.                                                       | Reference updated to `21`. |
 
@@ -102,11 +102,11 @@ upstream contract are still green:
 - 21 MCP tools registered, matching `tests/test_server.py::_EXPECTED`
   and `docs/tools.md`; 3 MCP resources registered.
 - `ruff check`, `ruff format --check`, `mypy --strict` clean.
-- `pytest -q` — 250 passed, 13 deselected (up from 195/244 as the
+- `pytest -q`: 250 passed, 13 deselected (up from 195/244 as the
   redaction-coverage tests below landed; `fuzz` is nightly-only by design).
-  `pytest -m fuzz` — 13 property invariants pass, including `redact`
+  `pytest -m fuzz`: 13 property invariants pass, including `redact`
   idempotency on the new shapes.
-- `coverage` — 92% with subprocess collection (floor 90%);
+- `coverage`: 92% with subprocess collection (floor 90%);
   `patterns.py` and `redaction.py` at 100%.
 - Every upstream symbol in step 3 still resolves on `mcp==1.27.1` /
   `asyncssh` 2.23.0 (FastMCP kwargs, `Context` ids, the nine OAuth
@@ -147,12 +147,12 @@ The broader engagement is recorded in
   **CLI verb** (`--verify-audit`), not a tool, so the tool contract is
   unchanged.
 - `ruff check`, `ruff format --check`, `mypy --strict` clean.
-- `pytest -q` — 277 passed, 13 deselected (up from 250; +27 tests for the
+- `pytest -q`: 277 passed, 13 deselected (up from 250; +27 tests for the
   chain emit/resume, the `verify_chain` tamper / head-truncation /
   tail-truncation cases, the config cross-field validator, and the
-  fail-closed `--verify-audit` CLI incl. `--segment`). `pytest -m fuzz`
-  — 13 invariants pass.
-- `coverage` — 92% with subprocess collection (floor 90%); `config.py`
+  fail-closed `--verify-audit` CLI incl. `--segment`). `pytest -m fuzz`:
+  13 invariants pass.
+- `coverage`: 92% with subprocess collection (floor 90%); `config.py`
   99%, `audit.py` 95%, `patterns.py` / `redaction.py` / `policy.py` 100%.
 - Every upstream symbol in step 3 still resolves on `mcp==1.27.1` /
   `asyncssh` 2.23.0; `pydantic` `model_validator(mode="after")` (the new
@@ -166,7 +166,7 @@ The broader engagement is recorded in
 | ID    | Severity | Subject                                                                                                                                                                                                 | Resolution |
 |-------|----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|
 | F-005 | P3       | `docs/runbook.md` §5.1 still listed **C-005** (`Inventory` field naming) as an open consolidation candidate. It was closed in PR #57 (`Inventory(ssh_config=...)` ctor + `ssh_config_file` resolved-iff-exists property), as recorded in `audit/2026-05-27-engagement.md` §2.2/§3 and `CHANGELOG.md`. The code carries no `ssh_config_path`; the runbook entry was the last stale reference. | Moved C-005 to the §5.1 "Closed (do not re-add)" block with the resolution note. |
-| G-1   | (gap)    | The audit log — ADR 0002's first compensating control — had no in-record tamper-evidence; integrity rested solely on `chattr +a` + off-host shipping, both defeatable by the documented residual-risk attacker in the pre-ship window. Not a regression against the docs (the docs never claimed in-record integrity), recorded as a hardening gap. | Closed by [ADR 0007](0007-audit-hash-chain.md): opt-in, additive per-record hash chain + `relay-shell --verify-audit`. Default-off keeps every existing deployment byte-identical. |
+| G-1   | (gap)    | The audit log (ADR 0002's first compensating control) had no in-record tamper-evidence; integrity rested solely on `chattr +a` + off-host shipping, both defeatable by the documented residual-risk attacker in the pre-ship window. Not a regression against the docs (the docs never claimed in-record integrity), recorded as a hardening gap. | Closed by [ADR 0007](0007-audit-hash-chain.md): opt-in, additive per-record hash chain + `relay-shell --verify-audit`. Default-off keeps every existing deployment byte-identical. |
 
 No security or capability regressions. The ADR 0002 boundary and ADR 0003
 tier semantics are unchanged. The audit-record schema change is additive and
@@ -185,10 +185,10 @@ contract holds on the bumped pin.
   `docs/tools.md`; 3 MCP resources; 1 prompt (`operating_guide`, ADR 0008).
 - `ruff check`, `ruff format --check`, `mypy --strict` clean (19 source
   files).
-- `pytest` — **339 passed, 13 deselected** (the `fuzz` marker is
-  nightly-only by design); `pytest -m fuzz` — **13** property invariants
+- `pytest`: **339 passed, 13 deselected** (the `fuzz` marker is
+  nightly-only by design); `pytest -m fuzz`: **13** property invariants
   pass. Runtime ~36 s.
-- `coverage` — **93%** with subprocess collection (floor 90%);
+- `coverage`: **93%** with subprocess collection (floor 90%);
   `patterns.py` / `redaction.py` / `policy.py` / `metrics.py` 100%,
   `audit.py` 94%, `server.py` 95%, `seccomp.py` 97%.
 - Step 3 upstream surface now resolves on **`mcp==1.27.2`** (the pin moved
@@ -224,9 +224,9 @@ contract holds.
   template); 1 prompt (`operating_guide`, ADR 0008).
 - `ruff check`, `ruff format --check`, `mypy --strict` clean (19 source
   files).
-- `pytest` — **342 passed, 13 deselected** (the `fuzz` marker is nightly-only
-  by design); `pytest -m fuzz` — **13** property invariants pass.
-- `coverage` — **93%** with subprocess collection (floor 90%);
+- `pytest`: **342 passed, 13 deselected** (the `fuzz` marker is nightly-only
+  by design); `pytest -m fuzz`: **13** property invariants pass.
+- `coverage`: **93%** with subprocess collection (floor 90%);
   `patterns.py` / `redaction.py` / `policy.py` / `metrics.py` 100%,
   `config.py` 99%, `seccomp.py` 97%, `server.py` / `sshpool.py` 95%,
   `audit.py` 94%.
@@ -271,7 +271,7 @@ and structure-vs-spec conformance against trusted external sources.
 
 | ID | Severity | Subject | Resolution |
 |----|----------|---------|------------|
-| SEC-3 | P2 | `pyproject.toml` lower bounds sat below the patched minimum for `asyncssh` (GHSA-g794-3fmp-753h), `starlette` (BadHost GHSA-86qp-5c8j-p5mr / GHSA-jp82-jpqv-5vv3), `PyJWT` (HMAC confusion GHSA-xgmm-8j9v-c9wx), and `cryptography` (GHSA-537c-gmf6-5ccf) — a cold `pip install` resolver could pick a vulnerable transitive version, though the *pinned* set was already safe. | Floors raised to `asyncssh>=2.23.0`, `starlette>=1.3.0`, `PyJWT>=2.13.0`, `cryptography>=48.0.1` (mirrors PR #97's `pydantic-settings` floor bump). Installed/tested set unchanged; gate green. |
+| SEC-3 | P2 | `pyproject.toml` lower bounds sat below the patched minimum for `asyncssh` (GHSA-g794-3fmp-753h), `starlette` (BadHost GHSA-86qp-5c8j-p5mr / GHSA-jp82-jpqv-5vv3), `PyJWT` (HMAC confusion GHSA-xgmm-8j9v-c9wx), and `cryptography` (GHSA-537c-gmf6-5ccf), so a cold `pip install` resolver could pick a vulnerable transitive version, though the *pinned* set was already safe. | Floors raised to `asyncssh>=2.23.0`, `starlette>=1.3.0`, `PyJWT>=2.13.0`, `cryptography>=48.0.1` (mirrors PR #97's `pydantic-settings` floor bump). Installed/tested set unchanged; gate green. |
 | TOOL-4 | info | `.github/CODEOWNERS` required review on a non-existent `/.github/dependabot.yml`; the repo uses Renovate. | Reference corrected to `/renovate.json5`. |
 
 The remaining findings are incremental hardening and format conformance with no

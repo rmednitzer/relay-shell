@@ -63,9 +63,8 @@ def test_build_env_overlay_removes_with_null() -> None:
 
 
 def test_build_env_ignores_non_object_overlay() -> None:
-    # Arrays, primitives, and malformed JSON are dropped without raising; the
-    # deterministic defaults (DEBIAN_FRONTEND, GIT_TERMINAL_PROMPT, ...) still
-    # apply on top of the inherited environment.
+    # Arrays, primitives and malformed JSON are dropped without raising; the
+    # defaults (DEBIAN_FRONTEND, GIT_TERMINAL_PROMPT, ...) still apply.
     for overlay in ("[1, 2]", "true", "42", "not json"):
         env = build_env(overlay)
         assert env["DEBIAN_FRONTEND"] == "noninteractive"
@@ -87,9 +86,8 @@ def test_spawn_argv() -> None:
 
 
 async def test_run_command_output_cap_bounds_buffer() -> None:
-    # Produce far more than the cap; only `cap` bytes are buffered/returned, yet
-    # the command still runs to completion (exit 0) — memory is bounded, not the
-    # command. Pre-fix the full output was buffered in relay memory.
+    # Far more output than the cap: only `cap` bytes are buffered and returned,
+    # yet the command runs to completion (memory is bounded, not the command).
     out, code = await run_command(
         "head -c 200000 /dev/zero | tr '\\0' x", timeout=10, output_cap=1000
     )
@@ -98,7 +96,7 @@ async def test_run_command_output_cap_bounds_buffer() -> None:
 
 
 async def test_run_command_output_cap_none_is_unbounded() -> None:
-    # The historical behaviour is preserved when no cap is supplied.
+    # No cap supplied: output is unbounded.
     out, code = await run_command(
         "head -c 5000 /dev/zero | tr '\\0' y", timeout=10, output_cap=None
     )
@@ -107,8 +105,8 @@ async def test_run_command_output_cap_none_is_unbounded() -> None:
 
 
 async def test_run_command_output_cap_preserves_exit_code() -> None:
-    # A lot of output, THEN a nonzero exit: the exit code must survive the cap
-    # (we drain to EOF and reap the child rather than killing it at the cap).
+    # Lots of output, then a nonzero exit: the exit code must survive the cap
+    # (the child is drained to EOF and reaped, not killed at the cap).
     out, code = await run_command(
         "head -c 80000 /dev/zero | tr '\\0' z; exit 3", timeout=10, output_cap=500
     )
@@ -117,15 +115,14 @@ async def test_run_command_output_cap_preserves_exit_code() -> None:
 
 
 async def test_run_command_output_cap_with_stdin() -> None:
-    # stdin still feeds under a cap (concurrent feed + drain).
+    # stdin still feeds under a cap (feed and drain run concurrently).
     out, code = await run_command("cat", timeout=10, stdin="piped-in\n", output_cap=1000)
     assert code == 0
     assert "piped-in" in out
 
 
 async def test_run_command_large_stdin_with_cap_no_deadlock() -> None:
-    # A stdin larger than a pipe buffer must not deadlock a bounded output drain:
-    # feed and drain run concurrently. `cat` echoes it back, capped.
+    # A stdin larger than a pipe buffer must not deadlock a bounded output drain.
     big = "A" * 500000
     out, code = await run_command("cat", timeout=15, stdin=big, output_cap=2000)
     assert code == 0
@@ -133,7 +130,7 @@ async def test_run_command_large_stdin_with_cap_no_deadlock() -> None:
 
 
 async def test_run_command_output_cap_shared_across_streams() -> None:
-    # merge_stderr=False: stdout and stderr share ONE budget, combined <= cap.
+    # merge_stderr=False: stdout and stderr share one budget.
     cmd = "head -c 8000 /dev/zero | tr '\\0' o; head -c 8000 /dev/zero | tr '\\0' e 1>&2"
     out, code = await run_command(cmd, timeout=10, merge_stderr=False, output_cap=4000)
     assert code == 0

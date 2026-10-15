@@ -54,7 +54,7 @@ def test_consume_is_single_use() -> None:
     ch = b.plan("shell_exec", "op-A")
     b.arm(ch.token)
     assert b.consume("shell_exec", "op-A") is True
-    # Burned: a second identical call re-challenges (consume returns False).
+    # Burned: a second identical call must re-challenge.
     assert b.consume("shell_exec", "op-A") is False
 
 
@@ -62,11 +62,8 @@ def test_consume_requires_exact_operation() -> None:
     b = ConfirmationBroker(ttl=120)
     ch = b.plan("shell_exec", "rm -rf /a")
     b.arm(ch.token)
-    # Same tool, different command -> different hash -> no match.
-    assert b.consume("shell_exec", "rm -rf /b") is False
-    # Same command, different tool -> no match either.
-    assert b.consume("ssh_exec", "rm -rf /a") is False
-    # Exact match still works.
+    assert b.consume("shell_exec", "rm -rf /b") is False  # different command
+    assert b.consume("ssh_exec", "rm -rf /a") is False  # different tool
     assert b.consume("shell_exec", "rm -rf /a") is True
 
 
@@ -134,16 +131,15 @@ def _records(path: str) -> list[dict]:
 
 
 async def test_off_tier3_runs_and_record_has_no_action(settings: Settings) -> None:
-    # Default settings: confirm_tier3 is False.
     assert settings.confirm_tier3 is False
     mcp = build_server(settings)
     content = (await mcp.call_tool("shell_exec", {"command": "rm -rf /tmp/relay-nope-xyz"})).content
     text = "".join(b.text for b in content if getattr(b, "type", "") == "text")
-    # It executed (no confirmation challenge) ...
+    # Executed without a challenge, and the additive `action` field is absent
+    # (record unchanged from before the broker existed).
     assert "CONFIRM REQUIRED" not in text
     recs = _records(settings.audit_path)
     assert recs and recs[-1]["tool"] == "shell_exec"
-    # ... and the additive `action` field is absent -> record byte-identical.
     assert "action" not in recs[-1]
 
 
@@ -171,27 +167,26 @@ async def test_on_tier3_challenges_then_executes(tmp_path: Path) -> None:
     victim.write_text("data")
     cmd = f"rm -rf {victim}"
 
-    # 1) plan: challenge returned, work() did NOT run (file still present).
+    # 1) plan: challenge returned, the command did not run.
     r1 = _text((await mcp.call_tool("shell_exec", {"command": cmd})).content)
     assert "CONFIRM REQUIRED" in r1
     assert victim.exists(), "planned Tier-3 op must not execute"
     token = re.search(r'token="([A-Za-z0-9_-]+)"', r1).group(1)
 
-    # 2) arm
     r2 = _text((await mcp.call_tool("operation_confirm", {"token": token})).content)
     assert "armed" in r2
 
-    # 3) execute: same call now runs (file removed).
+    # 3) execute: the same call now runs.
     r3 = _text((await mcp.call_tool("shell_exec", {"command": cmd})).content)
     assert "CONFIRM REQUIRED" not in r3
     assert not victim.exists(), "confirmed Tier-3 op must execute"
 
-    # audit markers: confirm_plan on the challenge, confirm_execute on the run.
+    # Audit markers: confirm_plan on the challenge, confirm_execute on the run.
     recs = _records(cfg.audit_path)
     actions = [(r["tool"], r.get("action")) for r in recs]
     assert ("shell_exec", "confirm_plan") in actions
     assert ("shell_exec", "confirm_execute") in actions
-    # single-use: a further identical call re-challenges.
+    # Single use: a further identical call re-challenges.
     r4 = _text((await mcp.call_tool("shell_exec", {"command": cmd})).content)
     assert "CONFIRM REQUIRED" in r4
 
@@ -211,14 +206,14 @@ async def test_on_bad_token_rechallenges(tmp_path: Path) -> None:
 async def test_on_non_tier3_is_unaffected(tmp_path: Path) -> None:
     cfg = _on_settings(tmp_path)
     mcp = build_server(cfg)
-    # A plain read/observe command is Tier 1, not gated even with broker on.
+    # Tier 1 is not gated even with the broker on.
     r = _text((await mcp.call_tool("shell_exec", {"command": "echo ok"})).content)
     assert "CONFIRM REQUIRED" not in r
     assert "ok" in r
 
 
 async def test_operation_confirm_disabled_reports(settings: Settings) -> None:
-    # Broker off -> operation_confirm reports disabled, changes nothing.
+    # Broker off: operation_confirm reports disabled and changes nothing.
     mcp = build_server(settings)
     r = _text((await mcp.call_tool("operation_confirm", {"token": "x"})).content)
     assert "disabled" in r
@@ -250,17 +245,15 @@ async def test_on_token_bound_to_target_not_just_command(tmp_path: Path) -> None
     (dir_b / "keep.txt").write_text("b")
     cmd = "rm -rf ./keep.txt"
 
-    # plan + arm for cwd=dir_a
     r1 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_a)})).content)
     token = re.search(r'token="([A-Za-z0-9_-]+)"', r1).group(1)
     await mcp.call_tool("operation_confirm", {"token": token})
 
-    # Attempt to execute the SAME command against cwd=dir_b: must re-challenge,
-    # and dir_b must be untouched (the armed token does not match this target).
+    # Same command against cwd=dir_b: must re-challenge and leave dir_b untouched.
     r2 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_b)})).content)
     assert "CONFIRM REQUIRED" in r2
     assert (dir_b / "keep.txt").exists(), "token for cwd=a must not authorize cwd=b"
-    # The original target still executes (token still armed for cwd=a).
+    # The original target still executes (token still armed for dir_a).
     r3 = _text((await mcp.call_tool("shell_exec", {"command": cmd, "cwd": str(dir_a)})).content)
     assert "CONFIRM REQUIRED" not in r3
     assert not (dir_a / "keep.txt").exists()
@@ -268,8 +261,8 @@ async def test_on_token_bound_to_target_not_just_command(tmp_path: Path) -> None
 
 def test_confirm_op_key_binds_ssh_identity() -> None:
     # F3 regression (2026-07-15): the broker op-key must bind the SSH
-    # authenticating identity (user/port/key_path), which ssh_exec/ssh_spawn now
-    # carry in audit_args — otherwise a token confirmed as a low-priv user could
+    # authenticating identity (user/port/key_path) carried in audit_args by
+    # ssh_exec/ssh_spawn; otherwise a token confirmed as a low-priv user could
     # be re-issued as root against the same host+command (confused deputy).
     from relay_shell.server import _confirm_op_key, _policy_text_ssh_exec
 
@@ -295,13 +288,13 @@ def test_confirm_op_key_binds_ssh_identity() -> None:
 
 
 def test_operation_confirm_is_tier0() -> None:
-    # Control-plane step: classified read-only so it is available in every mode.
+    # Control-plane step: read-only so it is available in every mode.
     assert classify("operation_confirm") == Tier.READ_ONLY
 
 
 def test_overflow_evicts_unarmed_plans_before_an_armed_token() -> None:
-    # An operator-armed token must survive a flood of un-armed plans; evicting by
-    # expiry alone dropped the soonest-expiring entry, which is the armed one.
+    # An operator-armed token must survive a flood of un-armed plans. Evicting by
+    # expiry alone drops the soonest-expiring entry, which is the armed one.
     now = [0.0]
     b = ConfirmationBroker(ttl=300, max_pending=8, clock=lambda: now[0])
     armed = b.plan("shell_exec", "rm -rf /x").token

@@ -1,7 +1,7 @@
 """A14-C10b: a confirmation token belongs to the client that planned the operation.
 
-Pre-fix the token was bound to the operation only, so a second authenticated client issuing
-the identical call inside the TTL could consume the token the first client had armed.
+Without the binding, a second authenticated client issuing the identical call inside the TTL
+could consume the token the first client had armed.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def test_each_client_has_its_own_token_for_the_same_operation() -> None:
 
 
 def test_unauthenticated_callers_share_the_empty_identity() -> None:
-    """stdio / no-auth deployments have no client id; behaviour is unchanged there."""
+    """stdio / no-auth deployments have no client id and keep the operation-only binding."""
     b = ConfirmationBroker(ttl=120)
     ch = b.plan("shell_exec", "op")
     assert b.arm(ch.token) is True

@@ -401,8 +401,8 @@ def test_verifier_orders_segments_by_record_ts_not_mtime(tmp_path: Path) -> None
 
 
 def test_verifier_tolerates_torn_final_line_on_active_segment(tmp_path: Path) -> None:
-    """A torn (partial) final record on the LIVE segment — the signature of a
-    read racing an in-progress append — is tolerated, not a hard failure."""
+    """A torn (partial) final record on the LIVE segment (a read racing an
+    in-progress append) is tolerated, not a hard failure."""
     r0 = _record(0, GENESIS, "2026-08-04T10:00:00+00:00")
     r1 = _record(1, r0["chain"], "2026-08-04T10:01:00+00:00")
     active = tmp_path / "audit.jsonl"
@@ -422,7 +422,7 @@ def test_verifier_tolerates_torn_final_line_on_active_segment(tmp_path: Path) ->
 
 def test_verifier_flags_malformed_line_that_is_not_the_tail(tmp_path: Path) -> None:
     """A parse failure that is NOT the final line is real corruption, not a torn
-    append — it must fail the run even on the active segment."""
+    append: it must fail the run even on the active segment."""
     r0 = _record(0, GENESIS, "2026-08-04T10:00:00+00:00")
     r1 = _record(1, r0["chain"], "2026-08-04T10:02:00+00:00")
     active = tmp_path / "audit.jsonl"

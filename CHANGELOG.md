@@ -39,14 +39,14 @@ All notable changes to this project are documented here. The format follows
   authorization code); the public OAuth handles cap the request body at 64 KB. CI builds Caddy
   2.11.7 on one leg so the routing tests run, and also runs the seccomp end-to-end tests under
   `sudo`.
-- **`RELAY_SHELL_MAX_CONNS`** (default 256) — a hard ceiling on the live SSH
+- **`RELAY_SHELL_MAX_CONNS`** (default 256): a hard ceiling on the live SSH
   connection cache (`SshPool._conns`), mirroring `max_sessions` / `max_forwards`
   for the cache that sits underneath them (CONN-1, 2026-08-04 audit pass). Idle
   eviction (`ssh_idle_timeout`) is opportunistic and unbounded in count, so a
   caller varying the target or per-call `user`/`port`/`key_path` across many
   reachable hosts could accumulate live SSH sessions between sweeps. When the
   cache is full a new connect evicts the least-recently-used **unpinned** entry
-  (a connection in active use — a session, forward, or in-flight run — is never
+  (a connection in active use, i.e. a session, forward, or in-flight run, is never
   evicted, so the cap is transiently exceeded rather than dropping a live
   connection). Surfaced in `server_info.config.max_conns`.
 
@@ -54,16 +54,27 @@ All notable changes to this project are documented here. The format follows
   **`RELAY_SHELL_ALLOW_UNAUTH_NETWORK`** (default `false`); `server_info.limits.max_input`.
 - **`RELAY_SHELL_AUTH_REQUIRE_APPROVAL`** (default `true`) and the `relay-shell
   --auth-list` / `--auth-approve` / `--auth-reject` operator commands (see Security).
-- **`RELAY_SHELL_AUDIT_SESSION_INPUT`** (`redacted` default, or `hash`) — how
+- **`RELAY_SHELL_AUDIT_SESSION_INPUT`** (`redacted` default, or `hash`): how
   `session_send` input is recorded (see Security). Surfaced in
   `server_info.audit.session_input`.
-- **`RELAY_SHELL_AUDIT_INTENT`** (default off) — write-ahead audit: append an
+- **`RELAY_SHELL_AUDIT_INTENT`** (default off): write-ahead audit: append an
   `action=intent` record before a call's work starts, so a crash or SIGKILL of the
   relay mid-command no longer leaves an executed command with no record. Default off
   keeps one record per call. Surfaced in `server_info.audit.intent`.
 
 ### Changed
 
+- **README rewritten for focus.** One statement per fact, no ADR references; the tool tables,
+  default behaviour, opt-in controls and compatibility are kept. The README, `SECURITY.md` and
+  the `sessions.py` docstring no longer claim "lifetime" session reaping: sessions are reaped
+  when idle (`RELAY_SHELL_SESSION_IDLE_TIMEOUT`) or exited and drained; there is no maximum
+  lifetime.
+- **Runbook §7 consolidated.** Open items stay in full; each closed item is one ledger row
+  (ID, closing PR or ADR, residual caveats) pointing to its record in `BACKLOG.md`, the ADR,
+  this changelog or the `audit/` pack. Every 7.x heading is kept, so existing `§7.x`
+  references still resolve. Test comments tightened (no code or literal changed); em dashes
+  removed from the living docs. Cross-references fixed: `BACKLOG.md` CONN-1 points to §7.2,
+  and `docs/deployment.md` points bounds checking to runbook §2.6 instead of §7.
 - **Documentation and comments tightened.** README, docs, ADRs, governance files and source
   comments are shorter and more precise; no code, tool description or decision changed. Doc
   drift corrected: `docs/tools.md` now lists the `shell_script` parameters and the `ssh_spawn`
@@ -170,7 +181,7 @@ All notable changes to this project are documented here. The format follows
   `CallToolResult` instead of a `(content, structured)` tuple. The dependency
   moves off the exact pin `mcp==1.28.1` to the range `mcp>=2,<3` (v1 is
   upstream maintenance-mode only). No change to `policy`, `redaction`,
-  `audit`, `patterns`, `broker`, or the `Relay.run` body — the trust boundary
+  `audit`, `patterns`, `broker`, or the `Relay.run` body; the trust boundary
   is untouched. See [ADR 0001](docs/adr/0001-runtime-and-sdk.md) pin
   movement. This pass also reconciled the README status line, the
   compatibility matrix, and `docs/architecture.md` to the new pin, which had
@@ -240,14 +251,14 @@ All notable changes to this project are documented here. The format follows
 - `SshPool.run()`'s output cap is now a single budget **shared** across stdout
   and stderr, so the combined buffered bytes stay within `max_output_bytes`
   (CONN-2, 2026-08-04 audit pass). Previously each stream had its own counter,
-  so peak transient memory per call was up to 2× the cap — the returned string
+  so peak transient memory per call was up to 2× the cap (the returned string
   was still correctly bounded, but `ssh_fanout`'s per-host sizing math assumes a
-  footprint of `cap`, not 2×cap, across concurrent hosts.
+  footprint of `cap`, not 2×cap, across concurrent hosts).
 - The single-host exec paths now **bound the output buffered in relay memory**
   to `max_output_hard` instead of accumulating the child's entire output before
   truncating (PERF-4, 2026-08-04 backlog follow-up). `shell_exec` / `shell_script`
   drained the local child via `communicate()`, and `ssh_exec` called
-  `SshPool.run` with no cap (`cap is None`) — so a high-volume producer
+  `SshPool.run` with no cap (`cap is None`), so a high-volume producer
   (`cat /dev/zero`, a runaway build log) could grow the long-lived relay process
   without limit, a memory DoS reachable by a Tier-1 command that even `guarded`
   mode permits. The child still runs to completion (exit code + true byte count
@@ -263,7 +274,7 @@ All notable changes to this project are documented here. The format follows
   spurious "broken rotation seam"; and reading the concurrently-appended
   `audit.jsonl` `errors="strict"` turned a benign torn write into an "invalid
   JSON" failure. Either false failure made `relay-audit-evidence-sync` silently
-  skip the off-host publish — the anti-tail-truncation control (ADR 0007). The
+  skip the off-host publish, the anti-tail-truncation control (ADR 0007). The
   evidence record gains a `torn_tails` counter for visibility.
 - Two more local-exec paths now bound their buffered output the same way the
   PERF-4 pass bounded `shell_exec` / `shell_script` / `ssh_exec`, closing gaps
@@ -277,7 +288,7 @@ All notable changes to this project are documented here. The format follows
     `ssh_check` is Tier 0 (permitted even in `readonly` mode, unlike
     `ssh_keyscan`) and its `hosts` argument is caller-chosen, so a malicious or
     compromised remote sshd could stream unbounded data back on the exec
-    channel regardless of what the fixed `echo ok` probe asked for — up to
+    channel regardless of what the fixed `echo ok` probe asked for, up to
     `_SSH_CHECK_CONCURRENCY` (8) such streams concurrently. Now bounded to
     `_SSH_CHECK_PER_HOST_OUTPUT_CAP` (4 KiB), generous for a probe that only
     ever inspects the `"ok"` substring.
@@ -491,7 +502,7 @@ All notable changes to this project are documented here. The format follows
   remote client that obtained a token through the public flow could not
   self-revoke a leaked bearer token (the CIDR block returned a flat `403`).
   RFC 7009 requires presenting the token being revoked, so public reachability
-  is safe — the same posture as `/token`.
+  is safe, the same posture as `/token`.
 
 ## [0.3.0] - 2026-07-15
 

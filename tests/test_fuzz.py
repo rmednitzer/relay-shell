@@ -1,10 +1,9 @@
 """Hypothesis-driven property tests for `redact` and `classify`.
 
 These run nightly only (the default `pytest` invocation deselects the
-``fuzz`` marker via `pyproject.toml`'s `addopts`). The suite asserts
-invariants the security-sensitive primitives must hold for *any*
-input, not just the hand-picked cases in `test_patterns.py`,
-`test_redaction.py`, and `test_policy.py`.
+``fuzz`` marker via `pyproject.toml`'s `addopts`). They assert invariants
+that must hold for *any* input, beyond the hand-picked cases in
+`test_patterns.py`, `test_redaction.py`, and `test_policy.py`.
 
 Run locally with::
 
@@ -28,8 +27,7 @@ from relay_shell.redaction import redact, redact_args
 
 # --- profiles ---------------------------------------------------------------
 #
-# Local / PR runs (when fuzz is opted-in) use a small example budget so the
-# loop stays fast. Nightly CI sets HYPOTHESIS_PROFILE=ci to amplify it.
+# Local runs use a small example budget; nightly CI sets HYPOTHESIS_PROFILE=ci.
 
 settings.register_profile("default", max_examples=100, deadline=None)
 settings.register_profile(
@@ -43,9 +41,7 @@ settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
 pytestmark = pytest.mark.fuzz
 
 
-# Strategy: arbitrary unicode text up to ~256 chars. Mostly excludes
-# control characters that would generate huge volumes of unreadable cases;
-# the regex tables are byte-oriented and don't care about glyph rendering.
+# Arbitrary unicode text up to 256 chars, excluding surrogates and NUL.
 _TEXT = st.text(
     alphabet=st.characters(
         blacklist_categories=("Cs",),  # surrogates
@@ -55,7 +51,7 @@ _TEXT = st.text(
     max_size=256,
 )
 
-# Subset: printable ASCII so we can mix in real secret shapes deterministically.
+# Printable ASCII, so real secret shapes can be mixed in deterministically.
 _PRINTABLE = st.text(
     alphabet=st.characters(min_codepoint=32, max_codepoint=126),
     min_size=0,
@@ -75,9 +71,7 @@ def test_redact_is_idempotent(s: str) -> None:
 
 @given(_TEXT)
 def test_redact_preserves_when_no_secret_shape(s: str) -> None:
-    # If the input does not match any pattern, redact() must leave it
-    # alone. We probe by checking that the round-trip is fixed-point
-    # AND that the placeholder is not present (covers both directions).
+    # Output without the placeholder means nothing matched, so it must equal the input.
     out = redact(s)
     if patterns.REDACTION_PLACEHOLDER not in out:
         assert out == s
@@ -85,19 +79,14 @@ def test_redact_preserves_when_no_secret_shape(s: str) -> None:
 
 # --- redact: shape-targeted properties -------------------------------------
 #
-# For each known secret shape, generate a *distinctive* marker (so we can
-# tell whether the original survived even when surrounding text overlaps),
-# embed it in the relevant syntax, and assert: (1) the placeholder appears
-# in the output, AND (2) the marker doesn't survive. The shapes match the
-# patterns in `src/relay_shell/patterns.py`; the marker is namespaced
-# (``FUZZSECRET-<n>``) so we never collide with whatever hypothesis is
-# putting in the surrounding text strategies.
+# For each known secret shape (see `src/relay_shell/patterns.py`), embed a
+# distinctive marker (``FUZZSECRET-<n>``) in the relevant syntax and assert that
+# the placeholder appears and the marker does not survive.
 
 
 def _marker(nonce: int) -> str:
-    # A token shape that satisfies every value class in the redaction
-    # patterns (alphanumeric + `-`, length >= 16) and is unmistakable in
-    # the output so we can prove the marker didn't survive.
+    # Satisfies every value class in the redaction patterns (alphanumeric + `-`,
+    # length >= 16) and is unmistakable in the output.
     return f"FUZZSECRET-{nonce:020d}"
 
 
@@ -106,8 +95,7 @@ def _safe_surround(draw) -> tuple[str, str]:
     """Generate before/after surrounding text that cannot contain the marker."""
     before = draw(_PRINTABLE)
     after = draw(_PRINTABLE)
-    # The marker prefix `FUZZSECRET-` is rare enough in random text; assert
-    # the marker cannot accidentally appear in surrounds by stripping it.
+    # Strip the marker prefix so the surrounds cannot contain a marker.
     before = before.replace("FUZZSECRET", "").replace("\r", "").replace("\n", "")
     after = after.replace("FUZZSECRET", "").replace("\r", "").replace("\n", "")
     return before, after
@@ -118,9 +106,7 @@ def _safe_surround(draw) -> tuple[str, str]:
     surround=_safe_surround(),
 )
 def test_redact_kills_bearer_token(nonce: int, surround: tuple[str, str]) -> None:
-    # `Bearer <token>` in an HTTP header / log line. The token uses the
-    # marker shape so we can verify it does not survive even if the
-    # surrounds happen to contain similar-looking text.
+    # `Bearer <token>` in an HTTP header / log line.
     token = _marker(nonce)
     before, after = surround
     payload = f"{before}Authorization: Bearer {token}{after}"
@@ -133,9 +119,8 @@ def test_redact_kills_bearer_token(nonce: int, surround: tuple[str, str]) -> Non
     nonce=st.integers(min_value=0, max_value=10**18),
 )
 def test_redact_kills_url_creds(nonce: int) -> None:
-    # `https://user:<password>@host/...`. We construct the host from a
-    # disjoint alphabet so the password marker cannot accidentally appear
-    # there. The password marker shape avoids URL-reserved chars.
+    # `https://user:<password>@host/...`. The host is fixed so the marker cannot
+    # appear there; the marker avoids URL-reserved chars.
     pw = _marker(nonce)
     payload = f"https://user:{pw}@disjoint.example.com/path"
     out = redact(payload)
@@ -149,9 +134,9 @@ def test_redact_kills_url_creds(nonce: int) -> None:
     sep=st.sampled_from(["=", " "]),
 )
 def test_redact_kills_cli_flag(nonce: int, flag: str, sep: str) -> None:
-    # CLI-style flags accept both `--token=value` and `--token value`. Bare
-    # `token value` (no dash) is intentionally not covered (would over-scrub
-    # `echo token foo`); see redaction.py docstring for scope.
+    # Both `--token=value` and `--token value`. Bare `token value` (no dash) is
+    # intentionally not covered (it would over-scrub `echo token foo`); see the
+    # redaction.py docstring for scope.
     secret = _marker(nonce)
     shape = f"{flag}{sep}{secret}"
     out = redact(shape)
@@ -165,9 +150,8 @@ def test_redact_kills_cli_flag(nonce: int, flag: str, sep: str) -> None:
     sep=st.sampled_from([":", "="]),
 )
 def test_redact_kills_kv_pair(nonce: int, keyword: str, sep: str) -> None:
-    # `keyword=value` / `keyword:value` (with or without surrounding
-    # whitespace) is the inline-credentials shape - this is what the
-    # `token`/`api_key`/`password` prefix pattern catches.
+    # Inline-credentials shape `keyword=value` / `keyword:value`, caught by the
+    # `token`/`api_key`/`password` prefix pattern.
     secret = _marker(nonce)
     shape = f"{keyword}{sep} {secret}"
     out = redact(shape)
@@ -232,9 +216,7 @@ def test_classify_never_raises(tool: str, command: str) -> None:
 
 @given(_TEXT)
 def test_classify_tier3_escalates_regardless_of_command_prefix(prefix: str) -> None:
-    # Adding any prefix in front of an unambiguous Tier-3 keyword must not
-    # downgrade the decision: a Tier-3 substring anywhere in the command
-    # is enough to escalate.
+    # A Tier-3 substring anywhere in the command escalates, whatever precedes it.
     cmd = f"{prefix} rm -rf /"
     tier = classify("shell_exec", cmd)
     assert tier is Tier.IRREVERSIBLE, f"expected IRREVERSIBLE, got {tier} for cmd={cmd!r}"
@@ -242,11 +224,8 @@ def test_classify_tier3_escalates_regardless_of_command_prefix(prefix: str) -> N
 
 @given(_TEXT)
 def test_classify_random_text_is_at_most_reversible_for_shell_tools(text: str) -> None:
-    # Without any tier-2/3 keyword or privilege-escalation token, a random
-    # blob given to shell_exec must be classified at most as REVERSIBLE.
-    # If hypothesis happens to generate a tier-escalating substring,
-    # accept that as a valid escalation - we only assert *no spurious
-    # downgrade* below.
+    # Text without a tier-2/3 keyword or privilege-escalation token must classify
+    # as REVERSIBLE; for generated text that contains one, nothing is asserted.
     tier = classify("shell_exec", text)
     has_tier3 = bool(patterns.TIER3_PATTERN.search(text))
     has_tier2 = bool(patterns.TIER2_PATTERN.search(text))
@@ -259,9 +238,7 @@ def test_classify_random_text_is_at_most_reversible_for_shell_tools(text: str) -
 
 @given(_TEXT)
 def test_classify_readonly_tools_stay_tier_zero(text: str) -> None:
-    # Read-only tools are identified by name; command text does not
-    # influence their tier. Cover the same surface for every name in
-    # the public read-only set.
+    # Read-only tools are identified by name; command text does not influence the tier.
     for tool in ("server_info", "ssh_hosts", "ssh_check", "session_list", "audit_tail"):
         tier = classify(tool, text)
         assert tier is Tier.READ_ONLY, f"{tool} escaped tier 0 with command={text!r}"

@@ -23,8 +23,7 @@ from relay_shell.policy import (
 )
 from relay_shell.server import build_server
 
-# Commands people reach for that a conservative tool would refuse. None may be refused
-# by the default configuration.
+# Commands a conservative tool would refuse. The default configuration must refuse none.
 _DANGEROUS = [
     "rm -rf /",
     "rm -rf --no-preserve-root /",
@@ -223,7 +222,7 @@ async def test_fanout_keeps_its_json_and_carries_the_notices_inside_it(
 ) -> None:
     """A trailing line would make json.loads fail after the remote command already ran."""
     out = await _fanout(settings, "systemctl restart nginx")
-    doc = json.loads(out)  # still valid JSON
+    doc = json.loads(out)
     notes = doc["notices"]
     assert any(n.startswith("tier 2 (STATEFUL)") for n in notes)
     assert any("host-key verification is off for h1.example" in n for n in notes)

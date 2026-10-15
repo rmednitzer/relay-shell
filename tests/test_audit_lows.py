@@ -232,7 +232,7 @@ def test_env_file_in_the_working_directory_is_logged(
     monkeypatch.chdir(tmp_path)
     with caplog.at_level(logging.WARNING, logger="relay_shell"):
         _note_env_file()
-        assert caplog.records == []  # nothing to report without a .env
+        assert caplog.records == []
         (tmp_path / ".env").write_text("RELAY_SHELL_POLICY_MODE=open\n")
         _note_env_file()
     (rec,) = caplog.records

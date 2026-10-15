@@ -58,8 +58,8 @@ def test_audit_chain_with_jsonl_is_accepted(
 def test_audit_chain_requires_jsonl_format(
     clean_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The chain is resumed by re-parsing the last jsonl line; cef/leef cannot
-    # be resumed, so the combination must fail fast at startup.
+    # The chain resumes by re-parsing the last jsonl line; cef/leef cannot be
+    # resumed, so the combination must fail at startup.
     monkeypatch.setenv("RELAY_SHELL_AUDIT_CHAIN", "true")
     monkeypatch.setenv("RELAY_SHELL_AUDIT_FORMAT", "cef")
     with pytest.raises(ValidationError):
@@ -89,8 +89,8 @@ def test_seccomp_notify_cap_floor(clean_env: None, monkeypatch: pytest.MonkeyPat
 def test_limit_upper_bounds_reject_absurd_values(
     clean_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # CFG-1: every limit has an `le=` cap, so an absurd env value is rejected at
-    # load instead of silently producing a clamp that never bites.
+    # CFG-1: every limit has an `le=` cap, so an absurd value is rejected at load
+    # instead of becoming a clamp that never bites.
     for var, val in (
         ("RELAY_SHELL_MAX_OUTPUT", "1000000000000"),
         ("RELAY_SHELL_MAX_OUTPUT_HARD", "1000000000000"),

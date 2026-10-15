@@ -11,7 +11,7 @@ def test_fmt_exc_uses_class_and_message() -> None:
 
 
 def test_fmt_exc_falls_back_to_class_when_message_empty() -> None:
-    # Some exceptions stringify to "" (no args); we should not emit a bare colon.
+    # Some exceptions stringify to "" (no args); no bare colon.
     line = fmt_exc(RuntimeError())
     assert "RuntimeError" in line
     assert "[ERROR:" in line

@@ -31,8 +31,8 @@ def test_every_checkout_drops_the_token() -> None:
 
 def test_ci_gate_distinguishes_a_missing_check_from_a_pending_one() -> None:
     text = (WORKFLOWS / "ci-gate.yml").read_text(encoding="utf-8")
-    # `.check_runs[0]` is null when GitHub has no run by that name; without `// empty`
-    # the row was "\t" (non-empty) and the "(missing)" branch could never fire.
+    # `.check_runs[0]` is null when GitHub has no run by that name; without
+    # `// empty` the row was "\t" (non-empty) and "(missing)" could never fire.
     assert "(.check_runs[0] // empty)" in text
     assert "(missing)" in text
 
