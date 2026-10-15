@@ -29,8 +29,8 @@ a certification and does not replace the threat model in `SECURITY.md`.
 3. `LocalPtyTransport.aclose` escalates SIGTERM (t=0), SIGHUP (after 0.5 s if the child is
    still running), SIGKILL (at 5 s). Interactive shells ignore SIGTERM, so before this step
    every close of one waited out the whole 5 s and ended in SIGKILL; SIGHUP is the hangup a
-   closing terminal sends and ends them at once (measured: 5.01 s to 0.00 s for `sh -i` and
-   `bash -i`). SIGHUP follows SIGTERM, not replaces or accompanies it, so a daemon that
+   closing terminal sends and ends them 0.5 s after SIGTERM (measured: 5.01 s to 0.50 s for
+   `sh -i` and `bash -i`). SIGHUP follows SIGTERM, not replaces or accompanies it, so a daemon that
    handles SIGTERM for an orderly shutdown and treats SIGHUP as "reload" is not hung up first.
 4. After the leader exits, `aclose` keeps checking the process group (the pgid is kept from
    spawn, since `getpgid` fails once the leader is reaped) until the 5 s deadline, then
@@ -164,5 +164,6 @@ tests with cancellation; no exploitation observed.
 
 - A cancelled `session_kill`/`close` may return before the child is gone; the audit record
   already says `cancelled`, and the teardown finishes in the background.
-- Tests for each scenario above live in `tests/test_sessions_cancel.py`.
+- Tests for the cancellation scenarios live in `tests/test_sessions_cancel.py`; the
+  SIGHUP and process-group scenarios (CS-8 to CS-10) are in `tests/test_sessions.py`.
 - Rollback: revert the commit; behaviour returns to the previous leak-prone sequence.

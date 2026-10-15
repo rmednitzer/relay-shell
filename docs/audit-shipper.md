@@ -61,12 +61,41 @@ documented approaches:
 - **Dedicated shipper user + POSIX ACL (recommended).** Keep the
   shipper under its own service account and grant explicit
   read with `setfacl -m u:<shipper>:r /var/log/relay-shell/audit.jsonl`
-  plus a `setfacl -m u:<shipper>:rx /var/log/relay-shell`. Re-apply
-  in `logrotate`'s `postrotate` script.
+  plus a `setfacl -m u:<shipper>:rx /var/log/relay-shell`. The audit
+  file is append-only (`chattr +a`, set by `deploy/install.sh` and kept
+  by the bundled logrotate config), and Linux refuses an ACL change on
+  an append-only file (`Operation not permitted`), so clear the flag
+  for the change and set it again, and re-apply the grant after every
+  rotation (see "Re-applying the ACL after rotation" below).
 - **Run the shipper as the `relay-shell` user.** This avoids ACL
   management but weakens separation of duties: the same uid that can
   execute relay commands can also stop or tamper with shipper process
   state. Use only if your threat model explicitly accepts that tradeoff.
+
+### Re-applying the ACL after rotation
+
+Logrotate creates each new `audit.jsonl` as `0600 relay-shell:relay-shell` without
+the ACL, and the bundled config sets `+a` on it before it finishes, so the grant
+has to be re-applied after every rotation run. Do it outside
+`/etc/logrotate.d/relay-shell`: that file is managed by `deploy/install.sh` (which
+replaces it on the next run), and an edit shows as drift under
+`relay-shell --verify-deploy`. Where logrotate runs from `logrotate.timer` (current
+Debian and Ubuntu), a drop-in on its service does it after each run, whether or not
+the run succeeded. Replace `<shipper>` with the shipper's user (`vector`,
+`fluent-bit`, ...), one `setfacl` per user:
+
+```bash
+sudo mkdir -p /etc/systemd/system/logrotate.service.d
+sudo tee /etc/systemd/system/logrotate.service.d/relay-shell-audit-acl.conf >/dev/null <<'EOF'
+[Service]
+ExecStopPost=/bin/sh -c '/usr/bin/chattr -a /var/log/relay-shell/audit.jsonl && /usr/bin/setfacl -m u:<shipper>:r /var/log/relay-shell/audit.jsonl; /usr/bin/chattr +a /var/log/relay-shell/audit.jsonl'
+EOF
+sudo systemctl daemon-reload
+```
+
+The file is not append-only for the moment the ACL is written, and the shipper
+cannot open a newly rotated file until the drop-in has run. Where logrotate runs
+from cron instead, run the same three commands after it.
 
 Do not weaken the file mode to grant group read; the `0600` default
 is part of the on-host posture. The shipper writes nowhere under the
@@ -180,7 +209,9 @@ with ACLs:
 sudo id -u vector >/dev/null 2>&1 || sudo useradd --system --home /var/lib/vector --shell /usr/sbin/nologin vector
 sudo install -d -m 0755 -o vector -g vector /var/lib/vector
 sudo setfacl -m u:vector:rx /var/log/relay-shell
+sudo chattr -a /var/log/relay-shell/audit.jsonl
 sudo setfacl -m u:vector:r /var/log/relay-shell/audit.jsonl
+sudo chattr +a /var/log/relay-shell/audit.jsonl
 
 sudo mkdir -p /etc/systemd/system/vector.service.d
 sudo tee /etc/systemd/system/vector.service.d/override.conf >/dev/null <<'EOF'
@@ -224,8 +255,9 @@ curl -s http://127.0.0.1:9598/metrics | grep -E '^vector_(events|errors|buffer)'
   `ls -l /var/log/relay-shell/audit.jsonl`: the file is created
   `0600 relay-shell:relay-shell` by `deploy/install.sh` and the
   bundled `logrotate` config preserves that mode. Grant the `vector`
-  user a POSIX ACL as above (re-apply it after rotation). Do not
-  chmod the file.
+  user a POSIX ACL as above (with `chattr -a` / `chattr +a` around
+  it, and re-applied after rotation; see "Re-applying the ACL after
+  rotation"). Do not chmod the file.
 - **Records duplicated after restart.** Confirm `data_dir` is
   persistent and writable by the user running Vector (`vector` in
   this recipe); the checkpoint lives there.
@@ -343,7 +375,9 @@ Keep Fluent Bit as its own user and grant read access with ACLs:
 sudo id -u fluent-bit >/dev/null 2>&1 || sudo useradd --system --home /var/lib/fluent-bit --shell /usr/sbin/nologin fluent-bit
 sudo install -d -m 0755 -o fluent-bit -g fluent-bit /var/lib/fluent-bit/storage
 sudo setfacl -m u:fluent-bit:rx /var/log/relay-shell
+sudo chattr -a /var/log/relay-shell/audit.jsonl
 sudo setfacl -m u:fluent-bit:r /var/log/relay-shell/audit.jsonl
+sudo chattr +a /var/log/relay-shell/audit.jsonl
 
 sudo mkdir -p /etc/systemd/system/fluent-bit.service.d
 sudo tee /etc/systemd/system/fluent-bit.service.d/override.conf >/dev/null <<'EOF'
@@ -436,7 +470,9 @@ WantedBy=multi-user.target
 ```bash
 sudo id -u relay-shell-audit-tail >/dev/null 2>&1 || sudo useradd --system --home /nonexistent --shell /usr/sbin/nologin relay-shell-audit-tail
 sudo setfacl -m u:relay-shell-audit-tail:rx /var/log/relay-shell
+sudo chattr -a /var/log/relay-shell/audit.jsonl
 sudo setfacl -m u:relay-shell-audit-tail:r /var/log/relay-shell/audit.jsonl
+sudo chattr +a /var/log/relay-shell/audit.jsonl
 sudo systemctl daemon-reload
 sudo systemctl enable --now relay-shell-audit-tail.service
 ```

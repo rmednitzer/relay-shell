@@ -27,7 +27,7 @@ tool's policy text). A match anywhere in that text counts, so a pattern such as
 a heredoc. An `ALLOW` match admits the whole call, whatever else it contains. The policy
 text differs per tool and often carries lines after the command:
 
-| Tool | Policy text (newline-joined) |
+| Tool | Policy text (newline-joined unless noted) |
 |------|------------------------------|
 | `shell_exec` | command, stdin, `env_json` |
 | `shell_script` / `shell_spawn` | script or command, `env_json` |
@@ -36,7 +36,7 @@ text differs per tool and often carries lines after the command:
 | `ssh_check` / `ssh_keyscan` | the host list, canonical IP spellings |
 | `ssh_upload` / `ssh_download` | `upload <local> <host>:<remote>` / `download <host>:<remote> <local>`, jump chain, canonical IPs |
 | `ssh_forward` | `forward <spec>`, jump chain, host, canonical IPs |
-| `session_send` | the partial line already typed, then the new input |
+| `session_send` | the partial line already typed with the new input appended (concatenated, no newline between) |
 
 Anchor the start only (`(?s)^shell_exec systemctl restart nginx\b`) and never end-anchor an
 SSH or transfer pattern with `$`: the host, jump and IP lines follow the command, so the
@@ -46,14 +46,14 @@ boundary (`SECURITY.md`).
 
 Conventions:
 
-- `host` is an inventory / `ssh_config` alias or `user@host`. A host or user that is not an
+- `host` is an inventory / `ssh_config` alias or `user@host`. A host that is not an
   operator-written alias must be a plain token: letters, digits and `. _ - : % [ ]`, no
-  whitespace, quotes or leading `-` (a per-call `user` and every `jump` hop are held to the
-  same rule). Anything else is refused before any connection with
+  whitespace, quotes or leading `-`; a user may use only letters, digits and `. _ -` (a
+  per-call `user` and every `jump` hop are held to the same rules). Anything else is refused before any connection with
   `[ERROR: RelayError: invalid ssh host|user|jump ...]`, because asyncssh substitutes these
   values into the operator's `ProxyCommand` and the `known_hosts` file.
-- `known_hosts` is `strict` | `accept-new` | `ignore` (default from
-  `RELAY_SHELL_SSH_KNOWN_HOSTS`). `accept-new` is trust-on-first-use: an unknown host is
+- `known_hosts` is `strict` | `accept-new` | `ignore` (default: the inventory entry's mode,
+  else `RELAY_SHELL_SSH_KNOWN_HOSTS`; the audit records the effective mode). `accept-new` is trust-on-first-use: an unknown host is
   accepted and recorded, a host with an existing entry is verified and a changed key is
   refused. `ignore` never verifies. With `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false` a
   mode weaker than the server default is refused
@@ -70,7 +70,7 @@ which drift). The tool-list contract is `tests/test_server.py`.
 
 ## Choosing a tool
 
-The guidance the server hands the client at initialize (the FastMCP `instructions` string)
+The guidance the server hands the client at initialize (the `MCPServer` `instructions` string)
 and in each tool's description:
 
 - A command that **runs and exits on its own** → `shell_exec` (local) or
@@ -117,7 +117,7 @@ Tests: `tests/test_shell.py`, `tests/test_tool_wrappers.py`.
 ### `shell_spawn`
 Start a persistent local PTY (default `/bin/bash`); returns a session id.
 Params: `command`, `cols=120`, `rows=40`, `cwd`, `env_json`. Drive it with the `session_*`
-tools. Tier 1.
+tools. Tier: heuristic from the command (Tier 1 when nothing matches, as for the default shell).
 
 Tests: `tests/test_sessions.py`, `tests/test_tool_wrappers.py`.
 
@@ -133,7 +133,7 @@ Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 ### `ssh_spawn`
 Open a persistent interactive remote PTY; returns a session id. Params:
 `host`, `command` (empty = login shell), `cols=120`, `rows=40`, plus the standard connection
-params. Tier 1.
+params. Tier: heuristic from the command (Tier 1 when nothing matches, as for a login shell).
 
 Tests: `tests/test_ssh_integration.py`, `tests/test_tool_wrappers.py`.
 
@@ -227,12 +227,14 @@ A session id from `shell_spawn` or `ssh_spawn` works with all of these.
 | tool | params | notes |
 |------|--------|-------|
 | `session_send` | `session_id`, `data`, `enter=true` | `enter` appends `\n`. The audit record omits `data` (keeping its length) when the session is at a secret prompt such as `sudo`'s; see `RELAY_SHELL_AUDIT_SESSION_INPUT` |
-| `session_recv` | `session_id`, `timeout=2.0`, `max_bytes=65536` | returns buffered/new output; waits up to `timeout`; returns `""` if nothing yet; reports `[session ... ended, exit=N]` when closed |
+| `session_recv` | `session_id`, `timeout=2.0`, `max_bytes=65536` | returns buffered/new output; waits up to `timeout` (clamped to `[0, 60]` s); `max_bytes` is clamped to `[256, RELAY_SHELL_MAX_OUTPUT_HARD]`; returns `""` if nothing yet; reports `[session ... ended, exit=N]` when closed |
 | `session_resize` | `session_id`, `cols`, `rows` | resize the PTY |
-| `session_kill` | `session_id`, `signal_name="TERM"`, `close=true` | signal and (default) reap; `signal_name` is a real signal name with or without the `SIG` prefix (`TERM`, `SIGKILL`, `usr1`); anything else returns `[ERROR: RelayError: unknown signal ...]` and touches nothing |
+| `session_kill` | `session_id`, `signal_name="TERM"`, `close=true` | signal and (default) reap; closing a local PTY escalates SIGTERM, SIGHUP after 0.5 s, SIGKILL at 5 s (including whatever is left of its process group; ADR 0012); `signal_name` is a real signal name with or without the `SIG` prefix (`TERM`, `SIGKILL`, `usr1`); anything else returns `[ERROR: RelayError: unknown signal ...]` and touches nothing |
 | `session_list` | - | active sessions with size/age/idle/byte counters |
 
-`session_recv` is Tier 0; `session_list` is Tier 0; the others are Tier 1.
+`session_recv` and `session_list` are Tier 0; `session_resize` and `session_kill` are Tier 1;
+`session_send` is classified from its policy text (Tier 1 when nothing matches), so typing
+`rm -rf /` into a session is Tier 3.
 
 Sessions are not owned by the client that opened them: under multi-client OAuth every
 approved client sees every session in `session_list` and can drive or close it by id. All
@@ -244,13 +246,15 @@ Tests: `tests/test_sessions.py`, `tests/test_tool_wrappers.py`.
 ## Diagnostics
 
 ### `server_info`
-Version, transport, policy mode, effective limits, audit path / degraded
-flag / format / chain (the tamper-evident hash chain state, ADR 0007),
+Version, transport, policy mode, `warnings` (the permissive settings in effect, ADR 0013),
+`runtime` (`uid`, `euid`, `user`, `is_root`, `sudo_binary`), effective `limits` (including
+`max_conns` and `max_input`), audit path / `session_input` mode / degraded flag / format /
+chain (the tamper-evident hash chain state, ADR 0007) / `intent` (write-ahead records),
 seccomp-notify state (`notify` enabled, `supported` + `reason`, the per-call
 `cap`, the `filter_version`; ADR 0006), the Tier-3 confirmation-broker state
 (`confirm.tier3` enabled, `confirm.ttl`, live `confirm.pending` token count;
-ADR 0009), SSH defaults (known-hosts mode and whether a weaker per-call mode is allowed, connect/keepalive/idle timeouts),
-inventory size. Tier 0.
+ADR 0009), SSH defaults (known-hosts mode and whether a weaker per-call mode is allowed, the
+active `ssh_config` path, connect/keepalive/idle timeouts), inventory size. Tier 0.
 
 Tests: `tests/test_tool_wrappers.py`, `tests/test_stdio_e2e.py`.
 
@@ -271,7 +275,7 @@ Tests: `tests/test_audit_tail_tool.py`.
 Second step of the **opt-in Tier-3 confirmation flow** (ADR 0009; off unless
 `RELAY_SHELL_CONFIRM_TIER3=true`). Takes a single `token`. When the broker is
 enabled, an irreversible (Tier 3) call does not run on first request; it
-returns `[CONFIRM REQUIRED tier 3: … token="…" …]` and is audited with
+returns `[CONFIRM REQUIRED tier 3 (IRREVERSIBLE): … token="…" …]` and is audited with
 `action=confirm_plan` (no side effect). Pass that token to `operation_confirm`
 to arm it, then **re-issue the exact same call** to execute it (audited with
 `action=confirm_execute`). Tokens are single-use, bound to the exact operation
@@ -314,7 +318,7 @@ Tests: `tests/test_resources.py`.
 ## Prompts
 
 A prompt is reusable, client-pullable guidance: the protocol-native home for *detailed* "when
-to use which tool" instructions (the concise version is the FastMCP `instructions` string
+to use which tool" instructions (the concise version is the `MCPServer` `instructions` string
 handed to every client at initialize). One is registered:
 
 | name              | audit `tool`              | meaning                                                              |
@@ -342,7 +346,7 @@ hash chain handle them like any other line:
 
 | audit `tool`              | fields beyond `ts`/`tool`/`tier`/`request_id`                          | meaning                                                                                                   |
 |---------------------------|------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
-| `syscall_notify`          | `pid`, `syscall`, `nr`, `syscall_args` (six raw scalar register values)| one observed-and-continued syscall in the child (`execve`, a privilege/namespace/mount change, a write-`open`, a privilege-relevant `prctl`). No user buffer is dereferenced. |
+| `syscall_notify`          | `pid`, `syscall`, `nr`, `syscall_args` (six register values as signed int64), `syscall_args_hex` (the same six as exact unsigned hex)| one observed-and-continued syscall in the child (`execve`, a privilege/namespace/mount change, a write-`open`, a privilege-relevant `prctl`). No user buffer is dereferenced. |
 | `syscall_notify_overflow` | `pid`, `cap`                                                           | emitted once when the child crosses `RELAY_SHELL_SECCOMP_NOTIFY_CAP`; beyond it, emission stops but the child still runs to completion. |
 
 Both are tier 0 (passive observations, not tool calls), and the channel
@@ -365,7 +369,11 @@ out = session_recv(id, timeout=3)                    -> table
 
 Failures are bounded strings, never exceptions:
 
-- `[DENIED tier N (NAME): reason]` - refused by policy.
+- `[DENIED tier N (NAME): reason]` - refused by policy; `[DENIED tier N (NAME): input is X
+  characters, over RELAY_SHELL_MAX_INPUT (Y)]` - the policy text exceeds the input cap and was
+  refused before classification.
+- `[CONFIRM REQUIRED tier 3 (IRREVERSIBLE): ...]` - only with `RELAY_SHELL_CONFIRM_TIER3=true`;
+  see `operation_confirm`.
 - `[TIMEOUT after Ns]` - exceeded the (clamped) timeout. For SSH commands and SFTP
   transfers the string continues `outcome unknown: ...`: the client gave up, but the remote
   side may still be running, may have completed, or may have applied part of the change.

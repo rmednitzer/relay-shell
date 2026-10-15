@@ -17,7 +17,8 @@ stays authenticated over time**. Enable steps (env vars, the Caddy edge) are in
 | `transport` | `auth_enabled` | Result |
 |-------------|----------------|--------|
 | `stdio` (default) | (ignored) | No OAuth layer; the local transport is the boundary. |
-| `http` | `false` (default) | HTTP served **without** auth; you are relying entirely on the network edge (loopback bind + the Caddy CIDR allowlist in [`deployment.md` §4](deployment.md)). |
+| `http` on a loopback `HTTP_HOST` (default `127.0.0.1`) | `false` (default) | HTTP served **without** auth; you are relying entirely on the network edge (loopback bind + the Caddy CIDR allowlist in [`deployment.md` §4](deployment.md)). |
+| `http` on a non-loopback `HTTP_HOST` | `false` | Refused at startup, unless `RELAY_SHELL_ALLOW_UNAUTH_NETWORK=true` (for a deployment where an authenticating proxy is the only route to the port). |
 | `http` | `true` | OAuth 2.1 enforced: every tool call needs a valid bearer access token. |
 
 The provider is constructed only when both conditions hold
@@ -179,9 +180,9 @@ to the exact public MCP endpoint in a new deployment.
 - A stored record whose `resource` is missing or different fails closed: an access token
   answers 401, a refresh or code exchange answers `invalid_grant`. There is no automatic
   grandfathering and no timed fail-open mode, so grants issued before this binding existed
-  must be re-authorized (or rebound offline, see
-  [`runbook.md` §10](runbook.md)). Do not change the issuer or resource identifier in the
-  same step as that migration.
+  must be re-authorized: the client signs in again. (The offline rebind script,
+  `scripts/bind-legacy-oauth.py`, was removed in 0.4.0; see [`runbook.md` §10](runbook.md).)
+  Do not change the issuer or resource identifier in the same step as that migration.
 
 ## Operator approval
 
@@ -305,7 +306,9 @@ a sandbox. It is opt-in because the supported deployment shapes differ:
 
 The default transport is stdio and `auth_enabled` defaults to `false`, so a
 fresh install never stands up a network listener: you choose HTTP, and you
-choose whether to authenticate it. When you expose HTTP, the checklist in
+choose whether to authenticate it. HTTP without OAuth on a non-loopback address is refused at
+startup unless you also set `RELAY_SHELL_ALLOW_UNAUTH_NETWORK=true`, and `server_info.warnings`
+lists HTTP without OAuth as a permissive setting. When you expose HTTP, the checklist in
 [`deployment.md`](deployment.md) treats the edge controls **and** OAuth as required.
 
 ## References

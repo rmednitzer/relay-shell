@@ -160,15 +160,23 @@ no TLS or source-IP filtering of its own. Terminate TLS and restrict by source
 IP at a reverse proxy. `deploy/Caddyfile` is shipped parameterized through
 environment variables and provides:
 
-- automatic TLS via ACME (Let's Encrypt by default, ZeroSSL fallback),
+- automatic TLS via ACME from the configured directory (`RELAY_SHELL_EDGE_ACME_CA`,
+  Let's Encrypt production by default),
 - an `@blocked` matcher that 403s any source outside the allowlisted CIDRs,
 - HSTS / `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` /
-  `Content-Security-Policy` (`default-src 'self'; frame-ancestors 'none'`),
+  `Content-Security-Policy` (`default-src 'self'; frame-ancestors 'none'; base-uri 'none'`),
+  and the `Server` header removed,
+- a 64 KB request-body cap on the public OAuth endpoints (the MCP path is capped by the
+  relay itself, `RELAY_SHELL_MAX_INPUT`),
+- an access log that drops the `Location` response header, which carries the authorization
+  code on the `/authorize` redirect,
 - `reverse_proxy` to the loopback MCP port.
 
 Set the allowlist to the CIDRs of your MCP client only. The OAuth browser
-endpoints (`/authorize`, `/.well-known/*`, `/register`, `/token`, `/revoke`)
-are publicly reachable for the OAuth flow. MCP tool traffic is CIDR-restricted,
+endpoints (`/authorize`, `/.well-known/oauth-authorization-server`,
+`/.well-known/oauth-protected-resource*`, `/register`, `/token`, `/revoke`)
+are publicly reachable for the OAuth flow; every other path, other `/.well-known/` paths
+included, is CIDR-restricted. MCP tool traffic is CIDR-restricted,
 including when upstream OAuth is disabled. The default loopback-only allowlist
 denies remote MCP clients with 403. Enabling OAuth does not bypass this gate;
 allowlist the client's source CIDRs. Do not use an all-address allowlist while
@@ -180,9 +188,10 @@ matcher, OAuth 2.1, then the policy/audit layer.
 ### 4a. Automated TLS (Caddy + Let's Encrypt)
 
 `deploy/install-edge.sh` is the supported turnkey path. It installs Caddy
-from the official apt repository (if missing), drops the parameterized
-Caddyfile in place, writes a systemd environment drop-in, validates the
-config, and starts the service. Renewal is driven by Caddy's built-in ACME
+from the official apt repository (if missing), validates the parameterized
+Caddyfile as a candidate and only then replaces the live one (keeping the previous file as
+`/etc/caddy/Caddyfile.bak`; a candidate that fails validation leaves the live file
+untouched), writes a systemd environment drop-in, and starts the service. Renewal is driven by Caddy's built-in ACME
 scheduler - **no cron, no certbot**.
 
 Prerequisites: a public DNS A/AAAA record for the chosen hostname pointing
@@ -190,7 +199,8 @@ at this host, and TCP/80 + TCP/443 reachable from the internet (port 80 is
 required for the HTTP-01 challenge).
 
 ```bash
-# Edit /etc/relay-shell/relay-shell.env (or export inline) and set at minimum:
+# Edit /etc/relay-shell/relay-shell.env (or export inline; a value in the env file
+# overrides an exported one) and set at minimum:
 #   RELAY_SHELL_EDGE_DOMAIN=relay-shell.example.org
 #   RELAY_SHELL_EDGE_ACME_EMAIL=admin@example.org
 #   RELAY_SHELL_EDGE_CLIENT_CIDRS="203.0.113.0/24 198.51.100.0/24"
@@ -212,7 +222,8 @@ sudo deploy/install-edge.sh
 
 The installer is idempotent: re-run it after editing the env file to push
 changes. Both installers create `/etc/relay-shell` as `0750`
-(`root:relay-shell`), not world-listable; systemd reads the EnvironmentFiles
+(`root:relay-shell`, or `root:root` on an edge-only host without the `relay-shell` group),
+not world-listable; systemd reads the EnvironmentFiles
 as root, so the service is unaffected. The drop-in at
 `/etc/systemd/system/caddy.service.d/relay-shell-edge.conf` is static and
 references a managed `EnvironmentFile=/etc/relay-shell/relay-shell-edge.env`,
@@ -251,7 +262,10 @@ table in [`auth.md`](auth.md#defaults-at-a-glance).
 
 **Approve your client.** A client that registers is *pending*; `/authorize`
 refuses it until you approve it on the host
-(`relay-shell --auth-list`, then `relay-shell --auth-approve <client_id>`). This
+(`sudo -u relay-shell /var/lib/relay-shell/venv/bin/relay-shell --auth-list`, then the same
+binary with `--auth-approve <client_id>`; the commands read `RELAY_SHELL_AUTH_STATE_DIR` from
+their own environment, not from the unit's EnvironmentFile, so export it when it is not the
+default `/var/lib/relay-shell/oauth`). This
 closes the window in which the first party to reach `/register` could obtain a
 token; see [`auth.md`](auth.md#operator-approval). Existing installs are carried
 over as approved on upgrade.
@@ -271,15 +285,19 @@ and rotate it without losing that attribute:
 
 ```bash
 sudo mkdir -p /var/log/relay-shell && sudo chown relay-shell:relay-shell /var/log/relay-shell
-sudo touch /var/log/relay-shell/audit.jsonl && sudo chattr +a /var/log/relay-shell/audit.jsonl
+sudo install -o relay-shell -g relay-shell -m 0600 /dev/null /var/log/relay-shell/audit.jsonl
+sudo chattr +a /var/log/relay-shell/audit.jsonl
 sudo cp deploy/logrotate/relay-shell /etc/logrotate.d/relay-shell
 ```
 
 `RELAY_SHELL_AUDIT_FORMAT` controls serialization for downstream SIEM ingest:
 `jsonl` (default), `cef`, or `leef`.
 
-The bundled logrotate config drops the append-only bit only for the rotate
-and restores it immediately. **Ship the log off-host** and alert on gaps; an
+The bundled logrotate config rotates daily and keeps 90 dated archives
+(`audit.jsonl-YYYYMMDD`; the newest stays uncompressed, older ones are `.gz`). It drops the append-only bit
+from the active file and every archive for the rotation run only (`firstaction`), restores it
+on the new active file (`postrotate`) and then on every archive, and on the active file again
+in case the rotation aborted (`lastaction`), so archives stay append-only too. **Ship the log off-host** and alert on gaps; an
 on-host log is evidence only until the host is compromised.
 [`docs/audit-shipper.md`](audit-shipper.md) has worked examples for
 Vector, Fluent Bit, and `journalctl` → `systemd-journal-remote`.
@@ -415,7 +433,9 @@ sequence and `prev` continuity inside every segment and across rotation seams (a
 only with an exact entry in a root-owned approval ledger), writes `chain-verification.jsonl`,
 `latest-anchor.json` and `retained-checkpoints.json`, and only then does the wrapper publish the
 segments and, last, the anchor as the commit marker. A failed verification publishes nothing and
-exits non-zero. It needs `RELAY_AUDIT_RSYNC_DEST` and, if logrotate keeps other than 90 rotated
+exits non-zero. The rsync run on the destination is plain `rsync` (`RELAY_AUDIT_RSYNC_PATH`,
+default since 0.4.0); an installation that relied on the former `sudo -n /usr/bin/rsync`
+default (root on the backup host) must now set it explicitly. It needs `RELAY_AUDIT_RSYNC_DEST` and, if logrotate keeps other than 90 rotated
 segments, `RELAY_AUDIT_RETAIN_SEGMENTS`; after logrotate prunes the oldest segment the verifier
 accepts the shortened history when it continues a checkpointed record (and hosts that rotated
 before checkpoints existed need one reviewed `approved_heads` entry). Before publishing, the wrapper
@@ -579,21 +599,23 @@ Administering **Windows hosts over OpenSSH with PowerShell 7 (`pwsh`) as the
 
 ### 8c. Settings reference
 
-The complete, annotated list of every `RELAY_SHELL_*` setting is
-[`.env.example`](https://github.com/rmednitzer/relay-shell/blob/main/.env.example)
-(one commented line per `Settings` field). Operator-relevant ones not
-covered above:
+The authoritative list of `RELAY_SHELL_*` settings, with types, defaults and ranges, is the
+`Settings` class in
+[`src/relay_shell/config.py`](https://github.com/rmednitzer/relay-shell/blob/main/src/relay_shell/config.py);
+[`.env.example`](https://github.com/rmednitzer/relay-shell/blob/main/.env.example) is the
+annotated template. Operator-relevant ones not covered above:
 
 - **HTTP listener:** `RELAY_SHELL_HTTP_HOST` / `RELAY_SHELL_HTTP_PORT` (default
   `127.0.0.1:8080`; see §4).
 - **Resource bounds:** `RELAY_SHELL_MAX_OUTPUT` / `_MAX_OUTPUT_HARD` (output
-  caps), `RELAY_SHELL_DEFAULT_TIMEOUT` / `_MAX_TIMEOUT` (timeout used when a
-  `shell_exec` / `ssh_exec` caller omits it, default 60 s, + the clamp for every
-  call; other tools keep their own documented defaults), `RELAY_SHELL_MAX_SESSIONS` / `_MAX_FORWARDS` / `_MAX_CONNS`
-  (concurrency caps for sessions, port forwards, and the SSH connection cache;
-  `_MAX_CONNS` defaults to 256 and evicts the least-recently-used idle
-  connection when full), `RELAY_SHELL_SESSION_IDLE_TIMEOUT` /
-  `_SESSION_BUFFER_BYTES` (PTY session reaping + per-session buffer),
+  caps, defaults 65536 and 1048576 bytes), `RELAY_SHELL_DEFAULT_TIMEOUT` / `_MAX_TIMEOUT`
+  (timeout used when a `shell_exec` / `ssh_exec` caller omits it, default 60 s, + the clamp
+  for every call, default 900 s; other tools keep their own documented defaults),
+  `RELAY_SHELL_MAX_SESSIONS` / `_MAX_FORWARDS` / `_MAX_CONNS` (concurrency caps for sessions,
+  port forwards, and the SSH connection cache, defaults 64 / 64 / 256; `_MAX_CONNS` evicts the
+  least-recently-used connection not in use when full), `RELAY_SHELL_SESSION_IDLE_TIMEOUT` /
+  `_SESSION_BUFFER_BYTES` (PTY session reaping, default 1800 s, and the per-session buffer,
+  default 262144 bytes),
   `RELAY_SHELL_MAX_INPUT` (default 2097152 characters: the command, stdin, script
   body and env overlay of one call, together). The tier classifier and the deny
   regex scan that text synchronously at about 0.5 s per MiB, so a call over the cap
@@ -613,8 +635,9 @@ covered above:
   service account without a per-call audit record; use `ProxyJump` instead and keep the file
   operator-owned and not writable by the service account. Caller-supplied hosts, users and
   jump hops are restricted to plain tokens so they cannot add arguments to a `ProxyCommand`.
-- **SSH connect tuning:** `RELAY_SHELL_SSH_CONNECT_TIMEOUT` / `_SSH_KEEPALIVE`
-  (dial timeout + keepalive; `_SSH_IDLE_TIMEOUT` for the pool reaper is in §7).
+- **SSH connect tuning:** `RELAY_SHELL_SSH_CONNECT_TIMEOUT` (dial timeout, default 10 s) /
+  `_SSH_KEEPALIVE` (keepalive interval, default 30 s, `0` disables); `_SSH_IDLE_TIMEOUT` for
+  the pool reaper is in §7.
 - **Audit sink:** `RELAY_SHELL_AUDIT_STDERR` (also mirror audit lines to stderr).
 
 A `RELAY_SHELL_*` name that no setting reads (a typo such as `RELAY_SHELL_POLICY_MOD`,
@@ -697,7 +720,7 @@ stateless beyond them. Back them up together:
 |-----------------------------------------------------------------|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
 | OAuth state                                                     | `${RELAY_SHELL_AUTH_STATE_DIR}/{clients.json, approvals.json, codes.json, tokens.json}` (default `/var/lib/relay-shell/oauth/`) | Losing it logs every client out and re-runs single-client lockdown from scratch (a new client can register, the old one cannot). |
 | systemd EnvironmentFile                                         | `/etc/relay-shell/relay-shell.env` (plus `/etc/relay-shell/relay-shell-edge.env` for the edge) | Source of truth for every `RELAY_SHELL_*` knob; recreating it from scratch is error-prone.  |
-| Audit log                                                       | `${RELAY_SHELL_AUDIT_PATH}` (default `/var/log/relay-shell/audit.jsonl`) plus `audit.jsonl.{1..N}.gz` rotations | The on-host copy is the local fallback when the off-host shipper has fallen behind.        |
+| Audit log                                                       | `${RELAY_SHELL_AUDIT_PATH}` (default `/var/log/relay-shell/audit.jsonl`) plus the `audit.jsonl-YYYYMMDD[.gz]` archives | The on-host copy is the local fallback when the off-host shipper has fallen behind.        |
 
 A simple recipe (adapt to your backup tool):
 
