@@ -131,7 +131,7 @@ def test_tooling_locks_are_fully_hashed_and_agree_with_requirements() -> None:
         )
     }
     build, sbom = _lock("requirements-build.txt"), _lock("requirements-sbom.txt")
-    assert {"build", "twine", "hatchling"} <= set(build)
+    assert {"build", "twine", "hatchling", "editables"} <= set(build)
     assert "cyclonedx-bom" in sbom
     for name, lock in (("requirements-build.txt", build), ("requirements-sbom.txt", sbom)):
         for package, version in lock.items():
