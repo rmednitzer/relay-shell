@@ -50,10 +50,9 @@ require_var() {
     [ -n "$val" ] || die "$name is required (export it before running, or set it in $OPERATOR_ENV_FILE)"
 }
 
-# Parse a systemd-style EnvironmentFile safely. Unlike `source`, this does
-# not execute the file, so values containing spaces, shell metacharacters,
-# or unbalanced quotes cannot crash or hijack the installer. Only keys
-# matching RELAY_SHELL_EDGE_* are exported.
+# Parse a systemd-style EnvironmentFile without executing it (unlike `source`),
+# so spaces, shell metacharacters or unbalanced quotes in values cannot crash or
+# hijack the installer. Only RELAY_SHELL_EDGE_* keys are exported.
 load_edge_env() {
     local file="$1" line key val
     [ -r "$file" ] || return 0
@@ -236,13 +235,12 @@ if ! command -v caddy >/dev/null 2>&1; then
     install -d -m 0755 /etc/apt/keyrings
     if [ ! -f /etc/apt/keyrings/caddy-stable-archive-keyring.gpg ]; then
         # DEP-1: the Caddy repo key is fetched over TLS but is otherwise
-        # trust-on-first-use. Dearmor to a temp file, print the fingerprint,
-        # and -- if the operator pinned one via RELAY_SHELL_EDGE_CADDY_GPG_FPR
-        # -- refuse to install unless it matches, so a swapped key (compromised
-        # mirror, MITM past TLS) is caught before apt ever trusts it. We do not
-        # ship a default fingerprint: Caddy/cloudsmith do not publish a
-        # canonical one to verify against, so pin the value you confirm at
-        # https://caddyserver.com/docs/install rather than one baked in here.
+        # trust-on-first-use. Dearmor to a temp file and print the fingerprint;
+        # if the operator pinned one via RELAY_SHELL_EDGE_CADDY_GPG_FPR, refuse
+        # to install unless it matches, so a swapped key (compromised mirror,
+        # MITM past TLS) is caught before apt trusts it. No default fingerprint
+        # is shipped because Caddy/cloudsmith publish no canonical one; pin the
+        # value you confirm at https://caddyserver.com/docs/install.
         tmp_key="$(mktemp)"
         curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
             | gpg --dearmor -o "$tmp_key"
@@ -275,9 +273,8 @@ else
     log "Caddy already installed: $(caddy version 2>/dev/null | head -1)"
 fi
 
-# The rest of the installer assumes a systemd-managed caddy.service (the
-# official apt package ships one). A binary installed by hand may not. Bail
-# out early with an actionable message instead of failing inside `systemctl`.
+# The rest assumes a systemd-managed caddy.service (the official apt package
+# ships one; a hand-installed binary may not). Fail early with a clear message.
 if ! systemctl list-unit-files caddy.service >/dev/null 2>&1 \
         || ! systemctl list-unit-files caddy.service 2>/dev/null | grep -q '^caddy\.service'; then
     die "caddy binary is present but no caddy.service systemd unit was found.
@@ -289,10 +286,9 @@ fi
 install -d -m 0755 /etc/caddy
 install -d -m 0750 -o caddy -g caddy /var/log/caddy 2>/dev/null || install -d -m 0755 /var/log/caddy
 
-# A magic marker on the first non-comment line lets us recognize a Caddyfile
-# this installer owns vs. one a human (or another tool) has placed there for
-# unrelated sites. Refusing to clobber the latter prevents an outage when
-# this is run on a host that already serves other vhosts via Caddy.
+# A marker on the first non-comment line identifies a Caddyfile this installer
+# owns. Refusing to overwrite any other prevents an outage on a host that
+# already serves other vhosts via Caddy.
 MANAGED_MARKER="# relay-shell:install-edge:managed"
 RELAY_SHELL_EDGE_FORCE="${RELAY_SHELL_EDGE_FORCE:-0}"
 
@@ -332,15 +328,13 @@ if [ -e "$CADDYFILE_DST" ]; then
 fi
 mv "$CADDYFILE_DST.tmp" "$CADDYFILE_DST"
 
-# Write a dedicated systemd EnvironmentFile rather than inlining values into
-# the drop-in. Keeps the drop-in static and avoids `%`-specifier expansion
-# that systemd applies inside Environment= assignments.
+# A dedicated systemd EnvironmentFile keeps the drop-in static and avoids the
+# `%`-specifier expansion systemd applies inside Environment= assignments.
 #
-# Note on quoting: systemd's EnvironmentFile parser treats whitespace inside
-# an unquoted value as a separator for additional KEY=VALUE pairs on the
-# same line, which would silently truncate RELAY_SHELL_EDGE_CLIENT_CIDRS to
-# the first CIDR. Emit every value double-quoted, with embedded double
-# quotes escaped, so multi-token values survive intact.
+# Quoting: systemd's EnvironmentFile parser treats whitespace in an unquoted
+# value as a separator for further KEY=VALUE pairs, which would silently
+# truncate RELAY_SHELL_EDGE_CLIENT_CIDRS to the first CIDR. Every value is
+# emitted double-quoted with embedded double quotes escaped.
 emit_env() {
     local key="$1" val="$2"
     # Escape backslashes first, then double quotes.
@@ -350,10 +344,9 @@ emit_env() {
 }
 
 log "Installing edge env file at $EDGE_ENV_FILE"
-# DEP-2: 0750, not world-listable. Prefer group relay-shell (matches the main
-# installer); fall back to root:root if this is an edge-only host where the
-# relay-shell group was never created. systemd reads the EnvironmentFile as
-# root either way, so the world bit is all we are dropping.
+# DEP-2: 0750, not world-listable. Group relay-shell (as in the main installer),
+# or root:root on an edge-only host where that group was never created. systemd
+# reads the EnvironmentFile as root either way.
 install -d -m 0750 -o root -g relay-shell /etc/relay-shell 2>/dev/null \
     || install -d -m 0750 /etc/relay-shell
 umask 077
@@ -366,9 +359,8 @@ umask 077
     emit_env RELAY_SHELL_EDGE_UPSTREAM     "$RELAY_SHELL_EDGE_UPSTREAM"
     emit_env RELAY_SHELL_EDGE_CLIENT_CIDRS "$RELAY_SHELL_EDGE_CLIENT_CIDRS"
 } > "$EDGE_ENV_FILE"
-# Not secret, but still security-relevant edge configuration: keep it
-# root-owned and group-readable by caddy (which needs to read it for the
-# drop-in's EnvironmentFile=), not world-readable.
+# Not secret but security-relevant: root-owned and group-readable by caddy (the
+# drop-in's EnvironmentFile= needs it), not world-readable.
 if getent group caddy >/dev/null 2>&1; then
     chown root:caddy "$EDGE_ENV_FILE"
     chmod 0640 "$EDGE_ENV_FILE"

@@ -59,10 +59,10 @@ reason) and returned as a `[DENIED ...]` string, never an exception.
 
 ## 2026-10-14 update: classifier tuning (A14-C9, `PATTERNS_VERSION` 16)
 
-The 2026-10-14 audit corpus showed the heuristics drifting in both directions, and the
-reproduced cases are now fixed. Nothing here makes the classifier a boundary: a permitted
-shell command is not contained by it, and `guarded`/`readonly` remain advisory for
-anything the patterns do not name.
+The 2026-10-14 audit corpus showed the heuristics drifting in both directions; the
+reproduced cases are fixed. The classifier is still not a boundary: a permitted shell
+command is not contained by it, and `guarded`/`readonly` remain advisory for anything the
+patterns do not name.
 
 - **Under-classified, now escalated.** Tier 3: `rm \<newline>-rf` (line continuations are
   removed before matching, as the shell does), `sudo -u root reboot`, `nice -n 10 reboot`,
@@ -84,8 +84,7 @@ anything the patterns do not name.
   random commands against v15 showed no Tier 3 downgrade except where a line continuation
   joins the lines (`echo hi \<newline>reboot` is one command whose argument is `reboot`).
 - **Still heuristic.** Quoting, `eval`, variable indirection, `sh -c` strings, scripts, and
-  commands that are not named above remain Tier 1. Extend per deployment with the deny and
-  allow lists rather than by widening the built-ins silently.
+  commands not named above remain Tier 1 (see the limits below).
 
 ### STPA trace for the 2026-10-14 tuning (authority and automated decision)
 
@@ -144,8 +143,8 @@ review.
 
 ## Addendum 2026-10-14: the tier now has a stated basis and reaches the caller
 
-`policy.assess()` returns the tier together with why it was chosen (`BASIS_*` strings), and
-`PolicyDecision.basis` carries it to the runner. In `open` mode, which remains the default and
-refuses nothing, the tier and basis now also reach the caller as a trailing `[NOTICE ...]` line
-for Tier 2 and Tier 3 calls. Admission rules are unchanged. See
-[ADR 0013](0013-open-by-default-with-unsafe-notices.md) for the decision and its STPA trace.
+`policy.assess()` returns the tier with the reason it was chosen (`BASIS_*` strings), and
+`PolicyDecision.basis` carries it to the runner. In `open` mode (the default, which refuses
+nothing) the tier and basis now also reach the caller as a trailing `[NOTICE ...]` line for
+Tier 2 and Tier 3 calls. Admission rules are unchanged. See
+[ADR 0013](0013-open-by-default-with-unsafe-notices.md).

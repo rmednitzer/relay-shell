@@ -1,11 +1,10 @@
 """Two-step confirmation broker for Tier-3 (irreversible) operations.
 
-Adapts a plan -> authorize -> execute handshake (see
-``docs/adr/0009-tier3-confirmation-broker.md``) into relay-shell's central
+A plan -> authorize -> execute handshake (see
+``docs/adr/0009-tier3-confirmation-broker.md``) in relay-shell's central
 runner. **Opt-in and default-off**: the broker is constructed only when
-``RELAY_SHELL_CONFIRM_TIER3`` is set, so with the default configuration
-:meth:`Relay.run` never consults it and the audit record stays byte-identical
-to today.
+``RELAY_SHELL_CONFIRM_TIER3`` is set; otherwise :meth:`Relay.run` never
+consults it and the audit record is unchanged.
 
 The flow, when enabled (every step lands on the normal audit stream):
 
@@ -21,23 +20,20 @@ empty when no OAuth identity exists): another client can neither arm it nor cons
 so a second client issuing the identical call inside the TTL is challenged afresh
 instead of riding the first client's confirmation (A14-C10b).
 
-The binding is the operation's hash - the tool name plus a caller-supplied
-``op_key`` that identifies the *exact* call - not a per-tool parameter. The
-runner builds that key from the command/content (the policy text) **and** the
-full audited argument set, so it captures the operation's target (host, cwd,
-session id, host list) as well as its command. A token armed for one target
-therefore cannot be consumed against another (no confused-deputy replay). The
-gate lives in exactly one place (the central runner), mirroring how the deny
-list and tier classifier already gate uniformly, so it is correct for every
-current and future Tier-3-capable tool without threading a token through each
-wrapper.
+The binding is the operation's hash: the tool name plus a caller-supplied
+``op_key`` identifying the *exact* call. The runner builds that key from the
+command/content (the policy text) **and** the full audited argument set, so it
+covers the target (host, cwd, session id, host list) as well as the command. A
+token armed for one target cannot be consumed against another (no
+confused-deputy replay). The gate lives only in the central runner, like the
+deny list and tier classifier, so it covers every Tier-3-capable tool without
+per-wrapper plumbing.
 
-This is a *safeguard on top of* the tier/mode policy, never a replacement:
-the deny list and mode checks still run first, and the retried call is
-re-classified and re-admitted from scratch. Default-off means no posture
-change; enabling it adds deliberate friction to irreversible operations so a
-model persuaded in a single turn cannot fire one without a distinct second
-step.
+This is a *safeguard on top of* the tier/mode policy, never a replacement: the
+deny list and mode checks still run first, and the retried call is
+re-classified and re-admitted from scratch. Enabling it adds friction to
+irreversible operations so a model persuaded in a single turn cannot fire one
+without a distinct second step.
 """
 
 from __future__ import annotations
@@ -52,10 +48,9 @@ from .util import sha256_hex
 
 __all__ = ["Challenge", "ConfirmationBroker"]
 
-# Bound the pending-token store so a client that keeps triggering plans (or a
-# buggy caller) cannot grow it without limit. Far above any real interactive
-# use; the sweep drops expired entries first, then the soonest-to-expire if
-# still over budget.
+# Bounds the pending-token store against a client that keeps triggering plans.
+# Far above real interactive use; the sweep drops expired entries first, then
+# un-armed ones soonest-to-expire first.
 _MAX_PENDING = 256
 
 
@@ -90,12 +85,10 @@ class _Entry:
 class ConfirmationBroker:
     """In-memory, single-use, TTL-bounded confirmation tokens.
 
-    Thread-safe: a :class:`threading.Lock` guards the store so the broker is
-    safe even though every caller today runs on the event loop - the audit
-    logger takes the same belt-and-braces posture for the seccomp-notify
-    supervisor thread. State is process-local and ephemeral by design: a
-    restart drops all pending tokens (fail-safe - a dropped token simply
-    re-plans), so there is nothing to persist and no cross-restart replay.
+    Thread-safe: a :class:`threading.Lock` guards the store, although every
+    caller today runs on the event loop. State is process-local and ephemeral by
+    design: a restart drops all pending tokens (fail-safe: the call re-plans),
+    so nothing persists and nothing replays across restarts.
     """
 
     def __init__(
@@ -156,9 +149,9 @@ class ConfirmationBroker:
         Returns ``True`` if the token exists, is unexpired and was planned by
         ``client_id`` (arming an already-armed token is idempotent), ``False`` for an
         unknown, expired or foreign token (indistinguishable, so another client learns
-        nothing about a token it did not plan). Arming authorizes nothing on its own: the retried
-        call is still re-classified and re-admitted by the policy layer
-        before :meth:`consume` releases it.
+        nothing about a token it did not plan). Arming authorizes nothing on its own: the
+        retried call is still re-classified and re-admitted by the policy layer before
+        :meth:`consume` releases it.
         """
         now = self._clock()
         with self._lock:

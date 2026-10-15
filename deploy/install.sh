@@ -69,10 +69,9 @@ systemctl daemon-reload
 log "Installing logrotate config"
 install_managed 0644 "$SRC_DIR/deploy/logrotate/relay-shell" /etc/logrotate.d/relay-shell
 
-# DEP-2: 0750 root:relay-shell, not a world-listable 0755 - the env files
-# inside hold deployment config (and the relay-shell group already exists from
-# the service-account step above). systemd reads the EnvironmentFile as root,
-# so dropping the world bit does not affect the service.
+# DEP-2: 0750 root:relay-shell, not world-listable 0755: the env files hold
+# deployment config. systemd reads the EnvironmentFile as root, so the service
+# is unaffected.
 install -d -m 0750 -o root -g relay-shell /etc/relay-shell
 [ -e /etc/relay-shell/relay-shell.env ] || {
     install -m 0640 -o root -g relay-shell "$SRC_DIR/.env.example" /etc/relay-shell/relay-shell.env

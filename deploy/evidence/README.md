@@ -2,7 +2,11 @@
 
 These deployment assets verify every retained Relay Shell audit segment,
 validate cross-rotation seams, write a compact latest anchor, and copy the
-evidence to an operator-selected off-host destination.
+evidence to an operator-selected off-host destination (units
+`relay-audit-evidence.service` and `relay-audit-evidence.timer`, hourly).
+This README is canonical for the verifier, anchor and rsync mirror; streaming
+the live log with Vector, Fluent Bit or `systemd-journal-remote` is covered in
+[`docs/audit-shipper.md`](https://github.com/rmednitzer/relay-shell/blob/main/docs/audit-shipper.md).
 
 Genesis resets are fail-closed. A reset is accepted only when its exact first
 record timestamp appears in a root-owned approval ledger. This avoids broad

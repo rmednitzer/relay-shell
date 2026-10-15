@@ -14,9 +14,9 @@ registry entry points to but whose child, fds and thread were still live. A canc
 the SIGTERM grace wait also skipped SIGKILL, so a child that ignores SIGTERM outlived its
 session (BACKLOG A14-R10).
 
-This ADR records the decision and the STPA trace required by `AGENTS.md` for a change to a
-recovery and process-termination control action. It is an analysis of this control loop,
-not a certification, and does not replace the threat model in `SECURITY.md`.
+This ADR records the decision and the STPA trace `AGENTS.md` requires for a change to a
+recovery and process-termination control action. It analyses this control loop; it is not
+a certification and does not replace the threat model in `SECURITY.md`.
 
 ## Decision
 

@@ -147,9 +147,8 @@ class Inventory:
     ssh_config: str
     inventory_path: str
     _hosts: dict[str, HostSpec] = field(default_factory=dict)
-    # Raw ssh_config parse retained alongside the merged map so
-    # `ssh_config_aliases()` can report aliases that are present in
-    # the active ssh_config even when an inventory entry overrides them.
+    # Raw ssh_config parse, kept so `ssh_config_aliases()` reports aliases the
+    # file declares even when an inventory entry overrides them.
     _ssh_config_hosts: dict[str, HostSpec] = field(default_factory=dict)
 
     def load(self) -> Inventory:
@@ -165,13 +164,10 @@ class Inventory:
     def ssh_config_file(self) -> str | None:
         """Resolved ssh_config path, or None when no file exists there.
 
-        The constructor argument ``ssh_config`` is the raw input path
-        (typically ``~/.ssh/config``). This property is the expanded
-        form **iff** the file is present on disk; consumers that need
-        a guaranteed-readable path (``sshpool``, ``server_info``, the
-        ``ssh-config`` MCP resource) use this view rather than the raw
-        field so an absent file is a single ``None`` check instead of a
-        late-bound ``FileNotFoundError``.
+        The expanded form of the ``ssh_config`` constructor argument, returned
+        only if the file exists. ``sshpool``, ``server_info`` and the
+        ``ssh-config`` MCP resource use it so an absent file is a ``None``
+        check instead of a late ``FileNotFoundError``.
         """
         p = _expand(self.ssh_config)
         return str(p) if p.is_file() else None
@@ -179,10 +175,9 @@ class Inventory:
     def ssh_config_aliases(self) -> list[str]:
         """Sorted aliases that appear in the active ssh_config file.
 
-        Unlike filtering ``hosts()`` by ``source == "ssh_config"``, this
-        method reports aliases that are *also* overridden by an inventory
-        entry. That makes it the right source for an ssh_config metadata
-        view (the file actually declares them, regardless of overrides).
+        Unlike filtering ``hosts()`` by ``source == "ssh_config"``, this also
+        reports aliases overridden by an inventory entry, so it reflects what
+        the file declares.
         """
         return sorted(self._ssh_config_hosts.keys())
 

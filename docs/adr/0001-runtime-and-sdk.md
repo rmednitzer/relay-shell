@@ -13,12 +13,11 @@ type safety, and how much transport/auth code we own versus delegate.
 ## Decision
 
 - **Python 3.12+** and the **official `mcp` SDK (FastMCP)**, initially pinned
-  to `mcp==1.27.1` (a tracked version validated by the test suite), with the
-  surrounding stack pinned in `requirements.txt`. FastMCP provides the
-  protocol, stdio and streamable-HTTP transports, and an OAuth 2.1 hook. The
-  pin moves on a deliberate, tested bump; the *current* validated pin is the
-  one recorded in the latest [ADR 0005](0005-codebase-validation.md) outcome
-  paragraph, not this line (see Consequences).
+  to `mcp==1.27.1` (validated by the test suite), with the surrounding stack
+  pinned in `requirements.txt`. FastMCP provides the protocol, stdio and
+  streamable-HTTP transports, and an OAuth 2.1 hook. The pin moves on a
+  deliberate, tested bump; the *current* validated pin is the one in the latest
+  [ADR 0005](0005-codebase-validation.md) outcome paragraph, not this line.
 - **`asyncssh`** for all SSH. It is pure-Python, asyncio-native, and covers
   the entire required surface (exec, interactive PTY, SFTP, local/remote/
   dynamic forwarding, agent, `ProxyJump`/tunnels, `known_hosts`, keepalive)
@@ -31,19 +30,19 @@ type safety, and how much transport/auth code we own versus delegate.
 - One protocol dependency, one SSH dependency; both typed. `ssh_config`
   semantics (including `ProxyJump`) come free via asyncssh's config support.
 - Pinning a known-good SDK version trades newest features for reliability;
-  upgrades are a deliberate, tested change, not implicit.
+  upgrades are deliberate and tested.
 - No reliance on a system `ssh` binary or its version quirks; behaviour is
   reproducible across hosts.
 - Pin movement (one line per validated bump; the runbook §8.9 trigger):
   - `mcp` 1.27.1 → 1.27.2 (PR #66, 2026-06-04). Validated by the full test
     suite plus the ADR 0005 step-3 upstream-symbol check (FastMCP/`Context`
-    kwargs and the nine OAuth provider methods resolve unchanged); recorded
-    in the [ADR 0005](0005-codebase-validation.md) 2026-06-12 outcome.
+    kwargs and the nine OAuth provider methods resolve unchanged); recorded in
+    the [ADR 0005](0005-codebase-validation.md) 2026-06-12 outcome.
   - `mcp` 1.27.2 → 1.28.1 and `asyncssh` 2.23.1 → 2.24.0 (shipped in v0.3.0,
     2026-07-15; `pyproject.toml` / `requirements.txt`). The living docs
-    (README status line + compatibility matrix, `docs/architecture.md`) were
-    reconciled to the same pins in that window (CHANGELOG DOC-1); the release
-    pipeline runs the full test suite as its build gate.
+    (README status line and compatibility matrix, `docs/architecture.md`) were
+    reconciled to the same pins (CHANGELOG DOC-1); the release pipeline runs
+    the full test suite as its build gate.
   - `mcp` 1.28.1 → the v2 line, moving off the exact pin to `mcp>=2,<3` (PR
     #164/#165, 2026-08-12). `mcp.server.fastmcp.FastMCP` is now
     `mcp.server.mcpserver.MCPServer`; `host`/`port`/`stateless_http`/
@@ -51,11 +50,11 @@ type safety, and how much transport/auth code we own versus delegate.
     kwargs (`http_transport_kwargs()` in `server.py`), and `call_tool` now
     returns a `CallToolResult` instead of a `(content, structured)` tuple.
     No change to `policy`, `redaction`, `audit`, `patterns`, `broker`, or the
-    `Relay.run` body — the trust boundary is untouched. Validated by the full
+    `Relay.run` body; the trust boundary is untouched. Validated by the full
     test suite (450 passed), `ruff check`/`ruff format --check`, and `mypy
-    --strict` across 20 source files; the living docs (README status line +
-    compatibility matrix, `docs/architecture.md`) were reconciled to the
-    same range in this pass.
+    --strict` across 20 source files; the living docs (README status line and
+    compatibility matrix, `docs/architecture.md`) were reconciled to the same
+    range.
 
 ## Rejected
 

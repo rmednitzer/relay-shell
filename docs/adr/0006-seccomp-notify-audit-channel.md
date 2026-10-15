@@ -5,25 +5,24 @@
 
 ## Context
 
-ADR 0002 establishes the **service account** — not an in-process sandbox —
-as the trust boundary, and ADR 0003 adds a tier classifier that records
-the *intended* blast radius of each tool call. Together they cover the
-MCP-side of the request: what the model asked for, how the runner
-classified it, what bytes flowed back, and the SHA-256 of the output.
+ADR 0002 makes the **service account**, not an in-process sandbox, the trust
+boundary, and ADR 0003 adds a tier classifier that records the *intended* blast
+radius of each tool call. Together they cover the MCP side of the request: what
+the model asked for, how the runner classified it, what bytes flowed back, and
+the SHA-256 of the output.
 
-What they do *not* cover is anything the spawned process does after
+They do *not* cover anything the spawned process does after
 `asyncio.create_subprocess_*` returns. Once a child is running (a one-shot
-`shell.run`, a script body, a PTY session, or an SSH session's local
-half), the kernel sees every syscall but `relay-shell` sees only the
-combined stdout/stderr and the exit code. Two failure modes follow:
+`shell.run`, a script body, a PTY session, or an SSH session's local half), the
+kernel sees every syscall but `relay-shell` sees only the combined
+stdout/stderr and the exit code. Two failure modes follow:
 
 1. **Audit gap on the child side of the boundary.** A long-running script
    may open files, exec further processes, mount/unmount, set/clear
    capabilities, or call `prctl(PR_SET_DUMPABLE, 0)` — none of which
    appear in the audit trail. The hash-of-output invariant from ADR 0002
-   is preserved, but a forensic question of the form "did the child
-   shell out to `nc` after the first stdout line?" cannot be answered
-   from `audit.jsonl` alone.
+   is preserved, but "did the child shell out to `nc` after the first
+   stdout line?" cannot be answered from `audit.jsonl` alone.
 2. **No structured channel for the host's own monitoring.** Operators
    shipping `audit.jsonl` to a SIEM (see `docs/audit-shipper.md`) have
    no way to correlate syscall-level activity with the tool call that
@@ -35,7 +34,7 @@ combined stdout/stderr and the exit code. Two failure modes follow:
 B-021 in `docs/runbook.md` §7.5 flagged seccomp-bpf notification mode as
 a way to close the first gap without re-introducing a sandbox. This ADR
 records the design constraints **before** any code lands, per the ADR
-README criteria ("A change to the audit-record shape... needs an ADR").
+README criteria (a change to the audit-record shape needs an ADR).
 
 ## Decision
 
@@ -45,29 +44,24 @@ floor for this design is **Linux >= 5.5** because
 `SECCOMP_USER_NOTIF_FLAG_CONTINUE` lands there). The channel is:
 
 - **Notify-only, never block.** Every notified syscall is allowed to
-  continue via `SECCOMP_USER_NOTIF_FLAG_CONTINUE` (Linux >= 5.5). The
-  notify handler emits an audit event and returns; it does not gate the
-  syscall, does not rewrite arguments, and does not kill the child. This
-  preserves ADR 0002 verbatim: the executor still runs unsandboxed, the
-  service account is still the boundary.
-- **Opt-in.** Disabled by default. A new `RELAY_SHELL_SECCOMP_NOTIFY`
-  setting (default `off`) turns it on. When `off`, no seccomp filter
-  is installed on the child and the spawn path is byte-identical to
-  today.
-- **Linux-only.** Macs and BSDs silently no-op the setting (logged once
-  at startup with the host's `uname -s`). The runbook will document the
-  supported kernel floor (5.5 for `ADDFD`/`CONTINUE`; 6.0+ recommended
-  for stable `seccomp_notify_id_valid` semantics) when the implementing
-  PR lands.
+  continue via `SECCOMP_USER_NOTIF_FLAG_CONTINUE`. The notify handler emits an
+  audit event and returns; it does not gate the syscall, rewrite arguments, or
+  kill the child. This preserves ADR 0002 verbatim: the executor still runs
+  unsandboxed, the service account is still the boundary.
+- **Opt-in.** A new `RELAY_SHELL_SECCOMP_NOTIFY` setting (default `off`)
+  turns it on. When `off`, no seccomp filter is installed on the child and the
+  spawn path is byte-identical to today.
+- **Linux-only.** Macs and BSDs no-op the setting (logged once at startup with
+  the host's `uname -s`). The runbook will document the supported kernel floor
+  (5.5 for `ADDFD`/`CONTINUE`; 6.0+ recommended for stable
+  `seccomp_notify_id_valid` semantics) when the implementing PR lands.
 - **Narrow syscall set.** The filter notifies on a small,
   forensically-interesting list — `execve`, `execveat`, `openat` with
   `O_WRONLY|O_RDWR|O_CREAT`, `mount`, `umount2`, `setuid`/`setgid`,
   `unshare`, `prctl` (with capability-relevant `option` values), and
   `ptrace`. Everything else stays in the default `SECCOMP_RET_ALLOW`
-  path with no kernel-userspace round-trip. The list will live in a
-  dedicated module under `src/relay_shell/` and be version-pinned the
-  way `patterns.py` is; the exact filename is the implementing PR's
-  call.
+  path with no kernel-userspace round-trip. The list will live in a dedicated
+  module under `src/relay_shell/`, version-pinned the way `patterns.py` is.
 - **Bounded audit volume.** The notify handler writes one JSON event
   per notification into the same `audit.jsonl` stream with
   `tool="syscall_notify"` and `tier=0` (a passive observation, not a
@@ -81,18 +75,17 @@ floor for this design is **Linux >= 5.5** because
 - **Failure isolation.** If the supervisor's notify socket dies, the
   child continues unaffected (the kernel falls back to `ALLOW` for
   every subsequent notification once the listener is gone). The audit
-  pipeline records `degraded=true` on the next call, identically to
-  the existing `AuditLogger` degraded path.
+  pipeline records `degraded=true` on the next call, identically to the
+  existing `AuditLogger` degraded path.
 
 ## Consequences
 
-- The audit record schema grows a new event type (`syscall_notify`,
-  `syscall_notify_overflow`). The implementing PR will document the
-  new shape in `docs/architecture.md` §"Request lifecycle" and
-  `docs/tools.md` §"Audit shape". The existing per-call record is
-  unchanged — the new events are *additional* lines, not replacement
-  fields, so log shippers and off-host parsers built against the
-  current shape keep working.
+- The audit record schema grows new event types (`syscall_notify`,
+  `syscall_notify_overflow`). The implementing PR will document the new shape in
+  `docs/architecture.md` §"Request lifecycle" and `docs/tools.md` §"Audit shape".
+  The existing per-call record is unchanged: the new events are *additional*
+  lines, so log shippers and off-host parsers built against the current shape
+  keep working.
 - The runbook §2 audit pass gains a step under §3 (Upstream surface
   validation): assert that the kernel-side constants the filter uses
   (`SECCOMP_RET_USER_NOTIF`, `SECCOMP_USER_NOTIF_FLAG_CONTINUE`) are
@@ -102,10 +95,9 @@ floor for this design is **Linux >= 5.5** because
   `relay_shell_seccomp_notify_events_total{syscall="..."}` and
   `relay_shell_seccomp_notify_overflow_total`, so an operator can
   alert on a chatty child or a per-call cap that needs bumping.
-- The `verifier` (`relay-shell --verify-deploy`, B-020) gains a check
-  that warns when `RELAY_SHELL_SECCOMP_NOTIFY=on` is set on a host
-  whose kernel is below 5.5; the verifier already speaks the env-var
-  vocabulary so this is a one-row addition.
+- The `verifier` (`relay-shell --verify-deploy`, B-020) gains a check that warns
+  when `RELAY_SHELL_SECCOMP_NOTIFY=on` is set on a host whose kernel is below 5.5
+  (the verifier already speaks the env-var vocabulary, so a one-row addition).
 - The CI matrix (B-009, Python 3.12/3.13/3.14) does not need a new
   axis; the seccomp code path is gated behind the env var and skipped
   in CI by default. A dedicated `seccomp` pytest mark covers the
@@ -114,8 +106,7 @@ floor for this design is **Linux >= 5.5** because
 ## Rejected alternatives
 
 - **Seccomp filter mode (`SECCOMP_RET_KILL_PROCESS` /
-  `SECCOMP_RET_ERRNO`).** This *is* a sandbox — exactly the posture
-  ADR 0002 rejects. A kill-on-violation filter would make every new
+  `SECCOMP_RET_ERRNO`).** This *is* a sandbox, the posture ADR 0002 rejects. A kill-on-violation filter would make every new
   syscall added by a kernel upgrade a potential outage and would
   require maintaining a denylist big enough to cover the long tail of
   what an operator's scripts legitimately do. Notify-mode keeps the
@@ -136,19 +127,16 @@ floor for this design is **Linux >= 5.5** because
   with operators running their own `strace`/`gdb` on the same child.
   seccomp-notify is the kernel's purpose-built mechanism for this
   exact case.
-- **Lean on host `auditd`.** Already runs on most production hosts,
-  and the operator should keep it on — but it sees every process on
-  the box, not just `relay-shell` children, and the attribution back
-  to a `relay-shell` `request_id` requires PID-tree walking that is
-  racy under fast-exiting children. The two channels are
-  complementary, not substitutes: `auditd` covers host-level events,
-  the seccomp-notify channel covers per-call attribution.
-- **A separate "syscall_audit.jsonl" sink.** Splitting the audit trail
-  across files makes off-host shipping (ADR-aligned with
-  `docs/audit-shipper.md`) and forensic correlation harder. One
-  append-only stream with a discriminator on `tool` is consistent
-  with the existing resource-read events (`tool="resource:<name>"`,
-  see `docs/architecture.md`).
+- **Lean on host `auditd`.** The operator should keep it on, but it sees every
+  process on the box, not just `relay-shell` children, and attribution to a
+  `request_id` needs PID-tree walking that is racy under fast-exiting children.
+  The channels are complementary: `auditd` covers host-level events, the
+  seccomp-notify channel covers per-call attribution.
+- **A separate "syscall_audit.jsonl" sink.** Splitting the audit trail across
+  files makes off-host shipping (`docs/audit-shipper.md`) and forensic
+  correlation harder. One append-only stream with a discriminator on `tool` is
+  consistent with the resource-read events (`tool="resource:<name>"`, see
+  `docs/architecture.md`).
 
 ## Validation outcome
 
@@ -160,14 +148,14 @@ executor via a per-call `ContextVar`, with additive `syscall_notify` /
 counters. The four-step ADR 0005 pass ran green against the
 implementation:
 
-1. **Code index** — one new module, no new tool (the 21-tool contract is
+1. **Code index**: one new module, no new tool (the 21-tool contract is
    unchanged; this is an audit *event*, not a tool). `server_info` grows a
    `seccomp` block; `Settings` grows `seccomp_notify` / `seccomp_notify_cap`.
-2. **Quality gates** — `ruff` / `ruff format` / `mypy --strict` clean;
+2. **Quality gates**: `ruff` / `ruff format` / `mypy --strict` clean;
    `pytest` green; coverage holds the 90% floor (`seccomp.py` ~97% with the
    portable unit suite alone; the privileged paths carry a `# pragma: no
    cover` or are exercised by the `seccomp`-marked end-to-end tests).
-3. **Upstream surface validation** — the kernel ABI constants
+3. **Upstream surface validation**: the kernel ABI constants
    (`SECCOMP_FILTER_FLAG_NEW_LISTENER = 1<<3`,
    `SECCOMP_RET_USER_NOTIF`, `SECCOMP_USER_NOTIF_FLAG_CONTINUE`, the notify
    ioctl numbers, and the 80/24/64 struct sizes) were validated against a
@@ -175,7 +163,7 @@ implementation:
    struct sizes via `SECCOMP_GET_NOTIF_SIZES` at runtime and disables the
    channel on a mismatch (the "silently-downgraded kernel" guard this ADR
    called for).
-4. **Behavior validation** — `seccomp`-marked end-to-end tests drive a real
+4. **Behavior validation**: `seccomp`-marked end-to-end tests drive a real
    child and assert that `execve` and a write-`openat` are observed and
    allowed to continue, a read-only `open` is *not* notified, the per-call
    cap emits one overflow marker while the child still runs to completion,
@@ -188,14 +176,12 @@ implementation:
   instead, so the bare and `[dev]` installs gain **zero** new dependencies.
   The `[seccomp]` extra is therefore unnecessary and was not added.
 - **`CAP_SYS_ADMIN`-gated, never `no_new_privs`.** A seccomp filter installs
-  with `CAP_SYS_ADMIN` *or* by latching `no_new_privs`. Latching
-  `no_new_privs` would silently disable set-uid escalation in audited
-  children (`sudo` would break) — a capability regression this project
-  forbids and one the Decision's "preserves ADR 0002 verbatim" claim cannot
-  tolerate. The channel therefore activates **only** with `CAP_SYS_ADMIN`
-  (e.g. running as root, a supported privileged posture) and installs
-  without `no_new_privs`, so set-uid/`sudo` semantics are unchanged. Without
-  `CAP_SYS_ADMIN` the channel cleanly no-ops.
+  with `CAP_SYS_ADMIN` *or* by latching `no_new_privs`. Latching `no_new_privs`
+  would silently disable set-uid escalation in audited children (`sudo` would
+  break), a capability regression this project forbids. The channel therefore
+  activates **only** with `CAP_SYS_ADMIN` (e.g. running as root, a supported
+  privileged posture) and installs without `no_new_privs`, so set-uid/`sudo`
+  semantics are unchanged. Without `CAP_SYS_ADMIN` the channel no-ops.
 - **`x86_64` only in v1.** Only syscall-number tables we can validate on a
   live host ship; any other arch makes `platform_support()` report
   unsupported and the channel no-op, so a guessed number can never notify
@@ -244,12 +230,10 @@ implementation:
   bound applies per session rather than per call. The off path is
   byte-identical, as before.
 - **SSH-local half: resolved as vacuous.** The Context's "an SSH session's
-  local half" anticipated a local child on the SSH path; as implemented
-  there is none — `asyncssh` runs in-process and `sshpool.py` spawns no
-  subprocess (no `ProxyCommand` support is wired). There is nothing local
-  to observe, so no code change applies. If a local-subprocess proxy path
-  ever lands, the ambient-monitor pattern covers it the same way the PTY
-  path does.
+  local half" anticipated a local child on the SSH path; as implemented there
+  is none (`asyncssh` runs in-process and `sshpool.py` spawns no subprocess; no
+  `ProxyCommand` support is wired). If a local-subprocess proxy path ever
+  lands, the ambient-monitor pattern covers it as it does the PTY path.
 - Audit-record shape: **unchanged** (`syscall_notify` /
   `syscall_notify_overflow` as accepted; `prctl` events are just a new
   value in the existing `syscall` field, and the `/metrics` `syscall`
@@ -277,19 +261,19 @@ holds one listener (one fd) for its lifetime and runs unaudited after the call e
 
 ## Operational notes (as accepted)
 
-Operator-facing detail now lives in `docs/deployment.md` §6a; the as-built
-rationale is captured here next to the decision.
+Operator-facing detail lives in `docs/deployment.md` §6a; the as-built
+rationale is here.
 
 - **Activation prerequisites, not a kernel-floor installer check.** The
   channel self-gates at runtime via `platform_support()`
   (Linux / `x86_64` / kernel ≥ 5.5 / `CAP_SYS_ADMIN` / a matching notify
   ABI). When `RELAY_SHELL_SECCOMP_NOTIFY=on` but a prerequisite is missing,
   it logs once at startup, `server_info.seccomp.supported` is `false` with a
-  `reason`, and local spawns are byte-identical to the off path — there is
-  no separate installer `uname -r` gate to drift out of sync.
-- **No `libseccomp` packaging step.** The pure-`ctypes` implementation needs
-  no system package; there is nothing to add to a base image beyond a kernel
-  that meets the floor and the `CAP_SYS_ADMIN` posture.
+  `reason`, and local spawns are byte-identical to the off path; there is no
+  separate installer `uname -r` gate to drift out of sync.
+- **No `libseccomp` packaging step.** The pure-`ctypes` implementation needs no
+  system package, only a kernel that meets the floor and the `CAP_SYS_ADMIN`
+  posture.
 - **Off-host shipping.** No change to `docs/audit-shipper.md`: the new
   events ride the same JSONL stream the three existing recipes already tail,
   and the schema discriminator (`tool` field) is exactly what

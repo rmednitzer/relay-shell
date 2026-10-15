@@ -8,10 +8,10 @@
 `relay-shell` exists to give an MCP client genuine shell and SSH mastery over hosts
 the operator administers. A meaningful internal sandbox (filesystem
 confinement, dropped capabilities, a syscall allowlist, no-new-privileges)
-directly contradicts that purpose: the tool's job is to run arbitrary
-commands, escalate where the operator legitimately can, and reach other
-hosts. Half-sandboxing produces a tool that is both less capable *and* not
-actually safe, while implying a containment guarantee it does not provide.
+contradicts that purpose: the tool's job is to run arbitrary commands, escalate
+where the operator legitimately can, and reach other hosts. Half-sandboxing
+yields a tool that is both less capable *and* not actually safe, while implying
+a containment guarantee it does not provide.
 
 ## Decision
 
@@ -72,6 +72,6 @@ outside the service does not substitute for an execution-path test.
 ## Addendum 2026-10-14: telling the caller what is unsafe
 
 The decision stands: no sandbox, full access by default. [ADR 0013](0013-open-by-default-with-unsafe-notices.md)
-adds the counterpart that was missing, a plain-language notice to the caller when a call ran as
-Tier 2/3 or with host-key verification off, and a `server_info.warnings` list of the permissive
-settings, without refusing anything.
+adds the missing counterpart: a notice to the caller when a call ran as Tier 2/3 or with
+host-key verification off, and a `server_info.warnings` list of the permissive settings,
+without refusing anything.

@@ -9,21 +9,21 @@ ADR 0002 makes the trust boundary the **service account**, not an internal
 sandbox; ADRs 0003 and 0004 add the compensating controls (tiered authority,
 audited execution, edge TLS). All three rest on a contract with upstream
 sources: the `mcp` SDK (FastMCP, the OAuth provider interface, the resource
-+ tool decorators), `asyncssh` (the SSH semantics we expose), and
+and tool decorators), `asyncssh` (the SSH semantics we expose), and
 `pydantic-settings` (the configuration layer). If any of those drifts
-silently — a renamed kwarg, a removed method, a relaxed default — the
+silently (a renamed kwarg, a removed method, a relaxed default), the
 documented guarantees stop being load-bearing.
 
 The runbook §2 codifies the audit pass, but it had not been executed
 end-to-end against the *actual upstream surfaces* on the pinned versions
 since the original release. This ADR records the methodology, the result,
-and the small drift the pass surfaced.
+and the drift the pass surfaced.
 
 ## Decision
 
-Treat a periodic, repeatable validation pass against the upstream APIs
-as a first-class operating procedure, owned by the runbook §2 (Audit) and
-referenced from this ADR. The pass produces, in this order:
+Treat a repeatable validation pass against the upstream APIs as a first-class
+operating procedure, owned by the runbook §2 (Audit). The pass produces, in
+this order:
 
 1. **Code index.** `git ls-files`, line counts for every package and test
    file, the registered tool set (from `FastMCP.list_tools()`), and the
@@ -51,7 +51,7 @@ referenced from this ADR. The pass produces, in this order:
      `mcp.shared.auth.OAuthToken` carry the fields the provider sets.
    - `asyncssh.connect` accepts `known_hosts`, `username`, `port`,
      `client_keys`, `connect_timeout`, `config`, `tunnel`,
-     `keepalive_interval` — the surface the pool relies on.
+     `keepalive_interval`, the surface the pool relies on.
 4. **Behavior validation.** Drive at least one real tool through
    `build_server(...).call_tool(...)`, then inspect the resulting audit
    record on disk and confirm:
@@ -65,7 +65,7 @@ referenced from this ADR. The pass produces, in this order:
      redacted (the well-known under-scrub regression).
 5. **Findings**: any code/doc mismatch surfaced by steps 1-4 becomes a
    line item with a severity (P0 release-blocker through P3 nice-to-fix)
-   and a resolution plan that lands in the same PR.
+   and a resolution that lands in the same PR.
 
 ## Validation outcome (2026-05-24)
 
@@ -75,8 +75,8 @@ All four steps passed without code-level regressions:
   `docs/tools.md`.
 - 3 MCP resources registered, matching `docs/tools.md` §Resources.
 - `ruff check`, `ruff format --check`, `mypy --strict` clean.
-- `pytest -q` — 195 passed, 13 deselected (the `fuzz` marker is nightly-
-  only by design; see `pyproject.toml`).
+- `pytest -q` — 195 passed, 13 deselected (the `fuzz` marker is
+  nightly-only by design; see `pyproject.toml`).
 - `coverage` — 89% with subprocess collection enabled (floor is 85%).
 - Every upstream symbol in step 3 resolved on the pinned versions.
 - The audit record schema and the redaction / tier samples in step 4
@@ -91,9 +91,8 @@ PR that lands this ADR**, so they do not survive past 0005:
 | F-002 | P2       | `docs/runbook.md` §4.3 still said "CI floor: 75%, current ~78%". The floor moved to 85% in B-022 and measured coverage is 89%.                                                                | Header and body of §4.3 updated to "CI floor: 85%, current ~89%". |
 | F-003 | P3       | `docs/runbook.md` §3.4 referenced the obsolete tool-count assertion `len(names) == 18`. Actual: `tests/test_server.py:36` asserts `21`.                                                       | Reference updated to `21`. |
 
-No security findings. No capability regressions. The trust boundary
-described in ADR 0002 and the admission semantics described in ADR 0003
-still hold byte-for-byte against the current code.
+No security findings, no capability regressions. The ADR 0002 boundary and
+ADR 0003 admission semantics hold byte-for-byte against the current code.
 
 ## Validation outcome (2026-05-31)
 
@@ -104,9 +103,9 @@ upstream contract are still green:
   and `docs/tools.md`; 3 MCP resources registered.
 - `ruff check`, `ruff format --check`, `mypy --strict` clean.
 - `pytest -q` — 250 passed, 13 deselected (up from 195/244 as the
-  redaction-coverage tests below landed; the `fuzz` marker is
-  nightly-only by design). `pytest -m fuzz` — 13 property invariants
-  pass, including `redact` idempotency on the new shapes.
+  redaction-coverage tests below landed; `fuzz` is nightly-only by design).
+  `pytest -m fuzz` — 13 property invariants pass, including `redact`
+  idempotency on the new shapes.
 - `coverage` — 92% with subprocess collection (floor 90%);
   `patterns.py` and `redaction.py` at 100%.
 - Every upstream symbol in step 3 still resolves on `mcp==1.27.1` /
@@ -132,16 +131,15 @@ miss a valid-but-compact credential. Regression fixtures pinning each
 edge live in `tests/test_patterns.py`.
 
 No capability regressions; no change to policy admission, the audit
-record schema, or any tool's response shape. The trust boundary
-(ADR 0002) and tier semantics (ADR 0003) are unchanged — this pass
-hardened a compensating control, it did not move the boundary.
+record schema, or any tool's response shape. The ADR 0002 boundary and
+ADR 0003 tier semantics are unchanged: this pass hardened a compensating
+control, it did not move the boundary.
 
 ## Validation outcome (2026-06-01)
 
 Re-ran steps 1-4. This pass also landed [ADR 0007](0007-audit-hash-chain.md)
-(tamper-evident audit hash chain) in the same PR, so the behavior
-validation in step 4 was extended to cover the new chain surface. The
-broader engagement is recorded in
+(tamper-evident audit hash chain), so step 4 was extended to cover the chain.
+The broader engagement is recorded in
 [`audit/2026-06-01-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-01-engagement.md).
 
 - 21 MCP tools and 3 resources registered, matching
@@ -170,18 +168,18 @@ broader engagement is recorded in
 | F-005 | P3       | `docs/runbook.md` §5.1 still listed **C-005** (`Inventory` field naming) as an open consolidation candidate. It was closed in PR #57 (`Inventory(ssh_config=...)` ctor + `ssh_config_file` resolved-iff-exists property), as recorded in `audit/2026-05-27-engagement.md` §2.2/§3 and `CHANGELOG.md`. The code carries no `ssh_config_path`; the runbook entry was the last stale reference. | Moved C-005 to the §5.1 "Closed (do not re-add)" block with the resolution note. |
 | G-1   | (gap)    | The audit log — ADR 0002's first compensating control — had no in-record tamper-evidence; integrity rested solely on `chattr +a` + off-host shipping, both defeatable by the documented residual-risk attacker in the pre-ship window. Not a regression against the docs (the docs never claimed in-record integrity), recorded as a hardening gap. | Closed by [ADR 0007](0007-audit-hash-chain.md): opt-in, additive per-record hash chain + `relay-shell --verify-audit`. Default-off keeps every existing deployment byte-identical. |
 
-No security regressions. No capability regressions. The trust boundary
-(ADR 0002) and tier semantics (ADR 0003) are unchanged. The audit-record
-schema change is additive and opt-in (default off), so off-host parsers
-built against the prior shape keep working.
+No security or capability regressions. The ADR 0002 boundary and ADR 0003
+tier semantics are unchanged. The audit-record schema change is additive and
+opt-in (default off), so off-host parsers built against the prior shape keep
+working.
 
 ## Validation outcome (2026-06-12)
 
 Re-ran steps 1-4 as part of a full audit / validation / hardening pass
 (evidence pack under `audit/00-inventory.md`, `audit/01-baseline.md`,
-`audit/02-security-findings.md`, `audit/03-final-report.md`). This pass also
-reconciled the `mcp` pin drift surfaced as D-001 below. All gates green; the
-upstream contract holds on the bumped pin.
+`audit/02-security-findings.md`, `audit/03-final-report.md`). It also
+reconciled the `mcp` pin drift (D-001 below). All gates green; the upstream
+contract holds on the bumped pin.
 
 - 21 MCP tools registered, equal to `tests/test_server.py::_EXPECTED` and
   `docs/tools.md`; 3 MCP resources; 1 prompt (`operating_guide`, ADR 0008).
@@ -210,17 +208,16 @@ upstream contract holds on the bumped pin.
 |-------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|
 | D-001 | low (docs) | The `mcp` pin moved 1.27.1 → 1.27.2 in PR #66 (2026-06-04), but the README status line (`README.md:6`) + compatibility matrix (`README.md:151`) and `docs/architecture.md:15` still named 1.27.1, and no ADR 0001 Consequences entry / ADR 0005 outcome had recorded the bump (the runbook §8.9 trigger was missed). | Synced the living docs to 1.27.2 + asyncssh 2.23.1 (this pass); added the ADR 0001 Consequences pin-movement line; recorded this outcome paragraph. Frozen ADR bodies and prior dated outcomes left intact. |
 
-No security regressions. No capability regressions. The trust boundary
-(ADR 0002) and tier semantics (ADR 0003) are unchanged; this pass corrected
-documentation drift and did not touch executor, policy, redaction, or audit
-behavior.
+No security or capability regressions. The ADR 0002 boundary and ADR 0003
+tier semantics are unchanged; this pass corrected documentation drift and did
+not touch executor, policy, redaction, or audit behavior.
 
 ## Validation outcome (2026-06-21)
 
 Re-ran steps 1-4 on the pinned upstream surfaces. No dependency change since
-the 2026-06-12 pass; this is a documentation-drift reconciliation pass whose
-single finding (DOC-1) is a stale cross-reference, fixed in the same PR that
-records this outcome. All gates green; the upstream contract holds.
+2026-06-12; this is a documentation-drift pass whose single finding (DOC-1) is
+a stale cross-reference, fixed in the same PR. All gates green; the upstream
+contract holds.
 
 - 21 MCP tools registered, equal to `tests/test_server.py::_EXPECTED` and
   `docs/tools.md`; 3 MCP resources (2 static + the `inventory/{host}`
@@ -240,25 +237,24 @@ records this outcome. All gates green; the upstream contract holds.
   `model_validator` resolves on the pinned `pydantic>=2.11`.
 - Step 4 behavior: a real `shell_exec` call writes an audit record carrying
   the intact schema (`ts, tool, tier, denied, args, output_sha256,
-  output_len, exit_code`) with the command output referenced by SHA-256 +
-  length only — no raw output-body field on the record. Tier classification
-  and the redaction sample set are exercised green by the suite.
+  output_len, exit_code`) with the command output referenced by SHA-256 and
+  length only; no raw output-body field. Tier classification and the
+  redaction sample set are exercised green by the suite.
 
 | ID    | Severity | Subject | Resolution |
 |-------|----------|---------|------------|
-| DOC-1 | info (docs) | `docs/runbook.md` §8.18 described the ADR next-free-number marker as "currently **0008**", but `docs/adr/README.md` (the authoritative marker) has read **0009** since ADR 0008 landed (2026-06-08); the runbook's maintenance note for the README was one number behind. | Corrected the §8.18 parenthetical to **0009** to match `docs/adr/README.md`, and appended this pass to the ADR 0005 index subject. Frozen ADR bodies and prior dated outcomes were left intact — the "next free ... 0006" line in this ADR's own Consequences is the 2026-05-24 record, not a live marker. |
+| DOC-1 | info (docs) | `docs/runbook.md` §8.18 described the ADR next-free-number marker as "currently **0008**", but `docs/adr/README.md` (the authoritative marker) has read **0009** since ADR 0008 landed (2026-06-08). | Corrected the §8.18 parenthetical to **0009** to match `docs/adr/README.md`, and appended this pass to the ADR 0005 index subject. Frozen ADR bodies and prior dated outcomes were left intact; the "next free ... 0006" line in this ADR's own Consequences is the 2026-05-24 record, not a live marker. |
 
-No security findings. No capability regressions. The trust boundary
-(ADR 0002) and tier semantics (ADR 0003) are unchanged; this pass corrected
-documentation drift and did not touch executor, policy, redaction, or audit
-behavior.
+No security findings or capability regressions. The ADR 0002 boundary and
+ADR 0003 tier semantics are unchanged; this pass corrected documentation drift
+and did not touch executor, policy, redaction, or audit behavior.
 
 ## Validation outcome (2026-06-21, full audit pass)
 
-A full validation + security audit, run the same day as the doc-drift pass above;
+A full validation and security audit, run the same day as the doc-drift pass above;
 evidence pack:
-[`audit/2026-06-21-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-21-engagement.md). Steps
-1-4 were re-run on a clean venv at the pinned `mcp==1.27.2` / `asyncssh==2.23.1`
+[`audit/2026-06-21-engagement.md`](https://github.com/rmednitzer/relay-shell/blob/main/audit/2026-06-21-engagement.md).
+Steps 1-4 were re-run on a clean venv at the pinned `mcp==1.27.2` / `asyncssh==2.23.1`
 (a `semgrep`-into-the-project-venv `mcp` downgrade to 1.23.3 was caught and the
 venv rebuilt clean, with `semgrep` thereafter run isolated via `uvx`), plus an
 external scanner battery and reviews of the trust boundary, the CI supply chain,
@@ -278,42 +274,37 @@ and structure-vs-spec conformance against trusted external sources.
 | SEC-3 | P2 | `pyproject.toml` lower bounds sat below the patched minimum for `asyncssh` (GHSA-g794-3fmp-753h), `starlette` (BadHost GHSA-86qp-5c8j-p5mr / GHSA-jp82-jpqv-5vv3), `PyJWT` (HMAC confusion GHSA-xgmm-8j9v-c9wx), and `cryptography` (GHSA-537c-gmf6-5ccf) — a cold `pip install` resolver could pick a vulnerable transitive version, though the *pinned* set was already safe. | Floors raised to `asyncssh>=2.23.0`, `starlette>=1.3.0`, `PyJWT>=2.13.0`, `cryptography>=48.0.1` (mirrors PR #97's `pydantic-settings` floor bump). Installed/tested set unchanged; gate green. |
 | TOOL-4 | info | `.github/CODEOWNERS` required review on a non-existent `/.github/dependabot.yml`; the repo uses Renovate. | Reference corrected to `/renovate.json5`. |
 
-The remaining findings are incremental hardening / format-conformance with no
-P0/P1 (SEC-4 Anthropic `sk-ant-` / HuggingFace `hf_` redaction shapes is the
+The remaining findings are incremental hardening and format conformance with no
+P0/P1 (SEC-4, Anthropic `sk-ant-` / HuggingFace `hf_` redaction shapes, is the
 recommended next item); they are registered in the engagement pack §7 and
 deferred to `BACKLOG.md` / runbook §7. No security regression; the ADR 0002
-trust boundary and ADR 0003 tier semantics are unchanged.
+boundary and ADR 0003 tier semantics are unchanged.
 
 ## Consequences
 
-- The runbook §2 audit pass is now grounded in a concrete, repeatable
-  procedure rather than a free-form review. Reproducing the pass is a
-  matter of re-running steps 1-4; deviations become a finding row in this
+- The runbook §2 audit pass is a concrete, repeatable procedure rather than a
+  free-form review: re-run steps 1-4; deviations become a finding row in this
   table format.
-- Each `mcp` SDK bump triggers a fresh §2 pass (the step-3 symbol set is
-  the diff target). The latest validated pin is the one named in the most
-  recent dated outcome paragraph above (currently `mcp==1.27.2`, validated
-  2026-06-21), not a hardcoded version here — so this bullet does not drift
-  as the pin moves.
-- Each subsequent ADR landing should record its own validation outcome
-  using the same format — terse findings table, severity, resolution —
-  so the audit trail of *decisions* and the audit trail of *executions*
-  stay symmetrical.
+- Each `mcp` SDK bump triggers a fresh §2 pass (the step-3 symbol set is the
+  diff target). The latest validated pin is the one named in the most recent
+  dated outcome paragraph above (currently `mcp==1.27.2`, validated
+  2026-06-21), not a version hardcoded here.
+- Each subsequent ADR landing should record its own validation outcome in the
+  same format (terse findings table, severity, resolution), so the audit trail
+  of *decisions* and of *executions* stay symmetrical.
 - The next free ADR number is **0006**.
 
 ## Rejected alternatives
 
 - **Annual-only audit.** A yearly pass surfaces drift too late; the SDK
   ships minor versions in weeks and the policy/redaction modules drift
-  fastest. The pass belongs in the runbook (always available) and is
-  triggered on event, not date.
+  fastest. The pass lives in the runbook and is triggered on event, not date.
 - **Continuous validation via a check-everything CI job.** Some of the
   step-3 introspection (importing the SDK, listing tool registration) is
   already covered by `tests/test_server.py` and `tests/test_oauth.py`.
-  Duplicating those into a separate "validation" job would double the
-  surface and the upkeep without buying anything `pytest` does not
-  already give us. Coverage subprocess collection in CI catches the
-  remaining cases (the e2e contributes the wrapper bodies).
+  A separate "validation" job would double the surface and upkeep without
+  buying anything `pytest` does not give. Coverage subprocess collection in CI
+  catches the remaining cases (the e2e contributes the wrapper bodies).
 - **Auto-generated findings file.** A standalone `docs/audit/2026-05-24.md`
-  would split the audit trail across files. Recording each pass inline in
-  the closing ADR keeps the consequences and the resolution co-located.
+  would split the audit trail across files. Recording each pass inline in the
+  closing ADR keeps the consequences and the resolution co-located.

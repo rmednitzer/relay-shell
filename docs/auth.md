@@ -7,10 +7,9 @@
 > The stdio transport has no network surface, so it has no auth layer — the
 > transport itself is the trust boundary there.
 
-This document explains how a client authenticates and, in particular, **how a
-single client stays authenticated over time**. For the operational enable
-steps (env vars, the Caddy edge) see
-[`deployment.md` §5](deployment.md). For the threat model see
+This document explains how a client authenticates and **how a single client
+stays authenticated over time**. Enable steps (env vars, the Caddy edge) are in
+[`deployment.md` §5](deployment.md); the threat model is in
 [`SECURITY.md`](https://github.com/rmednitzer/relay-shell/blob/main/SECURITY.md).
 
 ## Opt-in by default — and what "off" means
@@ -21,11 +20,10 @@ steps (env vars, the Caddy edge) see
 | `http` | `false` (default) | HTTP served **without** auth — you are relying entirely on the network edge (loopback bind + the Caddy CIDR allowlist in [`deployment.md` §4](deployment.md)). |
 | `http` | `true` | OAuth 2.1 enforced: every tool call needs a valid bearer access token. |
 
-Only when both conditions hold is the provider constructed
+The provider is constructed only when both conditions hold
 ([`server.py`](https://github.com/rmednitzer/relay-shell/blob/main/src/relay_shell/server.py): `if cfg.transport == "http" and
-cfg.auth_enabled`). Authentication is therefore a deliberate operator choice,
-never on implicitly. If you expose the HTTP transport beyond loopback, enable
-it.
+cfg.auth_enabled`), so authentication is never on implicitly. If you expose the
+HTTP transport beyond loopback, enable it.
 
 ## The provider
 
@@ -192,7 +190,7 @@ template exposes it so a remote MCP client can onboard itself), and the
 authorization endpoint has no login step: it issues a code to any *registered*
 client that presents a valid PKCE challenge and its registered `redirect_uri`.
 Registration alone therefore used to be enough to obtain a token, which is shell
-execution as the service user. The first party to register won, and a client store
+execution as the service user: the first party to register won, and a client store
 that read as empty (a missing or corrupt `clients.json`) reopened the race.
 
 With `RELAY_SHELL_AUTH_REQUIRE_APPROVAL=true` (**the default**) a newly registered
@@ -305,11 +303,10 @@ a sandbox. It is opt-in because the supported deployment shapes differ:
 - **HTTP exposed more widely**: enable OAuth — it is required, not optional, in
   that posture.
 
-Because the default transport is stdio and the default for `auth_enabled` is
-`false`, a fresh install never silently stands up an unauthenticated network
-listener: you choose HTTP, and you choose whether to authenticate it. When you
-do expose HTTP, the deployment checklist in [`deployment.md`](deployment.md)
-treats the edge controls **and** OAuth as required.
+The default transport is stdio and `auth_enabled` defaults to `false`, so a
+fresh install never stands up a network listener: you choose HTTP, and you
+choose whether to authenticate it. When you expose HTTP, the checklist in
+[`deployment.md`](deployment.md) treats the edge controls **and** OAuth as required.
 
 ## References
 

@@ -5,7 +5,7 @@ title: Overview
 # relay-shell documentation
 
 A governed [Model Context Protocol](https://modelcontextprotocol.io) server for
-**complete shell and SSH operation** — with an append-only, output-hashed audit
+**complete shell and SSH operation**, with an append-only, output-hashed audit
 trail, a tiered-authority policy layer, secret redaction, and strict resource
 and timeout bounds.
 
@@ -18,17 +18,17 @@ and supported versions see
 
 ## Guides
 
-- [Architecture](architecture.md) — the request lifecycle, the module map, and the trust boundary.
-- [Tool reference](tools.md) — every MCP tool, resource, and prompt, with tiers and tests.
-- [Deployment](deployment.md) — service account, network edge (Caddy + ACME), OAuth, and audit shipping.
-- [Authentication](auth.md) — the OAuth 2.1 lifecycle and the opt-in-by-default posture.
-- [Audit shipping](audit-shipper.md) — Vector, Fluent Bit, and `systemd-journal-remote` recipes.
-- [Release trust](release-trust.md) — what the release signature and attestations do and do not establish.
-- [Maintenance runbook](runbook.md) — the audit / review / validate / enhance / extend procedures and the backlog.
+- [Architecture](architecture.md): the request lifecycle, the module map, and the trust boundary.
+- [Tool reference](tools.md): every MCP tool, resource, and prompt, with tiers and tests.
+- [Deployment](deployment.md): service account, network edge (Caddy + ACME), OAuth, and audit shipping.
+- [Authentication](auth.md): the OAuth 2.1 lifecycle and the opt-in-by-default posture.
+- [Audit shipping](audit-shipper.md): Vector, Fluent Bit, and `systemd-journal-remote` recipes.
+- [Release trust](release-trust.md): what the release signature and attestations do and do not establish.
+- [Maintenance runbook](runbook.md): the audit / review / validate / enhance / extend procedures and the backlog.
 
 ## Architecture Decision Records
 
-The [ADR index](adr/README.md) records every decision with its status and date —
+The [ADR index](adr/README.md) records every decision with its status and date, among them
 the no-sandbox full-access posture (0002), tiered authority (0003), edge-TLS
 automation (0004), the seccomp-notify audit channel (0006), the audit hash
 chain (0007), the Tier-3 confirmation broker (0009) and Windows targets over

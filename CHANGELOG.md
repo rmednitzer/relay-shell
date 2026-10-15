@@ -64,6 +64,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Documentation and comments tightened.** README, docs, ADRs, governance files and source
+  comments are shorter and more precise; no code, tool description or decision changed. Doc
+  drift corrected: `docs/tools.md` now lists the `shell_script` parameters and the `ssh_spawn`
+  (`cols`/`rows`) and `ssh_keyscan` (`timeout`) defaults; runbook §4.3 states that branch
+  coverage is enabled; `docs/audit-shipper.md` fixes the Vector service user, the logrotate
+  `create` timing and the Fluent Bit `Skip_Long_Lines` description;
+  `.github/copilot-instructions.md` gains the ADR 0013 open-by-default rule from `AGENTS.md`.
 - **Evidence sync default (A14-D9).** `RELAY_AUDIT_RSYNC_PATH` defaults to plain `rsync`; the
   previous `sudo -n /usr/bin/rsync` (root on the backup host) is opt-in. Installations that
   relied on it set it explicitly.

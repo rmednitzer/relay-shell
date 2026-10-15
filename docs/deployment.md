@@ -1,14 +1,13 @@
 # Deployment
 
-`relay-shell` grants real administrative power. The single most important control is
+`relay-shell` grants real administrative power. The most important control is
 **where and as whom it runs**. This guide describes a production-grade
 deployment modeled on a mature MCP gateway.
 
 ## 0. Pre-flight checklist
 
-Run through this list before §1 (service account creation). Each row is a
-hard precondition for the matching later section; skipping any of them
-turns a smooth install into an outage.
+Complete this list before §1 (service account creation). Each item is a
+precondition for the matching later section.
 
 - [ ] **Service account name decided.** The default is `relay-shell`
       with home directory `/var/lib/relay-shell` (§1). Pick a different
@@ -18,28 +17,28 @@ turns a smooth install into an outage.
       `/var/log/relay-shell/` exists, is owned by the service account,
       and the filesystem supports `chattr +a` (ext2/3/4, xfs).
       Append-only on a `tmpfs` or fuse mount silently degrades to a
-      normal write — confirm `lsattr` after `chattr +a`.
+      normal write; confirm with `lsattr` after `chattr +a`.
 - [ ] **DNS resolves for the edge domain** (HTTP transport only).
       `dig +short ${RELAY_SHELL_EDGE_DOMAIN}` returns the host's public
       IP. The HTTP-01 ACME challenge does not work without this.
 - [ ] **Ports 80 and 443 reachable from the internet** (HTTP transport
-      only). Port 80 is required for HTTP-01; closing it blocks
-      issuance and renewal both. If a host firewall is in front, open
+      only). Port 80 is required for HTTP-01; closing it blocks both
+      issuance and renewal. If a host firewall is in front, open
       it before running `install-edge.sh` (or set
       `RELAY_SHELL_EDGE_OPEN_FIREWALL=1` to have the installer try).
 - [ ] **SSH service account keypair generated** (`ssh-keygen -t ed25519`
       as the service account) and `known_hosts` strategy chosen
-      (`strict` for production — pre-populate with `ssh-keyscan`; see
+      (`strict` for production, pre-populated with `ssh-keyscan`; see
       §7).
 - [ ] **Off-host audit shipping target ready** (Vector / Fluent Bit /
-      journal-remote — see `docs/audit-shipper.md`). An on-host audit
+      journal-remote; see `docs/audit-shipper.md`). An on-host audit
       file is evidence only until the host is compromised; the
       shipper must be in place *before* the unit is enabled in
       production.
 
-If any row is unchecked, fix it before continuing — the install is
-idempotent but recovery from a half-configured edge or a non-shipping
-audit log is more work than the precondition.
+Fix any unchecked item before continuing. The install is idempotent, but
+recovering from a half-configured edge or a non-shipping audit log costs more
+than the precondition.
 
 ## 1. Service account
 
@@ -89,9 +88,8 @@ sudo -u relay-shell \
 `--check-config` loads the settings, builds the server (audit sink open,
 ssh_config + inventory parse, OAuth state dir creation if `auth_enabled=true`)
 without starting a transport, and exits 0 on success or 2 on any
-initialization failure - including a degraded audit sink, which is the
-single most common production misconfiguration. Wire this into the
-image-bake step of your CI pipeline.
+initialization failure, including a degraded audit sink (the most common
+production misconfiguration). Wire it into the image-bake step of your CI pipeline.
 
 ## 3. systemd
 
@@ -118,15 +116,14 @@ sudo systemctl enable --now relay-shell
 The systemd confinement above is deliberately partial (ADR 0002): the executor
 is unsandboxed by design, so the deploy host cannot *prevent* the service
 account from touching the filesystem, and in privileged posture (root/sudo) it
-can touch `/etc`, the unit files, even the relay binary. When prevention is
-intentionally absent, **detection** is the compensating control — the same
-posture the audit chain (§6a) takes for the log. These are host-admin tools,
-not part of the relay, but on a host running a full-capability shell/SSH server
-they earn their keep; configure them on the host, outside the service.
+can touch `/etc`, the unit files, even the relay binary. Where prevention is
+intentionally absent, **detection** is the compensating control, as the audit
+chain (§6a) is for the log. These are host-admin tools, not part of the relay;
+configure them on the host, outside the service.
 
 - **`etckeeper`** — put `/etc` under version control (git + a package-manager
-  hook) so every config change is diffable and revertable. A privileged flow
-  through the relay that edits `/etc/sudoers.d`, a systemd unit, or `sshd_config`
+  hook) so every config change is diffable and revertable. A privileged edit
+  through the relay of `/etc/sudoers.d`, a systemd unit, or `sshd_config`
   then shows up as a committed diff instead of a silent mutation. Pair with a
   periodic `etckeeper vcs log` review or an off-host push of the `/etc` repo.
 - **`AIDE`** (or Tripwire) — a file-integrity baseline over the things that
@@ -146,12 +143,11 @@ they earn their keep; configure them on the host, outside the service.
   across runs). It surfaces drift in the host's own posture — kernel params, PAM,
   file perms — that sits underneath everything the relay depends on.
 
-None of these is installed by `deploy/`; they are pointers, because host
-hardening is the operator's domain and the right tool set varies by distro and
-fleet-management stack. The principle is the transferable part: an unsandboxed,
-possibly-privileged service raises the value of host-level integrity and
-config-drift monitoring, so pair the in-app controls (audit chain, redaction,
-tiered policy) with host-level detection.
+None of these is installed by `deploy/`; host hardening is the operator's
+domain and the right tool set varies by distro and fleet-management stack. An
+unsandboxed, possibly-privileged service raises the value of host-level
+integrity and config-drift monitoring, so pair the in-app controls (audit chain,
+redaction, tiered policy) with host-level detection.
 
 ## 4. Network edge (HTTP transport)
 
@@ -216,11 +212,8 @@ sudo deploy/install-edge.sh
 
 The installer is idempotent: re-run it after editing the env file to push
 changes. Both installers create `/etc/relay-shell` as `0750`
-(`root:relay-shell`), not world-listable — systemd reads the EnvironmentFiles
-as root, so the service is unaffected. To pin the Caddy apt repo signing key,
-set `RELAY_SHELL_EDGE_CADDY_GPG_FPR` (see the env-var table above); otherwise
-the installer logs the fetched key's fingerprint and warns that it is
-unpinned. The drop-in at
+(`root:relay-shell`), not world-listable; systemd reads the EnvironmentFiles
+as root, so the service is unaffected. The drop-in at
 `/etc/systemd/system/caddy.service.d/relay-shell-edge.conf` is static and
 references a managed `EnvironmentFile=/etc/relay-shell/relay-shell-edge.env`,
 so user-supplied values never land inside systemd unit syntax. Cert state
@@ -237,9 +230,8 @@ all that matter.
 
 Authentication is **opt-in and off by default** (`RELAY_SHELL_AUTH_ENABLED`
 defaults to `false`) and applies only to the HTTP transport. A fresh install
-never stands up an authenticated — or unauthenticated — network listener
-unless you choose the HTTP transport; once you do, enable OAuth for any
-exposure beyond a trusted loopback + edge.
+stands up no network listener unless you choose the HTTP transport; once you
+do, enable OAuth for any exposure beyond a trusted loopback + edge.
 
 ```bash
 RELAY_SHELL_TRANSPORT=http
@@ -268,11 +260,9 @@ The `[http]` extra is an empty alias (`mcp` 2 already depends on PyJWT and crypt
 a plain install is enough. Tokens are file-backed under the state dir
 (`clients.json`, `approvals.json`, `codes.json`, `tokens.json`), access tokens are short-lived,
 refresh tokens rotate on use, secrets are stored hashed rather than raw, and expiry
-is enforced lazily on read. With
-single-client lockdown, dynamic registration is refused once one client
-exists. See [`auth.md`](auth.md) for the full authentication lifecycle — how a
-client registers, obtains tokens, and stays authenticated via refresh
-rotation.
+is enforced lazily on read. With single-client lockdown, dynamic registration is
+refused once one client exists. [`auth.md`](auth.md) has the full lifecycle: how a
+client registers, obtains tokens, and stays authenticated via refresh rotation.
 
 ## 6. Audit
 
@@ -290,8 +280,8 @@ sudo cp deploy/logrotate/relay-shell /etc/logrotate.d/relay-shell
 
 The bundled logrotate config drops the append-only bit only for the rotate
 and restores it immediately. **Ship the log off-host** and alert on gaps; an
-on-host log is evidence only until the host is compromised. See
-[`docs/audit-shipper.md`](audit-shipper.md) for worked examples using
+on-host log is evidence only until the host is compromised.
+[`docs/audit-shipper.md`](audit-shipper.md) has worked examples for
 Vector, Fluent Bit, and `journalctl` → `systemd-journal-remote`.
 
 ### 6a-i. Cancelled calls and the write-ahead record
@@ -415,7 +405,7 @@ legitimate workload trips it. A process that outlives its call (a backgrounded j
 normally: its listener is kept open and answered, but its syscalls are no longer audited once the
 call has ended, and each such listener holds one file descriptor until that process exits (ADR 0006,
 2026-10-14 correction). The events ride the same off-host shipper as the
-rest of the log (`docs/audit-shipper.md`); shippers route on the `tool` field.
+rest of the log (`docs/audit-shipper.md`), which routes on the `tool` field.
 
 ### 6c. Audit evidence verifier and off-host sync (optional)
 
@@ -544,13 +534,13 @@ the audit record byte-identical. `server_info.confirm` reports the live posture
 Administering **Windows hosts over OpenSSH with PowerShell 7 (`pwsh`) as the
 `DefaultShell`** is supported ([ADR 0011](adr/0011-windows-openssh-powershell.md)).
 
-- **Execution and file transfer already work as-is.** `ssh_exec` / `ssh_spawn` /
+- **Execution and file transfer work as-is.** `ssh_exec` / `ssh_spawn` /
   `ssh_fanout` pass the command straight to the remote's own shell (no POSIX
   wrapping), so `pwsh` interprets it; SFTP paths (`ssh_upload` / `ssh_download`)
   pass through opaquely, so a caller uses `C:\...` remote paths as the server
   expects. There is no command- or path-translation layer — the caller supplies
   PowerShell-appropriate syntax.
-- **The tier classifier now covers common Windows/pwsh destructive operations**
+- **The tier classifier covers common Windows/pwsh destructive operations**
   so `guarded` / `readonly` mode and the Tier-3 confirmation broker apply to
   Windows targets, not just POSIX ones. Tier 3 (irreversible): `Remove-Item
   -Recurse`/`-Force`, `Clear-Disk`, `Format-Volume`, `Stop-Computer` /
@@ -589,9 +579,9 @@ Administering **Windows hosts over OpenSSH with PowerShell 7 (`pwsh`) as the
 
 ### 8c. Settings reference
 
-This document covers the deployment-shaping settings; the **complete, annotated
-list of every `RELAY_SHELL_*` knob** is [`.env.example`](https://github.com/rmednitzer/relay-shell/blob/main/.env.example)
-(one commented line per `Settings` field). A few operator-relevant ones not
+The complete, annotated list of every `RELAY_SHELL_*` setting is
+[`.env.example`](https://github.com/rmednitzer/relay-shell/blob/main/.env.example)
+(one commented line per `Settings` field). Operator-relevant ones not
 covered above:
 
 - **HTTP listener:** `RELAY_SHELL_HTTP_HOST` / `RELAY_SHELL_HTTP_PORT` (default
@@ -641,15 +631,15 @@ Tuning guidance for the bounds lives in [`runbook.md`](runbook.md) §7.
 the supervising client's concern. `server_info` reports effective limits and
 whether the audit sink is degraded (a degraded audit sink is an alert).
 The end-to-end HTTP smoke (start the transport, hit
-`/.well-known/oauth-protected-resource`, stop it) is documented in
+`/.well-known/oauth-protected-resource`, stop it) is in
 [`runbook.md`](runbook.md) §4.6.
 
 ### 9a. Prometheus metrics
 
 The HTTP transport exposes a `GET /metrics` endpoint in Prometheus text
-exposition format (no auth - the route bypasses OAuth by design, scope it
-via the Caddy CIDR allowlist). The audit log remains the source of truth
-for what happened; metrics are for dashboards only and reset on restart.
+exposition format (no auth: the route bypasses OAuth by design, so scope it
+via the Caddy CIDR allowlist). The audit log is the source of truth;
+metrics are for dashboards only and reset on restart.
 
 | metric                                       | type    | meaning                                                             |
 |----------------------------------------------|---------|---------------------------------------------------------------------|
@@ -700,8 +690,8 @@ Ansible drift-detection callouts). A cron line like:
 
 ## 11. Backup and restore
 
-The relay's persistent state is small and lives in three directories.
-Back them up together; the relay itself is stateless beyond these:
+The relay's persistent state is small and lives in three places; the relay is
+stateless beyond them. Back them up together:
 
 | What                                                            | Where                                                                                         | Why it matters                                                                              |
 |-----------------------------------------------------------------|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
@@ -721,14 +711,13 @@ sudo tar -czf "$backup_dir/relay-shell-state-$(date +%F).tar.gz" \
   /var/log/relay-shell
 ```
 
-The `install` steps intentionally create a root-only destination
-(directory `0700`, archive `0600`) before `tar` writes sensitive OAuth
-state and environment material.
+The `install` steps create a root-only destination (directory `0700`,
+archive `0600`) before `tar` writes sensitive OAuth state and environment material.
 
 Restore the OAuth state with `chmod 0700 oauth/ && chmod 0600 oauth/*.json`
-preserved (the file modes are part of the trust boundary — the relay
-re-applies them on next write, but an attacker reading between restore
-and first write should not see 0644 files). The audit log is append-only
+preserved (the file modes are part of the trust boundary; the relay
+re-applies them on next write, but nothing should read 0644 files between restore
+and first write). The audit log is append-only
 on disk; restore it *before* the relay starts so `chattr +a` does not
 race with a write into the unmoved file. The drift-detection CLI
 (`relay-shell --verify-deploy`, §10) confirms the systemd unit + Caddyfile

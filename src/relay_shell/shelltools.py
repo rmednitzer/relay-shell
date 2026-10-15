@@ -1,9 +1,9 @@
 """Local command and script execution.
 
-Pure execution helpers returning ``(body, exit_code)``. They never raise for
-ordinary failures (timeouts, bad cwd, decode issues) - the server wrapper adds
-the ``[exit N]`` prefix, truncation, policy, and audit. Long-lived interactive
-PTYs are handled by :mod:`relay_shell.sessions`; this module covers one-shot runs.
+Helpers return ``(body, exit_code)`` and do not raise for ordinary failures
+(timeouts, bad cwd, decode issues); the server wrapper adds the ``[exit N]``
+prefix, truncation, policy and audit. Interactive PTYs live in
+:mod:`relay_shell.sessions`; this module covers one-shot runs.
 """
 
 from __future__ import annotations
@@ -60,8 +60,8 @@ def _kill_tree(proc: asyncio.subprocess.Process) -> None:
 
 async def _feed_stdin(proc: asyncio.subprocess.Process, data: bytes | None) -> None:
     """Write ``data`` to the child's stdin and close it, concurrently with the
-    output drain (so a large stdin cannot deadlock against a full stdout pipe).
-    Best-effort: a child that exits early / closes its stdin is not an error."""
+    output drain so a large stdin cannot deadlock against a full stdout pipe.
+    A child that exits early or closes its stdin is not an error."""
     stdin = proc.stdin
     if stdin is None:
         return
@@ -82,10 +82,9 @@ async def _drain_capped(
     """Read ``stream`` to EOF, keeping at most ``cap`` bytes across all streams
     sharing ``kept`` and discarding the rest. Returns the true bytes seen.
 
-    Draining to EOF (rather than stopping at the cap) lets the child run to
-    completion so its exit code and the true output length survive, while relay
-    memory stays bounded — the same discipline ``SshPool.run`` uses for the
-    remote path. ``cap is None`` keeps everything (the historical behaviour)."""
+    Draining to EOF rather than stopping at the cap lets the child run to
+    completion, so its exit code and the true output length survive while relay
+    memory stays bounded (as in ``SshPool.run``). ``cap is None`` keeps everything."""
     seen = 0
     while True:
         chunk = await stream.read(65536)
@@ -109,28 +108,24 @@ async def _drive(
     merge_stderr: bool,
     output_cap: int | None = None,
 ) -> tuple[str, int | None]:
-    # PERF-4: bound the buffered output to ``output_cap`` (the server passes
-    # ``max_output_hard``, the absolute ceiling) instead of accumulating the full
-    # child output in relay memory via ``communicate()`` and truncating only
-    # afterward. A single high-volume producer (`cat /dev/zero`, a runaway build
-    # log) could otherwise grow the long-lived relay process without limit — a
-    # memory DoS reachable by a Tier-1 command that even ``guarded`` mode permits.
-    # The returned bytes are byte-identical (the server truncates to
-    # ``clamp_output(max_output) <= output_cap`` regardless); only relay memory
-    # changes. ``output_cap is None`` preserves the historical unbounded path.
+    # PERF-4: buffer at most ``output_cap`` (the server passes ``max_output_hard``)
+    # instead of accumulating everything via ``communicate()``. A high-volume
+    # producer (`cat /dev/zero`, a runaway build log) could otherwise grow the
+    # long-lived relay process without limit: a memory DoS reachable by a Tier-1
+    # command that even ``guarded`` mode permits. The returned bytes are unchanged
+    # (the server truncates to ``clamp_output(max_output) <= output_cap`` anyway).
+    # ``output_cap is None`` keeps the unbounded path.
     cap = output_cap if (output_cap is not None and output_cap > 0) else None
     out_parts: list[bytes] = []
     err_parts: list[bytes] = []
-    # One shared budget across stdout+stderr so combined buffered bytes stay
-    # within ``cap`` (matching the fix applied to SshPool.run).
+    # One budget shared by stdout and stderr (as in SshPool.run).
     kept = [0]
 
     async def _collect() -> int:
         readers = [_drain_capped(proc.stdout, out_parts, kept, cap)]  # type: ignore[arg-type]
         if not merge_stderr and proc.stderr is not None:
             readers.append(_drain_capped(proc.stderr, err_parts, kept, cap))
-        # Feed stdin and drain output in one gather so a wait_for timeout cancels
-        # every child task together (no detached stdin writer left running).
+        # One gather so a wait_for timeout cancels the stdin writer too.
         results = await asyncio.gather(_feed_stdin(proc, stdin_data), *readers)
         await proc.wait()
         return sum(r for r in results[1:] if isinstance(r, int))
@@ -143,9 +138,9 @@ async def _drive(
             await asyncio.wait_for(proc.wait(), 3)
         return (f"[TIMEOUT after {timeout}s]", None)
     except asyncio.CancelledError:
-        # The caller went away (client disconnect / MCP cancel). Do not leave the
-        # command running unsupervised: kill the whole process group, then let
-        # the cancellation propagate so the runner can audit it.
+        # Caller went away (client disconnect / MCP cancel): kill the process
+        # group rather than leave the command unsupervised, then propagate so
+        # the runner can audit the cancellation.
         _kill_tree(proc)
         raise
     text = b"".join(out_parts).decode("utf-8", "replace")
@@ -168,8 +163,7 @@ async def run_command(
     """Run a single command and return ``(combined_output, exit_code)``.
 
     ``output_cap`` bounds the bytes buffered in relay memory (the server passes
-    ``max_output_hard``); the child still runs to completion and the returned
-    output is byte-identical after the caller's own truncation (PERF-4)."""
+    ``max_output_hard``); the child still runs to completion (PERF-4)."""
     env = build_env(env_json)
     stdin_data = stdin.encode("utf-8") if stdin else None
     stderr_dst = asyncio.subprocess.STDOUT if merge_stderr else asyncio.subprocess.PIPE
@@ -186,10 +180,9 @@ async def run_command(
         argv = shlex.split(command)
         if not argv:
             return ("[ERROR: empty command]", None)
-    # Optional, opt-in seccomp-notify audit channel (ADR 0006). `extras` is
-    # {} unless the active monitor armed (CAP_SYS_ADMIN + enabled), keeping
-    # the default spawn byte-identical. arm() must precede the spawn; stop()
-    # tears the supervisor down once the child is reaped.
+    # Opt-in seccomp-notify audit channel (ADR 0006). `extras` is {} unless the
+    # active monitor armed (CAP_SYS_ADMIN + enabled). arm() must precede the
+    # spawn; stop() tears the supervisor down once the child is reaped.
     monitor = seccomp.get_active()
     extras = monitor.arm() if monitor is not None else {}
     try:

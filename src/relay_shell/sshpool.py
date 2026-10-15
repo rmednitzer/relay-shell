@@ -37,11 +37,10 @@ _KNOWN_HOSTS_WEAKNESS = {"strict": 0, "accept-new": 1, "ignore": 2}
 _WAIT_CLOSED_TIMEOUT = 5.0
 # ssh_spawn stdin back-pressure: bound the local write buffer and the wait for it to drain.
 _MAX_PENDING_WRITE = 1 << 20
-# Appended to every SSH timeout string. A timeout is not a result: the client side gave
-# up, but the remote side may have finished, be finishing, or have done part of the work,
-# so a mutation must be reconciled against the remote state before it is retried. It comes
-# BEFORE any caller-controlled text (paths): the tool response is truncated, and long paths
-# must never push the guidance out of it.
+# Appended to every SSH timeout string. A timeout is not a result: the remote side may
+# have finished, be finishing, or have done part of the work, so a mutation must be
+# reconciled against remote state before a retry. It comes BEFORE any caller-controlled
+# text (paths): the tool response is truncated, and long paths must not push it out.
 _TIMEOUT_OUTCOME_UNKNOWN = (
     "outcome unknown: the remote side may still be running, may have completed, or may "
     "have applied part of the change; verify the remote state before retrying a mutation"
@@ -92,11 +91,11 @@ def _conn_key(
 ) -> str:
     """Cache identity of a connection.
 
-    Everything that decides *who we are talking to* or *who we are*
-    must be part of the key, otherwise a later call asking for stricter
-    verification, another identity key or another jump host silently reuses a
-    connection that was established under weaker or different terms. The
-    connect timeout is deliberately excluded: it does not change the peer.
+    Everything that decides *who we are talking to* or *who we are* must be in
+    the key, otherwise a later call asking for stricter verification, another
+    identity key or another jump host silently reuses a connection established
+    under weaker or different terms. The connect timeout is excluded: it does
+    not change the peer.
     """
     return f"{user or ''}@{host}:{port or 22}|{mode}|{key_path}|{jump}"
 
@@ -120,9 +119,9 @@ def _host_is_known(path: str, hostname: str, port: int | None) -> bool:
         matched = asyncssh.read_known_hosts(str(kh)).match(hostname, "", port or 22)
         if matched[0] or matched[1]:
             return True
-        # asyncssh silently skips an entry whose key field is corrupt, which
-        # would make a damaged entry for this very host look "unknown". Also
-        # treat a textual host-field match as known so the strict path fails.
+        # asyncssh silently skips an entry whose key field is corrupt, so a
+        # damaged entry for this host would look "unknown". Treat a textual
+        # host-field match as known too, so the strict path fails.
         pattern = _known_host_pattern(hostname, port)
         for line in kh.read_text(encoding="utf-8").splitlines():
             fields = line.split()
@@ -157,9 +156,8 @@ class ForwardHandle:
     listen_port: int
     target: str
     listener: Any
-    # The cached-connection entry this forward pins in use; released in
-    # close_forward so the idle reaper cannot evict a connection while a
-    # forward is still listening on it.
+    # Cache entry this forward pins; released in close_forward so the idle reaper
+    # cannot evict a connection while a forward still listens on it.
     entry: _ConnEntry | None = None
 
 
@@ -169,11 +167,9 @@ class _ConnEntry:
 
     conn: Any
     last_used: float = field(default_factory=time.monotonic)
-    # How many live holders (an ssh_spawn session, a port forward, an in-flight
-    # run/transfer) are currently using this connection. The idle reaper never
-    # evicts an entry with pins > 0 — the connection is in active use even if
-    # nothing has re-`connect()`ed to it recently (a long-lived holder connects
-    # once and drives channels directly, never refreshing the cache).
+    # Live holders (ssh_spawn session, port forward, in-flight run/transfer). The
+    # idle reaper never evicts an entry with pins > 0: a long-lived holder connects
+    # once and drives channels directly, never refreshing last_used.
     pins: int = 0
 
 
@@ -188,9 +184,9 @@ class SshProcessTransport:
         entry: _ConnEntry | None = None,
     ) -> None:
         self._p = proc
-        # The pool + cache entry backing this session's connection, pinned for
-        # the session's lifetime and released in ``aclose`` (both optional so a
-        # test can still build a bare transport around a fake process).
+        # Pool and cache entry backing this session's connection, pinned for the
+        # session's lifetime and released in ``aclose`` (optional so tests can
+        # build a bare transport around a fake process).
         self._pool = pool
         self._entry = entry
 
@@ -246,9 +242,8 @@ class SshProcessTransport:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self._p.wait_closed(), 5)
         finally:
-            # Release the connection pin even if terminate/wait_closed raised,
-            # so a session that fails to close cleanly cannot pin its
-            # connection against the idle reaper forever.
+            # Even if terminate/wait_closed raised: a session that fails to close
+            # cleanly must not pin its connection against the idle reaper forever.
             if self._pool is not None:
                 await self._pool._unpin(self._entry)
 
@@ -259,21 +254,19 @@ class SshPool:
     inventory: Inventory
     _conns: dict[str, _ConnEntry] = field(default_factory=dict)
     _forwards: dict[str, ForwardHandle] = field(default_factory=dict)
-    # In-flight connect() futures keyed by user@host:port so two concurrent
-    # callers for the same target dedupe to a single underlying
-    # ``asyncssh.connect``. Without this, both would miss the cache, both
-    # would dial, and the second would silently leak the first connection.
+    # In-flight connect() futures keyed by connection key, so concurrent callers for
+    # one target share a single ``asyncssh.connect``. Otherwise both would miss the
+    # cache and dial, and the second would silently leak the first connection.
     _pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def _sweep_conns(self) -> None:
         """Evict closed or idle connections from the cache.
 
-        Mirrors the shape of ``SessionRegistry._sweep`` — opportunistic
-        sweeping on every ``connect()`` rather than an always-on
-        background task. ``ssh_idle_timeout=0`` disables idle eviction
-        (closed connections are still purged so a re-connect attempt
-        does not return a dead handle).
+        Like ``SessionRegistry._sweep``, runs opportunistically on every
+        ``connect()`` rather than as a background task. ``ssh_idle_timeout=0``
+        disables idle eviction; closed connections are still purged so a
+        re-connect does not return a dead handle.
         """
         timeout = float(getattr(self.settings, "ssh_idle_timeout", 0) or 0)
         now = time.monotonic()
@@ -285,10 +278,8 @@ class SshPool:
                     closed = entry.conn.is_closed()
                 except Exception:  # noqa: BLE001 - defensive: treat as closed
                     closed = True
-                # A pinned entry is in active use (a session / forward / in-flight
-                # transfer holds it); never idle-evict it. A *closed* connection
-                # is dead regardless of pins, so still purge it so a re-connect
-                # does not return a dead handle.
+                # Never idle-evict a pinned entry; a closed connection is dead
+                # regardless of pins and is purged.
                 idle_evict = timeout > 0 and entry.pins == 0 and now - entry.last_used > timeout
                 if closed or idle_evict:
                     doomed.append(self._conns.pop(key).conn)
@@ -300,13 +291,11 @@ class SshPool:
         """Keys of the least-recently-used *unpinned* cached connections to drop
         so inserting ``need`` more entries keeps ``_conns`` within ``max_conns``.
 
-        Caller holds ``_lock``. Mirrors the ``max_sessions`` / ``max_forwards``
-        ceilings for the connection cache underneath them: idle eviction
-        (``ssh_idle_timeout``) is opportunistic and unbounded in count, so this
-        adds a hard ceiling. Only ``pins == 0`` entries are candidates — a
-        pinned connection is in active use (a session, forward, or in-flight
-        run) and must never be evicted; if every entry is pinned the cap is
-        transiently exceeded rather than dropping a live connection.
+        Caller holds ``_lock``. Idle eviction (``ssh_idle_timeout``) is
+        opportunistic and unbounded in count, so this adds a hard ceiling beneath
+        ``max_sessions`` / ``max_forwards``. Pinned entries are never candidates:
+        if every entry is pinned the cap is transiently exceeded rather than
+        dropping a live connection.
         """
         cap = int(getattr(self.settings, "max_conns", 0) or 0)
         if cap <= 0:
@@ -321,10 +310,10 @@ class SshPool:
         return evictable[:overflow]
 
     async def _pin(self, conn: Any) -> _ConnEntry | None:
-        """Pin the cached entry backing ``conn`` so the idle reaper cannot evict
-        it while a caller is still using it. Returns the entry (pass it to
-        :meth:`_unpin` on release) or ``None`` if ``conn`` is not the cached
-        connection — a detached connection the reaper cannot touch anyway.
+        """Pin the cached entry backing ``conn`` against idle eviction.
+
+        Returns the entry (pass it to :meth:`_unpin`) or ``None`` if ``conn`` is
+        not the cached connection, which the reaper cannot touch anyway.
         """
         async with self._lock:
             for entry in self._conns.values():
@@ -345,10 +334,9 @@ class SshPool:
 
     @contextlib.asynccontextmanager
     async def _pinned(self, conn: Any) -> AsyncIterator[None]:
-        """Pin ``conn``'s cache entry for the duration of a scoped operation
-        (``run`` / SFTP transfer) so a concurrent idle sweep cannot close the
-        connection mid-use. Long-lived holders (sessions, forwards) pin
-        explicitly instead, releasing on their own close.
+        """Pin ``conn``'s cache entry for a scoped operation (``run`` / SFTP
+        transfer). Long-lived holders (sessions, forwards) pin explicitly and
+        release on their own close.
         """
         entry = await self._pin(conn)
         try:
@@ -424,11 +412,10 @@ class SshPool:
         key = _conn_key(spec.hostname, eff_user or None, eff_port or None, mode, eff_key, eff_jump)
 
         await self._sweep_conns()
-        # Cache lookup + single-flight claim happen together under the lock.
-        # If another coroutine is already connecting to the same key, it
-        # owns the inflight future and we await it. Otherwise we claim the
-        # slot ourselves with a fresh future and do the connect outside
-        # the lock so other hosts are not blocked.
+        # Cache lookup and single-flight claim happen together under the lock. If
+        # another coroutine is already connecting to this key we await its future;
+        # otherwise we claim the slot and connect outside the lock so other hosts
+        # are not blocked.
         other_future: asyncio.Future[Any] | None = None
         own_future: asyncio.Future[Any] | None = None
         async with self._lock:
@@ -439,24 +426,20 @@ class SshPool:
             other_future = self._pending.get(key)
             if other_future is None:
                 own_future = asyncio.get_running_loop().create_future()
-                # A failed connect stores its exception here. With no concurrent
-                # waiter nobody retrieves it, and asyncio then logs "Future exception
-                # was never retrieved" with a traceback when the future is collected.
-                # The owner re-raises the real error itself; mark this copy as seen.
+                # With no concurrent waiter nobody retrieves a failed connect's
+                # exception and asyncio logs "Future exception was never retrieved"
+                # with a traceback. The owner re-raises the real error itself.
                 own_future.add_done_callback(lambda f: f.cancelled() or f.exception())
                 self._pending[key] = own_future
         if own_future is None:
             assert other_future is not None
-            # Shield so a waiter's cancellation doesn't propagate into the
-            # single-flight future and poison it for every other waiter
-            # and the owner task. ``task.cancel()`` calls
-            # ``self._fut_waiter.cancel()``, which without the shield
-            # would cancel the shared future.
+            # Shield: task.cancel() cancels the awaited future, which unshielded
+            # would be the shared one and poison every other waiter and the owner.
             try:
                 return await asyncio.shield(other_future)
             except _OwnerCancelled:
-                # The caller that owned the connect was cancelled; this waiter was
-                # not. Retry (one waiter becomes the new owner).
+                # The owner was cancelled, this waiter was not: retry (one waiter
+                # becomes the new owner).
                 return await self.connect(
                     target,
                     user=user,
@@ -468,9 +451,9 @@ class SshPool:
                 )
 
         try:
-            # Everything that can raise or be cancelled after the in-flight slot is
-            # claimed stays inside this try, so the slot is always released and
-            # later callers never wait forever on an unresolved future.
+            # Everything that can raise or be cancelled after the slot is claimed
+            # stays inside this try, so the slot is always released and later
+            # callers never wait on an unresolved future.
             #
             # accept-new verifies hosts it has seen before; only a first contact is
             # accepted unverified (and recorded below).
@@ -503,12 +486,10 @@ class SshPool:
             if mode == "accept-new" and not known:
                 await self._persist_host_key(conn, spec.hostname, eff_port or None)
         except BaseException as exc:
-            # Including CancelledError: clear the in-flight slot so a
-            # subsequent caller can retry, and propagate to any waiter.
-            # Only pop OUR slot — if close_all racing replaced us with a
-            # fresh future for a new caller, leave that future for its
-            # owner. A cancelled owner must not cancel its waiters: they get
-            # _OwnerCancelled and retry the connect themselves.
+            # Including CancelledError: clear the slot so a later caller can retry.
+            # Pop only OUR slot: if close_all raced and a new caller installed a
+            # fresh future, leave it. A cancelled owner must not cancel its waiters;
+            # they get _OwnerCancelled and retry themselves.
             async with self._lock:
                 if self._pending.get(key) is own_future:
                     self._pending.pop(key, None)
@@ -517,11 +498,9 @@ class SshPool:
                     _OwnerCancelled() if isinstance(exc, asyncio.CancelledError) else exc
                 )
             raise
-        # The connect succeeded. Before caching, check whether the
-        # in-flight future was cancelled out from under us (only
-        # ``close_all`` does this today). If so, discard the connection
-        # rather than caching it after the registry was cleared, and
-        # surface the cancellation to our caller.
+        # If the future was cancelled out from under us (only ``close_all`` does
+        # this) discard the connection rather than cache it after the registry
+        # was cleared, and surface the cancellation.
         if own_future.cancelled():
             with contextlib.suppress(Exception):
                 conn.close()
@@ -531,10 +510,8 @@ class SshPool:
             raise asyncio.CancelledError("SshPool was closed while connecting")
         doomed: list[Any] = []
         async with self._lock:
-            # Enforce the connection-cache ceiling (max_conns) before caching:
-            # evict the least-recently-used unpinned entries to make room. Close
-            # them outside the lock, as the idle sweep does. `need` is 0 when we
-            # are overwriting an existing key (net growth 0), 1 for a fresh key.
+            # Enforce max_conns before caching; evictees are closed outside the
+            # lock. `need` is 0 when overwriting an existing key, 1 for a fresh one.
             need = 0 if key in self._conns else 1
             for evict_key in self._select_conn_evictions(need):
                 doomed.append(self._conns.pop(evict_key).conn)
@@ -557,18 +534,14 @@ class SshPool:
         max_output_bytes: int | None = None,
     ) -> tuple[str, int | None]:
         conn = await self.connect(target, **connect_kwargs)
-        # Pin for the run's duration. A run connects once and drives the channel
-        # directly, so its cache entry's last_used freezes at connect time; if
-        # the run outlives the idle window a concurrent connect()'s sweep would
-        # otherwise evict and close the connection mid-drain. The run timeout is
-        # clamped to max_timeout, but max_timeout (up to 86400) can exceed
-        # ssh_idle_timeout (down to 0), so the window is not guaranteed by the
-        # clamp — pin explicitly rather than rely on a cross-setting invariant.
-        # Both code paths use the same explicit-create_process +
-        # terminate-on-timeout cleanup so a TimeoutError never leaves a
-        # remote process parked on the SSH connection. The bounded path
-        # additionally caps the kept bytes; the unbounded path keeps
-        # everything received.
+        # Pin for the run's duration: last_used freezes at connect time, so a run
+        # outliving the idle window would otherwise be evicted and closed mid-drain
+        # by a concurrent connect()'s sweep. max_timeout (up to 86400) can exceed
+        # ssh_idle_timeout (down to 0), so pin explicitly rather than rely on a
+        # cross-setting invariant.
+        # Bounded and unbounded paths share the explicit-create_process and
+        # terminate-on-timeout cleanup, so a TimeoutError never leaves a remote
+        # process parked on the connection. Only the bounded path caps kept bytes.
         cap = max_output_bytes if (max_output_bytes is not None and max_output_bytes > 0) else None
 
         async with self._pinned(conn):
@@ -576,14 +549,11 @@ class SshPool:
             err_parts: list[bytes] = []
             out_seen = 0
             err_seen = 0
-            # One shared kept-budget across stdout+stderr so the *combined*
-            # buffered bytes stay within `cap`. A per-stream budget let stdout
-            # and stderr each accumulate up to `cap`, so peak transient memory
-            # was up to 2x cap before the post-drain truncate trimmed the
-            # returned string — the concurrent-drain footprint fanout's sizing
-            # math assumes is `cap`, not 2x cap. Reading `cap - kept[0]` and
-            # writing `kept[0] +=` happen with no `await` between them, so the
-            # two concurrent drains never interleave inside that window.
+            # One kept-budget shared by stdout and stderr so the *combined* buffer
+            # stays within `cap`. Per-stream budgets let peak memory reach 2x cap,
+            # but fanout's sizing math assumes `cap`. Reading `cap - kept[0]` and
+            # updating `kept[0]` have no `await` between them, so the two
+            # concurrent drains cannot interleave there.
             kept = [0]
 
             async def _drain(stream: Any, parts: list[bytes], seen: int, kept: list[int]) -> int:
@@ -605,12 +575,9 @@ class SshPool:
             proc: Any | None = None
 
             async def _open_and_drain() -> tuple[int, int]:
-                # ``create_process`` is the first remote-side await: a server
-                # that accepts the TCP/SSH connection but stalls on session/
-                # process creation must still be bounded by ``timeout``, not
-                # by waiting for the remote to ever respond. Including it in
-                # the same wait_for envelope keeps ``ssh_exec(timeout=...)``
-                # honest end-to-end.
+                # create_process is inside the same wait_for envelope so a server
+                # that accepts the connection but stalls on process creation is
+                # still bounded by ``timeout``.
                 nonlocal proc
                 proc = await conn.create_process(command, encoding=None)
                 return await asyncio.gather(
@@ -620,22 +587,16 @@ class SshPool:
 
             try:
                 out_seen, err_seen = await asyncio.wait_for(_open_and_drain(), timeout)
-                # _open_and_drain set proc before returning the gather result;
-                # the assert narrows the Optional for the type checker.
-                assert proc is not None
-                # wait_closed needs its own bound: drains hitting EOF normally
-                # means the remote is exiting, but a misbehaving peer could
-                # still hold the channel open. The command has finished and its
-                # output is in hand, so a channel that lingers is not a command
-                # timeout: keep the output (the exit status may be unknown).
+                assert proc is not None  # narrows the Optional; set by _open_and_drain
+                # wait_closed needs its own bound: a misbehaving peer can hold the
+                # channel open after EOF. The output is in hand, so a lingering
+                # channel is not a command timeout: keep it (exit status may be unknown).
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(proc.wait_closed(), _WAIT_CLOSED_TIMEOUT)
             except TimeoutError:
-                # Terminate so the remote process doesn't park on the SSH
-                # connection until the connection itself dies, then bound the
-                # post-terminate wait so cleanup itself can't hang either.
-                # ``proc`` may be None if the timeout fired during
-                # create_process; in that case there is nothing local to clean up.
+                # Terminate so the remote process does not park on the connection
+                # until it dies; bound the post-terminate wait so cleanup cannot
+                # hang. ``proc`` is None if the timeout fired during create_process.
                 if proc is not None:
                     with contextlib.suppress(Exception):
                         proc.terminate()
@@ -647,9 +608,8 @@ class SshPool:
                         await asyncio.wait_for(proc.wait_closed(), 2)
                 return (f"[TIMEOUT after {timeout}s] {_TIMEOUT_OUTCOME_UNKNOWN}", None)
             except asyncio.CancelledError:
-                # The caller went away mid-run: do not leave the remote command
-                # parked on the shared connection. Best-effort terminate, then
-                # propagate so the runner can audit the cancellation.
+                # Caller went away: best-effort terminate rather than leave the
+                # command on the shared connection, then propagate for audit.
                 if proc is not None:
                     with contextlib.suppress(Exception):
                         proc.terminate()
@@ -678,15 +638,13 @@ class SshPool:
             term_size=(cols, rows),
             encoding=None,
         )
-        # An ssh_spawn session lives indefinitely and drives the channel
-        # directly (never re-connecting), so pin the connection for the
-        # session's lifetime; the transport releases it in aclose().
+        # The session drives the channel directly and never re-connects, so pin
+        # the connection for its lifetime; the transport releases it in aclose().
         try:
             entry = await self._pin(conn)
         except BaseException:
-            # Cancelled (or failed) between the channel opening and a transport
-            # owning it: nobody else holds a reference, so release the remote PTY
-            # here instead of leaving it parked on the shared connection.
+            # Cancelled or failed before a transport owns the channel: release
+            # the remote PTY here, nobody else holds a reference.
             with contextlib.suppress(Exception):
                 proc.terminate()
             with contextlib.suppress(Exception):
@@ -708,17 +666,14 @@ class SshPool:
     ) -> str:
         """Shared body of :meth:`sftp_put` / :meth:`sftp_get`; ``route`` names the transfer."""
         conn = await self.connect(target, **connect_kwargs)
-        # Pin for the transfer's duration: with timeout=0 an SFTP transfer is
-        # bounded only by connection keepalive, so a long transfer must not be
-        # idle-evicted out from under itself.
+        # With timeout=0 a transfer is bounded only by keepalive, so it must not
+        # be idle-evicted mid-transfer.
         async with self._pinned(conn):
             async with conn.start_sftp_client() as sftp:
                 move = sftp.put if upload else sftp.get
                 transfer = move(src, dst, recurse=recurse, preserve=True)
-                # ``timeout`` is a per-call cap on the transfer itself (the
-                # connection-level keepalive is the only other bound). 0 disables
-                # it. On a hung transfer wait_for cancels the in-flight transfer; the
-                # sftp client is closed by the context manager on the way out.
+                # ``timeout`` caps the transfer itself; 0 disables it. wait_for
+                # cancels a hung transfer and the context manager closes the client.
                 if timeout > 0:
                     try:
                         await asyncio.wait_for(transfer, timeout)
@@ -778,9 +733,8 @@ class SshPool:
     def _parse_forward_spec(spec: str) -> tuple[str, int, str, int]:
         """Parse an L/R/D forward spec into (kind, listen_port, dest_host, dest_port).
 
-        Raises a controlled ``ValueError`` (never a raw Python parse internal
-        such as "invalid literal for int()" or a tuple-unpack error) on a
-        malformed spec, so the message surfaced through the tool wrapper stays
+        Raises a controlled ``ValueError`` (not a raw "invalid literal for int()"
+        or unpack error) on a malformed spec, so the surfaced message stays
         bounded (QUAL-2). ``D`` (dynamic SOCKS) has no destination; it returns
         host="" port=0.
         """
@@ -805,15 +759,12 @@ class SshPool:
     async def add_forward(
         self, target: str, spec: str, *, connect_kwargs: dict[str, Any]
     ) -> ForwardHandle:
-        # Validate the spec before opening a connection: a malformed spec now
-        # fails fast with a bounded message instead of connecting first and
-        # then leaking a raw int()/unpack ValueError (QUAL-2).
+        # Validate before connecting so a malformed spec fails fast (QUAL-2).
         kind, lport, dhost, dport = self._parse_forward_spec(spec)
         # Cap active forwards (SSH-3): a persuaded client looping ssh_forward
-        # would otherwise exhaust local fds / listen ports. Pre-check before
-        # dialling so a saturated pool fails fast without opening anything; the
-        # authoritative check under the lock below closes the listener if a
-        # concurrent caller took the last slot, so the cap is never exceeded.
+        # would otherwise exhaust local fds / listen ports. This pre-check fails
+        # fast before dialling; the authoritative check under the lock below
+        # closes the listener if a concurrent caller took the last slot.
         cap = self.settings.max_forwards
         async with self._lock:
             if len(self._forwards) >= cap:
@@ -821,10 +772,9 @@ class SshPool:
                     f"forward limit reached ({cap}); close an existing forward first"
                 )
         conn = await self.connect(target, **connect_kwargs)
-        # A forward listens indefinitely on the connection, so pin it for the
-        # forward's lifetime (released in close_forward). Unpin on any failure
-        # before the handle is tracked, so a listener error or a lost cap race
-        # never leaks a pin that would keep the connection alive forever.
+        # Pinned for the forward's lifetime (released in close_forward). Unpinned
+        # on any failure before the handle is tracked, so a listener error or lost
+        # cap race cannot leak a pin that keeps the connection alive forever.
         entry = await self._pin(conn)
         listener: Any = None
         try:
@@ -855,9 +805,9 @@ class SshPool:
                 self._forwards[fid] = handle
             return handle
         except BaseException:
-            # A listener that was bound but never tracked has no forward id for
-            # ssh_forward_close to name, so it would keep its port for the life of
-            # the connection. Closing twice (the cap-race branch above) is harmless.
+            # An untracked listener has no forward id for ssh_forward_close to
+            # name and would keep its port for the life of the connection.
+            # Closing twice (the cap-race branch above) is harmless.
             if listener is not None:
                 with contextlib.suppress(Exception):
                     listener.close()
@@ -888,7 +838,6 @@ class SshPool:
         with contextlib.suppress(Exception):
             handle.listener.close()
             await handle.listener.wait_closed()
-        # Release the connection pin now that this forward no longer uses it.
         await self._unpin(handle.entry)
         return f"closed forward {fid}"
 

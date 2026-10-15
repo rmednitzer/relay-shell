@@ -5,13 +5,10 @@
 
 ## Context
 
-`relay-shell` was built and hardened against POSIX SSH targets. A concrete
-deployment question — administering **Windows hosts over OpenSSH with
-PowerShell 7 (`pwsh`) as the login/`DefaultShell`** — surfaced how much of the
-stack silently assumes POSIX, and, more importantly, where that assumption is a
-**safety** gap rather than a functional one.
-
-A code audit (2026-07-15) mapped the current state. Two findings frame this ADR:
+`relay-shell` was built and hardened against POSIX SSH targets. Administering
+**Windows hosts over OpenSSH with PowerShell 7 (`pwsh`) as the
+login/`DefaultShell`** surfaced where the POSIX assumption is a **safety** gap,
+not just a functional one. A code audit (2026-07-15) produced two findings:
 
 **Execution already works.** `SshPool.run` and `SshPool.open_process` pass the
 raw command string straight to asyncssh's `conn.create_process(command)` — no
@@ -20,9 +17,9 @@ to whatever the SSH server runs as its command interpreter, so with
 `DefaultShell=pwsh` an `ssh_exec`/`ssh_spawn`/`ssh_fanout` command is
 interpreted by PowerShell 7 with no adapter layer. SFTP paths pass through
 opaquely (a caller can use `C:\...` or `/c/...` as the server expects). So
-Windows/pwsh targets are already **functional** today.
+Windows/pwsh targets are already **functional**.
 
-**The classifier is blind to them — and that is the part that matters.** The
+**The classifier is blind to them, and that is what matters.** The
 tier heuristics in `patterns.py` (`TIER3_PATTERN`, `TIER2_PATTERN`,
 `PRIV_ESC_PATTERN`, consumed by `policy.classify`) are POSIX command-name
 matches: `rm -rf`, `mkfs`, `shutdown`, `systemctl`, `sudo`. A PowerShell 7
@@ -32,16 +29,15 @@ target's destructive operations — `Remove-Item -Recurse -Force`, `Clear-Disk`,
 mode does not refuse them, `readonly` mode's ceiling does not see them, and the
 opt-in Tier-3 confirmation broker (ADR 0009) never fires. The compensating
 controls that make the unsandboxed posture (ADR 0002) safe to operate are
-**absent for the exact class of operation they exist to guard** on a Windows
-target. This is the crux of the ADR; everything else is secondary polish.
+**absent for the class of operation they exist to guard** on a Windows target.
+This is the crux of the ADR; everything else is secondary.
 
-PowerShell 7 also *simplifies* one concern the initial (cmd.exe-oriented)
-analysis raised: `pwsh` defaults to **UTF-8** for its output stream, so the
-existing hardcoded `decode("utf-8", "replace")` in `sshpool.py` / `sessions.py`
-is correct for cmdlet output — the OEM-codepage mangling that afflicts
-`cmd.exe` / Windows PowerShell 5.1 does not apply to the pwsh-7 path (a native
-`.exe` invoked *from* pwsh can still emit OEM bytes; that is a documented edge,
-not a feature to build).
+PowerShell 7 also removes one concern the initial (cmd.exe-oriented) analysis
+raised: `pwsh` defaults to **UTF-8** output, so the hardcoded
+`decode("utf-8", "replace")` in `sshpool.py` / `sessions.py` is correct for
+cmdlet output; the OEM-codepage mangling of `cmd.exe` / Windows PowerShell 5.1
+does not apply (a native `.exe` invoked *from* pwsh can still emit OEM bytes; a
+documented edge, not a feature to build).
 
 ## Decision
 
@@ -51,12 +47,11 @@ not a command/path translation layer. Scope is deliberately bounded to the
 `pwsh` deployment; `cmd.exe` / Windows PowerShell 5.1 are out of scope except
 where a native `.exe` reachable from `pwsh` is already covered.
 
-This ADR records the decision and the plan; the increments land as their own
-reviewed PRs. Increment **A** (classification) is the one that closes a safety
-gap and is the reason this needs an ADR (it extends what the tier classifier
-*means*, across a new shell surface — more than "another verb", see ADR-README
-"when to write an ADR"); the rest are ordinary review-loop changes tracked here
-for coherence.
+The increments land as their own reviewed PRs. Increment **A** (classification)
+closes a safety gap and is why this needs an ADR (it extends what the tier
+classifier *means* across a new shell surface, more than "another verb"; see
+the ADR README "When to write an ADR"); the rest are ordinary review-loop
+changes tracked here for coherence.
 
 ### A. PowerShell-7-aware tier classification (the safety fix)
 
@@ -84,8 +79,7 @@ tests, and a `PATTERNS_VERSION` bump. POSIX matching stays byte-identical
   `Invoke-Expression`/`iex` and `Set-ExecutionPolicy` as security-relevant.
 
 The cmdlet names are distinctive CapCase-hyphenated tokens, so false-positive
-risk is low (unlike the short `cmd.exe` verbs `del`/`rd`/`sc`, which the pwsh
-scope lets us avoid centering on).
+risk is low (unlike the short `cmd.exe` verbs `del`/`rd`/`sc`).
 
 ### B. Documentation
 
@@ -117,8 +111,7 @@ audit log ( `-Password`/`-Token`/`-ApiKey` are already caught by the single-dash
 
 - **No command or path translation** between POSIX and Windows. The remote
   `pwsh` interprets the command; the caller supplies pwsh-appropriate syntax.
-  An adapter layer would be a large, brittle surface for no capability gain
-  (ADR 0002 preserves operator power; this adds visibility, not translation).
+  An adapter layer would be a large, brittle surface for no capability gain.
 - **No PowerShell interpreter for the *local* `shell_script`.** That tool spawns
   a local subprocess and is a separate, local-OS axis; it is untouched.
 - **No new transport, tool, or auth provider.** This is classification +
@@ -127,45 +120,42 @@ audit log ( `-Password`/`-Token`/`-ApiKey` are already caught by the single-dash
 
 ## Consequences
 
-- **Sequencing.** A + B ship first as one PR (the safety fix plus honest docs);
-  C is a small follow-up; D/E are documentation caveats that ride B. Each
-  through the normal review loop; A is `patterns.py`-touching, so it is
+- **Sequencing.** A + B ship first as one PR; C is a small follow-up; D/E are
+  documentation caveats that ride B. A touches `patterns.py`, so it is
   security-sensitive (runbook §3.3) and gets a redaction/classification review
   and the ReDoS-ceiling tests.
 - **`PATTERNS_VERSION` bumps** once for increment A (audit consumers can detect
   the widened classification surface, per the module's version contract).
-- **Classification remains heuristic — sharper caveat for PowerShell.** pwsh
+- **Classification remains heuristic, with a sharper caveat for PowerShell.** pwsh
   parameters are case-insensitive, abbreviatable (`-Recurse` → `-rec` → `-r`),
   and `:`-bindable (`-Recurse:$true`), and cmdlets have aliases. Matching a
   cmdlet by name is reliable; a fully-abbreviated-alias form (`ri -rec -fo`) or
-  an obfuscated pipeline can still evade it — exactly the ADR 0003
-  "heuristic, advisory, defence-in-depth" property, now stated for Windows too.
-  The deny list and `guarded`/`readonly` remain the hard controls; this widens
-  the guardrail, it does not make it a sandbox.
+  an obfuscated pipeline can still evade it: the ADR 0003 "heuristic, advisory,
+  defence-in-depth" property, now stated for Windows too. The deny list and
+  `guarded`/`readonly` remain the hard controls; this widens the guardrail, it
+  does not make it a sandbox.
 - **Trust boundary unchanged.** Like ADR 0006/0009 this adds compensating
-  controls layered on ADR 0003 classification; it does not move the ADR 0002
-  boundary, and (as always) the tier gate never overrides the deny list.
+  controls on ADR 0003 classification; it does not move the ADR 0002 boundary,
+  and the tier gate never overrides the deny list.
 - Tracked as backlog item **WIN-1** (runbook §7.1), which points here.
 
 ## Rejected alternatives
 
-- **Do nothing / treat Windows as unsupported.** Functionally it already works,
-  so "unsupported" would be untrue *and* leave the classifier blind on live
-  Windows admin — the worst combination (operators get the capability with none
-  of the guardrail). Rejected.
+- **Do nothing / treat Windows as unsupported.** It already works, so
+  "unsupported" would be untrue *and* leave the classifier blind on live Windows
+  admin: capability with none of the guardrail. Rejected.
 - **A command/path translation / normalization layer** (rewrite POSIX ⇄ pwsh,
   normalize path separators). Large, brittle, and unnecessary: the remote shell
-  already interprets its own syntax. It would add surface and bugs for zero
-  capability gain. Rejected in favor of classify-and-audit-what-is-sent.
-- **A global remote-output-encoding setting now.** Solved a problem the pwsh-7
-  path does not have (pwsh is UTF-8). A global setting is also wrong for a mixed
-  Linux+Windows fleet. Deferred to a per-host inventory field *if* a concrete
-  mixed-fleet, native-`.exe`-heavy need appears. Rejected for now.
+  interprets its own syntax. Rejected in favor of classify-and-audit-what-is-sent.
+- **A global remote-output-encoding setting now.** The pwsh-7 path has no such
+  problem (UTF-8), and a global setting is wrong for a mixed Linux+Windows
+  fleet. Deferred to a per-host inventory field *if* a concrete mixed-fleet,
+  native-`.exe`-heavy need appears. Rejected for now.
 - **Fold Windows verbs into the deny list instead of the tier patterns.** The
-  deny list is deployment-specific and absolute; classification is the general,
-  shipped-default guardrail that feeds `guarded`/`readonly`/the broker. Windows
-  destructive operations belong in the same shipped classifier as their POSIX
-  peers, not offloaded to every operator's deny regex. Rejected.
+  deny list is deployment-specific and absolute; classification is the shipped
+  guardrail that feeds `guarded`/`readonly`/the broker. Windows destructive
+  operations belong in the same classifier as their POSIX peers, not in every
+  operator's deny regex. Rejected.
 
 ## Validation outcome (2026-07-15)
 

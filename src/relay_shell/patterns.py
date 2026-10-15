@@ -1,8 +1,7 @@
 """Compiled, version-pinned regex tables for the redaction and policy layers.
 
-This module exists so that "added a pattern" is a one-file diff: a security
-reviewer auditing redaction or tier classification can read the tables here
-without scrolling past the executor in :mod:`relay_shell.redaction` or
+Keeping the tables here makes "added a pattern" a one-file diff that a security
+reviewer can read apart from :mod:`relay_shell.redaction` and
 :mod:`relay_shell.policy`.
 
 Three pattern families are exported:
@@ -14,16 +13,13 @@ Three pattern families are exported:
 * :data:`TIER2_PATTERN`, :data:`TIER3_PATTERN`, :data:`PRIV_ESC_PATTERN` -
   tier-classification heuristics consumed by :func:`relay_shell.policy.classify`.
 
-Two further patterns serve the MySQL-family special case in redaction:
-:data:`MYSQL_FAMILY_CLI_PATTERN` gates the application of
-:data:`MYSQL_COMPACT_PASSWORD_PATTERN` to ``-p<value>`` short-form passwords
-only when a MySQL CLI appears in the argument string. :data:`URL_CREDS_PATTERN`
-handles ``://user:pass@host`` URL embeddings.
+:data:`MYSQL_FAMILY_CLI_PATTERN` gates :data:`MYSQL_COMPACT_PASSWORD_PATTERN`
+(``-p<value>`` short-form passwords) to argument strings that contain a MySQL
+CLI. :data:`URL_CREDS_PATTERN` handles ``://user:pass@host`` URL embeddings.
 
 :data:`PATTERNS_VERSION` is a monotonic counter. Bump it on any semantic
-change to a pattern (added, widened, narrowed, or removed). Audit consumers
-can read the version off the module to detect an upgrade in the
-classification or redaction surface.
+change to a pattern (added, widened, narrowed, or removed); audit consumers
+read it to detect a change in the classification or redaction surface.
 """
 
 from __future__ import annotations
@@ -219,25 +215,21 @@ REDACTION_PLACEHOLDER = "[REDACTED]"
 _VALUE_RUN = r"""(?:[^\s"'\r\n]{1,256}+(?=["'])|(?:\\[;&|]|[^\s"'\r\n;&|])+)"""
 
 REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    # Authorization / Proxy-Authorization header value. Handles three
-    # input shapes the relay actually sees:
+    # Authorization / Proxy-Authorization header value, in three shapes:
     #
     #   1. Bare HTTP header  ->  `Authorization: Bearer X`
     #      Value runs until a line break or shell control operator.
     #   2. Quoted CLI flag    ->  `-H "Authorization: Bearer X"`
     #      Value stops at the surrounding closing quote.
     #   3. JSON dict literal  ->  `{"Authorization": "Bearer X"}`
-    #      Key and value are each independently quoted; the optional
-    #      `["']?` in the prefix lets us match the quote-colon-quote
-    #      transition and the value runs to the closing inner quote.
+    #      The optional `["']?` in the prefix spans the quote-colon-quote
+    #      transition; the value runs to the closing inner quote.
     #
     # The terminator set deliberately excludes `,`: AWS Signature v4
     # (`Credential=..., SignedHeaders=..., Signature=<hex>`) and other
-    # comma-separated challenge-response schemes put the actual secret
-    # (the Signature) AFTER a comma. Stopping at the first comma would
-    # leak it. The trade-off is that an inline `Authorization: ...,
-    # otherfield=val` will over-scrub `otherfield=val` - that case is
-    # uncommon and the over-scrub is audit-fidelity loss, not a leak.
+    # comma-separated schemes put the secret (the Signature) AFTER a comma.
+    # The trade-off is that `Authorization: ..., otherfield=val` over-scrubs
+    # `otherfield=val`: audit-fidelity loss, not a leak.
     (
         re.compile(
             r"(?i)\b(?P<prefix>(?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?)"
@@ -254,15 +246,15 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         r"\g<prefix>[REDACTED]",
     ),
     # Quoted keyword value (v12): `PASSWORD="two words"`, `{"password": "a b c"}`,
-    # `PGPASSWORD='a b'`. The generic rule below stops at whitespace, so a
-    # multi-word quoted secret leaked every word after the first. This rule runs
-    # first and consumes up to the matching closing quote (escape-aware; the
-    # closing quote is preserved). The body is deliberately NOT length-bounded: a
-    # bound would collapse an over-long value to the short placeholder and shift
-    # the unconsumed tail into the kept prefix of a truncated audit record (the
-    # hazard the redaction module's P1 note describes). Its two alternatives are
-    # disjoint, so it is linear, and an unterminated or window-truncated value
-    # collapses to end-of-line instead of leaking its tail.
+    # `PGPASSWORD='a b'`. The generic rule below stops at whitespace and would
+    # leak every word after the first. This rule runs first and consumes up to
+    # the matching closing quote (escape-aware; the quote is preserved). The
+    # body is deliberately NOT length-bounded: a bound would collapse an
+    # over-long value to the short placeholder and shift the unconsumed tail
+    # into the kept prefix of a truncated audit record (the hazard in the
+    # redaction module's P1 note). Its two alternatives are disjoint, so it is
+    # linear, and an unterminated or window-truncated value collapses to
+    # end-of-line instead of leaking its tail.
     (
         re.compile(
             r"(?i)(?P<prefix>(?:api[_-]?key"
@@ -275,16 +267,15 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     # token=... / api[_-]?key=... / password: ...  (also the JSON-quoted-key
     # shape `"password": "x"`). The separator tolerates an optional quote on
-    # either side (`["']?`), mirroring the Authorization rule, so a JSON key
-    # like `"password"` (a `"` sits between the keyword and the `:`) still
-    # anchors — RED-6. The value is `_VALUE_RUN`: a non-space, non-quote run. Stopping at a quote
-    # catches the JSON-quoted-key shape `"password": "x"` (the value ends at the
-    # closing quote, which is preserved) while keeping the historical single-token
-    # behaviour for the unquoted `password=x` / `token: x` forms (RED-6), and it now
-    # also stops at an unquoted shell control operator (v15). Linear: the one
-    # lookahead is behind a possessive run bounded at 256 characters and a run never
-    # crosses whitespace, unlike a `[^"'\r\n]+(?=["'])` form, which is O(n²) when the
-    # prefix recurs across a large quote-free argument (a ReDoS on the sync audit path).
+    # either side (`["']?`), mirroring the Authorization rule, so `"password"`
+    # (a `"` between the keyword and the `:`) still anchors (RED-6). The value
+    # is `_VALUE_RUN`: a non-space, non-quote run that ends at the closing
+    # quote (preserved) in the JSON shape, keeps single-token behaviour for the
+    # unquoted `password=x` / `token: x` forms, and stops at an unquoted shell
+    # control operator (v15). Linear: the one lookahead is behind a possessive
+    # run bounded at 256 characters that never crosses whitespace, unlike a
+    # `[^"'\r\n]+(?=["'])` form, which is O(n²) when the prefix recurs across a
+    # large quote-free argument (a ReDoS on the sync audit path).
     (
         re.compile(
             r"(?i)(?P<prefix>(?:api[_-]?key"
@@ -294,15 +285,12 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         r"\g<prefix>[REDACTED]",
     ),
-    # AWS secret access key assignment (RED-3). The `secret` keyword sits
-    # mid-name in `AWS_SECRET_ACCESS_KEY=`, so the generic `secret=` rule above
-    # never fires (`secret` is followed by `_ACCESS_KEY`, not `=`). Anchor on
-    # the full `secret[_-]?access[_-]?key` phrase — distinctive enough that
-    # `SECRET_ACCESS_KEY_PATH=/x` (the `_PATH` breaks the `key[:=]` adjacency)
-    # and similar are not over-scrubbed. Quote-tolerant separator + quoted-value
-    # terminator like the generic rule above, so the JSON-quoted-key shape
-    # `"AWS_SECRET_ACCESS_KEY": "x"` is caught (RED-6); the AWS secret has no
-    # whole-match fallback, so this prefix rule is the only thing protecting it.
+    # AWS secret access key assignment (RED-3). `secret` sits mid-name in
+    # `AWS_SECRET_ACCESS_KEY=`, so the generic `secret=` rule never fires.
+    # Anchored on the full `secret[_-]?access[_-]?key` phrase so that
+    # `SECRET_ACCESS_KEY_PATH=/x` is not over-scrubbed. Quote-tolerant like the
+    # generic rule (`"AWS_SECRET_ACCESS_KEY": "x"`, RED-6). The AWS secret has
+    # no whole-match fallback, so this rule is its only protection.
     (
         re.compile(
             r"(?i)(?P<prefix>(?:aws[_-]?)?secret[_-]?access[_-]?key"
@@ -312,16 +300,15 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     # Azure connection-string keys (RED-3): `AccountKey=<base64>` (Storage) and
     # `SharedAccessKey=<base64>` (Service Bus / Event Hubs). The value runs to
-    # the `;` segment separator (or whitespace/quote), so the rest of the
-    # connection string is preserved for the audit reader.
+    # the `;` segment separator (or whitespace/quote), preserving the rest of
+    # the connection string.
     (
         re.compile(r"(?i)(?P<prefix>(?:account|sharedaccess)key\s*=\s*)[^;\s\"']+"),
         r"\g<prefix>[REDACTED]",
     ),
-    # Azure SAS token signature (RED-3): the `sig=` query parameter carries the
-    # HMAC signature that authorizes the URL. Anchored on a leading `?`/`&` so
-    # `design=`/`sign=` substrings cannot match, and on a 20+ char url-encoded
-    # base64 body so a tiny unrelated `sig=` is left alone.
+    # Azure SAS token signature (RED-3): the `sig=` query parameter is the HMAC
+    # that authorizes the URL. Anchored on a leading `?`/`&` (so `design=` and
+    # `sign=` cannot match) and a 20+ char url-encoded base64 body.
     (
         re.compile(r"(?i)(?P<prefix>[?&]sig=)[A-Za-z0-9%/+]{20,}"),
         r"\g<prefix>[REDACTED]",
@@ -332,12 +319,11 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # around interactive flags / dash-prefixed values.
     #
     # The leading ``(?<![A-Za-z])`` keeps the dash from binding to the tail of a
-    # PowerShell ``Verb-Noun`` cmdlet: ``Get-Credential`` / ``Get-Secret`` /
-    # ``Remove-Secret`` contain ``-Credential`` / ``-Secret`` but take no inline
-    # secret, and without the guard the rule would over-scrub the *next* token
-    # (`-Message`, a task name, …). A real secret flag is preceded by
-    # whitespace / start / ``=`` / a quote — never a letter — so the guard never
-    # reduces true redaction (WIN-1 / ADR 0011 increment C).
+    # PowerShell ``Verb-Noun`` cmdlet (``Get-Credential``, ``Get-Secret``), which
+    # takes no inline secret and would otherwise over-scrub the *next* token. A
+    # real secret flag is preceded by whitespace, start, ``=`` or a quote, never
+    # a letter, so the guard does not reduce true redaction (WIN-1 / ADR 0011
+    # increment C).
     (
         re.compile(
             r"""(?ix)
@@ -378,17 +364,14 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         r"\g<prefix>[REDACTED]",
     ),
     # PowerShell inline plaintext via ``ConvertTo-SecureString`` (WIN-1 / ADR
-    # 0011 increment C). The canonical pwsh idiom for putting a secret on the
-    # command line:
+    # 0011 increment C), the canonical pwsh idiom for a secret on the command
+    # line:
     #   ConvertTo-SecureString 'P@ss' -AsPlainText -Force
     #   ConvertTo-SecureString -String "P@ss" -AsPlainText
-    # Redact the operand so the plaintext never reaches the audit log. The
-    # bounded ``(?:-\w+\s+){0,8}?`` skips any leading switches (`-AsPlainText`,
-    # `-Force`, `-String`) — bounded like the RED-7 rules so it stays linear —
-    # then the operand is a quoted string OR a bare non-flag/non-variable token.
-    # Requiring ``(?![-$])`` on the bare branch means a switch or a `$var`
-    # (an already-encrypted handle, not plaintext) is never over-scrubbed; only
-    # an inline literal secret is collapsed.
+    # The bounded ``(?:-\w+\s+){0,8}?`` skips leading switches (linear, like the
+    # RED-7 rules); the operand is a quoted string or a bare token. ``(?![-$])``
+    # on the bare branch leaves a switch or a `$var` (an already-encrypted
+    # handle) alone, so only an inline literal is collapsed.
     (
         re.compile(
             r"""(?ix)
@@ -411,11 +394,11 @@ REDACTION_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 # at a shell control operator. Same shape as the generic CLI-flag rule.
 _SCOPED_VALUE = r"""(?:'[^']*'|"[^"]*"|'[^\r\n]*|"[^\r\n]*|[^\s;&|]+)"""
 
-# Command-scoped credential flags (v12). Each is anchored on the command that
-# gives the flag its meaning, with a bounded gap, because the flags are
-# overloaded (`-u` is a uid in `docker exec`, `-p` a port in `ssh`/`nmap`) and an
-# unscoped rule would over-scrub. They keep the non-secret prefix and collapse
-# only the secret. Bounded gaps keep every rule linear on adversarial input.
+# Command-scoped credential flags (v12). Each is anchored on its command with a
+# bounded gap, because the flags are overloaded (`-u` is a uid in `docker exec`,
+# `-p` a port in `ssh`/`nmap`) and an unscoped rule would over-scrub. They keep
+# the non-secret prefix and collapse only the secret; the bounded gaps keep
+# every rule linear on adversarial input.
 COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # curl / wget / httpie: `-u user:pass`, `--user user:pass`, `--proxy-user ...`.
     # Only the password half is collapsed; the user name is kept.
@@ -490,24 +473,21 @@ COMMAND_SCOPED_PREFIX_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 # --- Redaction: whole-match (collapse the entire match to the placeholder) ---
 
 # Provider token shapes are *structurally* anchored (a fixed prefix and a
-# length floor), not anchored on the secret's character class - the
-# character class evolves, the structure does not (see the redaction
-# module docstring and runbook §6.5). Anchors and length bounds track the
-# canonical secret-scanning rulesets so this set stays comparable to what
-# gitleaks / GitHub secret scanning detect:
+# length floor), not on the secret's character class: the class evolves, the
+# structure does not (see the redaction module docstring and runbook §6.5).
+# Anchors and length bounds track the canonical secret-scanning rulesets so
+# the set stays comparable to gitleaks / GitHub secret scanning:
 #   https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
-# These run as whole-match collapses: a provider token has no useful
-# non-secret prefix to preserve, so the entire match becomes the
-# placeholder. They are the safety net for secrets that arrive *bare* -
-# in a JSON body, a log line, or a flag the CLI-flag prefix patterns do
-# not name - which the prefix patterns alone would miss.
+# Whole-match collapses: a provider token has no non-secret prefix worth
+# keeping. They are the safety net for secrets that arrive *bare* (a JSON
+# body, a log line, a flag the CLI-flag prefix patterns do not name).
 REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     # PEM / OpenSSH private key blocks
     re.compile(
-        # Length-bound the body (a real PEM key block is < ~8 KB) so a large
-        # argument carrying many unterminated `-----BEGIN ... KEY-----` markers
-        # cannot drive O(n^2) backtracking and stall the (synchronous) audit
-        # redaction path. `[\s\S]` spans newlines without needing DOTALL.
+        # Length-bound the body (a real PEM key block is < ~8 KB) so many
+        # unterminated `-----BEGIN ... KEY-----` markers cannot drive O(n^2)
+        # backtracking on the synchronous audit redaction path. `[\s\S]` spans
+        # newlines without DOTALL.
         r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----[\s\S]{0,8192}?"
         r"-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----"
         # Unterminated (v16): no END footer within the bound, as when a key is cut
@@ -525,18 +505,15 @@ REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bgith(?:ub)?_pat_[A-Za-z0-9_]+"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
     # OpenAI keys. Two rules by design: the classic `sk-<alnum>` body is
-    # kept narrow (alphanumeric only) so kebab-case identifiers such as
-    # `sk-build-step` are not over-scrubbed; the project / service-account
-    # / admin formats carry URL-safe opaque tails that legitimately contain
-    # `_` and `-`, so their body admits those separators and runs unbounded
-    # — otherwise the redactor would stop at the first separator and leave
-    # the remainder of the key in the audit log.
+    # alphanumeric only so kebab-case identifiers such as `sk-build-step` are
+    # not over-scrubbed; the project / service-account / admin formats carry
+    # URL-safe tails containing `_` and `-`, so their body admits those and runs
+    # unbounded, else the remainder of the key would stay in the audit log.
     re.compile(r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_\-]{16,}"),
     re.compile(r"\bsk-[A-Za-z0-9]{16,}"),
-    # Anthropic API key (`sk-ant-<acct-type><nn>-<body>`). The `sk-ant-`
-    # hyphens break the bare `sk-<alnum>` run above, so it needs its own rule;
-    # the opaque body admits URL-safe `_`/`-` and runs unbounded from the floor
-    # so the whole key collapses rather than stopping at the first separator.
+    # Anthropic API key (`sk-ant-<acct-type><nn>-<body>`). Its hyphens break
+    # the bare `sk-<alnum>` run above, so it needs its own rule; the body
+    # admits URL-safe `_`/`-` and runs unbounded so the whole key collapses.
     re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{20,}"),
     # HuggingFace user access token (`hf_` + >=34 alnum body).
     re.compile(r"\bhf_[A-Za-z0-9]{34,}"),
@@ -544,37 +521,32 @@ REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     # Slack token family (bot/user/app/refresh/legacy).
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
-    # Slack incoming-webhook URL (RED-3): the full URL is the credential —
-    # anyone holding it can post to the channel. Distinct from the `xox*`
-    # token rule above. Collapses the whole URL.
+    # Slack incoming-webhook URL (RED-3): the full URL is the credential
+    # (anyone holding it can post to the channel). Distinct from `xox*` above.
     re.compile(r"https://hooks\.slack\.com/services/T[A-Za-z0-9_]+/B[A-Za-z0-9_]+/[A-Za-z0-9_]+"),
     # Google API key (AIza + 35) and OAuth 2.0 access token (ya29.<...>).
-    # Both run unbounded from the length floor so the whole token collapses
-    # rather than leaving a tail. The ya29 body admits `.`: these access
-    # tokens are opaque and carry additional dots, so stopping at the first
-    # one would strand the remainder of the credential.
+    # Both run unbounded from the length floor so the whole token collapses.
+    # The ya29 body admits `.` because these opaque tokens carry further dots.
     re.compile(r"\bAIza[A-Za-z0-9_\-]{35,}"),
     re.compile(r"\bya29\.[A-Za-z0-9._\-]{20,}"),
-    # Stripe secret (sk_) and restricted (rk_) keys, test/live/prod.
-    # Unbounded body so a longer (future) key collapses whole.
+    # Stripe secret (sk_) and restricted (rk_) keys, test/live/prod. Unbounded
+    # body so a longer key collapses whole.
     re.compile(r"\b(?:sk|rk)_(?:test|live|prod)_[A-Za-z0-9]{10,}"),
     # GitLab personal/project/group access token.
     re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}"),
-    # npm automation/access token (>=36-char body, unbounded so a longer
-    # token collapses whole instead of failing a fixed-length boundary).
+    # npm automation/access token (>=36-char body, unbounded so a longer token
+    # collapses whole).
     re.compile(r"\bnpm_[A-Za-z0-9]{36,}"),
     # PyPI upload token (the AgEIcHlwaS5vcmc macaroon header is base64 of
     # "pypi.org" and is a near-unique structural anchor).
     re.compile(r"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{16,}"),
-    # JSON Web Token: two `ey...` base64url segments (the JWT header and
-    # payload both begin `{"`, which base64url-encodes to `ey`) plus an
-    # optional signature segment. The header floor stays high (a real JWT
-    # header is always >=17 chars) as the strong anchor against false
-    # positives, while the payload / signature floors are low so a *compact*
-    # JWT with a small claim set (e.g. `{"sub":"1"}`) is still redacted.
-    # Bearer-prefixed JWTs are already caught by REDACTION_PREFIX_PATTERNS;
-    # this collapses a bare JWT (an id_token in a JSON body, an --jwt-style
-    # flag the prefix list does not name).
+    # JSON Web Token: two `ey...` base64url segments (header and payload both
+    # begin `{"`, which encodes to `ey`) plus an optional signature. The header
+    # floor stays high (a real header is >=17 chars) as the anchor against
+    # false positives; the payload / signature floors are low so a compact JWT
+    # (e.g. `{"sub":"1"}`) is still redacted. Bearer-prefixed JWTs are caught by
+    # REDACTION_PREFIX_PATTERNS; this collapses a bare one (an id_token in a
+    # JSON body, a flag the prefix list does not name).
     re.compile(r"\bey[A-Za-z0-9_\-]{17,}\.ey[A-Za-z0-9_\-]{8,}(?:\.[A-Za-z0-9_\-]{8,})?"),
 )
 

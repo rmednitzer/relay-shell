@@ -6,7 +6,7 @@ labels: ["security"]
 ---
 
 <!--
-STOP. Please do not paste working exploit payloads into a public issue.
+STOP. Do not paste working exploit payloads into a public issue.
 
 Preferred reporting channels (in order):
 
@@ -15,10 +15,9 @@ Preferred reporting channels (in order):
 2. Or open an issue without exploit detail and request a private channel
    to follow up.
 
-This template exists so that something *can* be filed publicly when the
-finding is generic (e.g. "the redaction pattern misses a known token
-shape") and exploitability is low. Use the private path for anything
-sensitive. See SECURITY.md.
+This template is for findings that are generic and low in exploitability
+(e.g. "the redaction pattern misses a known token shape") and can be filed
+publicly. Use the private path for anything sensitive. See SECURITY.md.
 
 Indicative response target: 7 days to triage.
 -->

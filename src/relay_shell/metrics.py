@@ -7,11 +7,10 @@ liveness gauges (active sessions, active forwards, audit-degraded). They live
 in process memory, reset on restart, and are exposed at ``GET /metrics`` on
 the HTTP transport only.
 
-Exposition is hand-rolled (no `prometheus_client` dep). The Prometheus text
-exposition format is simple enough that taking on a runtime dependency for
-five metric names is poor cost-vs-value; the escape rules used here match
-the spec (`\\`, `\"`, `\n` only inside label values; metric values are
-floats or integers serialised with `repr`).
+Exposition is hand-rolled (no `prometheus_client` dependency; the format is
+simple and there are few metrics). The escape rules match the spec (`\\`, `\"`,
+`\n` only inside label values; metric values are floats or integers serialised
+with `repr`).
 """
 
 from __future__ import annotations
@@ -20,8 +19,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from threading import Lock
 
-# Public metric names. Kept here as constants so docs/tests can reference
-# them without hard-coding the strings in three places.
+# Public metric names, shared with docs and tests.
 TOOL_CALLS_TOTAL = "relay_shell_tool_calls_total"
 SECCOMP_NOTIFY_EVENTS_TOTAL = "relay_shell_seccomp_notify_events_total"
 SECCOMP_NOTIFY_OVERFLOW_TOTAL = "relay_shell_seccomp_notify_overflow_total"
@@ -29,9 +27,8 @@ ACTIVE_SESSIONS = "relay_shell_active_sessions"
 ACTIVE_FORWARDS = "relay_shell_active_forwards"
 AUDIT_DEGRADED = "relay_shell_audit_degraded"
 
-# One row per metric, in exposition order: HELP + TYPE + samples per metric, counters
-# first. The lookups below are derived from this table so a metric cannot be listed in
-# one place and forgotten in another.
+# One row per metric, in exposition order (counters first). The lookups below
+# derive from this table.
 _METRICS: tuple[tuple[str, str, str], ...] = (
     (
         TOOL_CALLS_TOTAL,
@@ -61,9 +58,7 @@ _LabelKey = tuple[tuple[str, str], ...]
 
 
 def _escape_label_value(value: str) -> str:
-    # Per the Prometheus text format spec only these three characters need
-    # escaping inside a label value (everything else, including spaces and
-    # `{}`, is allowed verbatim).
+    # The Prometheus text format escapes only these three characters in a label value.
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 

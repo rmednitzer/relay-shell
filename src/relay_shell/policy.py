@@ -16,8 +16,7 @@ Tiers (see docs/adr/0003-tiered-authority.md):
 The deny list is enforced first in *every* mode, including ``open``.
 
 The compiled regex tables (Tier 2 / Tier 3 / privilege escalation) live in
-:mod:`relay_shell.patterns` so a security reviewer can audit "added a
-pattern" as a one-file diff.
+:mod:`relay_shell.patterns`.
 """
 
 from __future__ import annotations
@@ -39,23 +38,20 @@ class Tier(IntEnum):
 
 
 # Tools that never mutate local/remote state. `ssh_check` is here for inventory hosts
-# only: probing a host that is not in the inventory dials a caller-chosen address with
-# the relay's keys (the same reach that keeps `ssh_keyscan` out of this set), so the
-# `ssh_check` wrapper raises it to Tier 1 via `min_tier` in that case.
-# Note: ssh_keyscan is NOT here. It opens caller-chosen outbound TCP
-# connections (SSRF-shaped surface to whatever the relay can reach,
-# including private/cloud-metadata ranges) and leaves entries in
-# remote sshd logs. That puts it outside the "observation-only client"
-# contract of `readonly` mode. classify() falls through to Tier 1
-# (REVERSIBLE) for ssh_keyscan, which keeps it permitted in `open` and
-# in `guarded` (Tier 1 < Tier 2) but rejected in `readonly`.
+# only: probing a host outside the inventory dials a caller-chosen address with the
+# relay's keys, so the `ssh_check` wrapper raises it to Tier 1 via `min_tier`.
 #
-# operation_confirm is here too: it only arms an ephemeral, single-use
-# confirmation token in the in-memory broker (ADR 0009) and authorizes
-# nothing by itself - the retried Tier-3 call is still re-classified and
-# re-admitted from scratch. Classifying it Tier 0 keeps the control-plane
-# step available in every mode (including readonly, where a Tier-3 op is
-# refused regardless, so arming is a no-op).
+# ssh_keyscan is NOT here. It opens caller-chosen outbound TCP connections
+# (SSRF-shaped, reaching private/cloud-metadata ranges) and leaves entries in
+# remote sshd logs, which is outside the observation-only contract of `readonly`.
+# It falls through to Tier 1: permitted in `open` and `guarded`, rejected in
+# `readonly`.
+#
+# operation_confirm is here: it only arms an ephemeral, single-use token in the
+# in-memory broker (ADR 0009) and authorizes nothing by itself; the retried
+# Tier-3 call is re-classified and re-admitted from scratch. Tier 0 keeps the
+# step available in every mode (in readonly a Tier-3 op is refused regardless,
+# so arming is a no-op).
 _READ_ONLY_TOOLS = frozenset(
     {
         "server_info",
@@ -132,10 +128,7 @@ def assess(tool: str, command: str = "") -> Assessment:
     if tool in _MUTATING_TOOLS:
         return Assessment(Tier.STATEFUL, BASIS_MUTATING_TOOL)
     # Anything else (shell_exec/script/spawn, ssh_exec/fanout/spawn, session_send/
-    # kill/resize): an arbitrary command or interactive input with no obvious
-    # mutating token is reversible-by-default but never read-only. The TIER
-    # heuristics above already escalate (rm -rf, systemctl restart, ...) based on
-    # the command itself before we reach this default.
+    # kill/resize) with no mutating token: Tier 1, never read-only.
     return Assessment(Tier.REVERSIBLE, BASIS_DEFAULT)
 
 

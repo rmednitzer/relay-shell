@@ -5,13 +5,20 @@ file (`/var/log/relay-shell/audit.jsonl` by default). On its own that
 file is evidence only until the host is compromised: an attacker with
 sufficient privilege can rotate it, mask it, or block writes. The
 audit guarantee survives only if the records are shipped to a system
-the operator controls separately from the relay host.
+the operator controls separately from the relay host. The local hash
+chain cannot show that the newest records were truncated; only an
+off-host copy can.
 
-This guide gives one worked example each for three shipping shapes:
-**Vector**, **Fluent Bit**, and **journalctl →
-`systemd-journal-remote`**. Pick one — they overlap. The choice is
-mostly operational (what is already in your stack, how the SIEM
+This guide gives one worked example each for **Vector**, **Fluent Bit**
+and **journalctl → `systemd-journal-remote`**. Pick one; they overlap.
+The choice is operational (what is already in your stack, how the SIEM
 ingests).
+
+This page is canonical for streaming the live log off-host. The hourly
+chain verifier, the anchor and the rsync mirror (including the rollback
+check, retention pruning and the approval ledger) are canonical in
+[`deploy/evidence/README.md`](https://github.com/rmednitzer/relay-shell/blob/main/deploy/evidence/README.md)
+and complement, not replace, the shippers here.
 
 Cross-references:
 
@@ -36,8 +43,9 @@ A shipper that meets the project's audit posture must:
    (the source of truth across a rotation); the `tail -F`-based
    journal forwarder follows by name and reopens on rotation, which
    is acceptable here because the bundled `logrotate` config uses
-   `create` (the new file is opened immediately, with no records
-   buffered past the close of the old fd).
+   `create` (the new file is created at rotation, with no records
+   buffered past the close of the old fd). See "Rotation gap risk"
+   in §3 for the residual race.
 4. **Be observable.** Drops, retries, and back-pressure events must
    reach the operator. If the shipper silently buffers for hours,
    you have lost the property you were paying for.
@@ -69,15 +77,13 @@ relay state directory in either approach.
 ## 1. Vector (recommended for most operators)
 
 Vector (https://vector.dev) is a single static binary with a strict
-config and end-to-end metrics. Pick this when you want one tool to
-own the pipeline and surface back-pressure as Prometheus metrics out
-of the box.
+config and end-to-end metrics. Pick it when one tool should own the
+pipeline and expose back-pressure as Prometheus metrics.
 
 ### Install
 
-Use the official Timber-maintained apt repository. Avoid the
-`curl ... | bash` one-liner; the explicit-keyring path below is
-auditable and matches the project's security posture.
+Use the official Timber-maintained apt repository with an explicit
+keyring, not the `curl ... | bash` one-liner, so the steps are auditable.
 
 ```bash
 # 1. Fetch and verify the signing key. The fingerprint is published
@@ -215,14 +221,14 @@ curl -s http://127.0.0.1:9598/metrics | grep -E '^vector_(events|errors|buffer)'
 ### Troubleshoot
 
 - **"permission denied" on the audit file.** Check
-  `ls -l /var/log/relay-shell/audit.jsonl` — the file is created
+  `ls -l /var/log/relay-shell/audit.jsonl`: the file is created
   `0600 relay-shell:relay-shell` by `deploy/install.sh` and the
-  bundled `logrotate` config preserves that mode. Use the systemd
-  drop-in above (run Vector as `relay-shell`) or grant a POSIX ACL
-  for the shipper's user. Do not chmod the file.
+  bundled `logrotate` config preserves that mode. Grant the `vector`
+  user a POSIX ACL as above (re-apply it after rotation). Do not
+  chmod the file.
 - **Records duplicated after restart.** Confirm `data_dir` is
-  persistent and writable by the user running Vector (`relay-shell`
-  in this recipe); the checkpoint lives there.
+  persistent and writable by the user running Vector (`vector` in
+  this recipe); the checkpoint lives there.
 - **Records lost after rotation.** `logrotate` should be the bundled
   config (`deploy/logrotate/relay-shell`), which uses `create` so
   the inode changes only at rotate time. Vector's
@@ -232,16 +238,15 @@ curl -s http://127.0.0.1:9598/metrics | grep -E '^vector_(events|errors|buffer)'
 
 ## 2. Fluent Bit (lightweight, broad output plugin set)
 
-Fluent Bit (https://fluentbit.io) is the right choice if your
-aggregator speaks Forward, Loki, OpenSearch, S3, or a cloud-native
-sink natively, or if you want a smaller process footprint than
-Vector. The configuration shape below is a thin file → JSON → output
-pipeline.
+Fluent Bit (https://fluentbit.io) fits if your aggregator speaks
+Forward, Loki, OpenSearch, S3 or a cloud-native sink natively, or if
+you want a smaller footprint than Vector. The pipeline below is a thin
+file → JSON → output chain.
 
 ### Install
 
-Use the official Fluent Bit apt repository directly. Avoid the
-`curl ... | sh` one-liner; the explicit path below is auditable.
+Use the official Fluent Bit apt repository with an explicit keyring,
+not the `curl ... | sh` one-liner.
 
 ```bash
 # 1. Fetch and verify the signing key. The fingerprint is published
@@ -289,7 +294,7 @@ sudo apt-get update && sudo apt-get install -y fluent-bit
     DB.Sync           normal
     Tag               relay_shell.audit
     Parser            relay_shell_audit
-    # Skip lines that fail to parse - alert instead via the metrics endpoint.
+    # Skip lines longer than Buffer_Max_Size instead of halting the file; alert on drops via the metrics endpoint.
     Skip_Long_Lines   On
     storage.type      filesystem
 
@@ -371,8 +376,9 @@ curl -s http://127.0.0.1:2020/api/v1/metrics/prometheus | grep -E '^fluentbit_(i
 ### Troubleshoot
 
 - **"file rotation event lost"** — confirm `Rotate_Wait` is at least
-  the time `logrotate` holds the old file before unlinking; 30s is
-  the bundled value and matches the logrotate config.
+  the time `logrotate` holds the old file before unlinking; 30 s is
+  the value in the config above, not something the bundled
+  `logrotate` config sets.
 - **Records replayed after restart** — `DB` must be on a persistent
   path with `DB.Sync normal` (not `off`); the position is otherwise
   lost on crash.
@@ -382,11 +388,10 @@ curl -s http://127.0.0.1:2020/api/v1/metrics/prometheus | grep -E '^fluentbit_(i
 ## 3. journalctl → `systemd-journal-remote`
 
 Use this when the relay host already runs `systemd-journald` and the
-ops org standard is "journal everything, ship the journal". This is
-the lowest-friction shipper if you do not want a third-party agent on
-the host, but it requires that the audit file be **also** delivered
-to the journal (it is not, by default). The recipe below has two
-parts:
+ops standard is "journal everything, ship the journal". It is the
+lowest-friction option without a third-party agent on the host, but
+the audit file must **also** be delivered to the journal (it is not,
+by default). The recipe has two parts:
 
 1. A tiny forwarder unit `tail -F`s the audit file and pipes each
    line to journald. Each line is stored verbatim as the journal
@@ -490,9 +495,9 @@ journalctl -u systemd-journal-upload -n 100 --no-pager | grep -iE 'error|fail' |
 `tail -F` (`--follow=name --retry`) tracks the file by name and
 reopens when `logrotate` lands a new file at the canonical path.
 This is acceptable here because the bundled `deploy/logrotate/
-relay-shell` uses `create` (the new file is in place before
-`firstaction` ever finishes), but it is **not** inode-safe in the
-strict sense Vector and Fluent Bit provide. A small race exists: if
+relay-shell` uses `create` (the new file is created at rotation),
+but it is **not** inode-safe in the strict sense Vector and Fluent Bit
+provide. A small race exists: if
 the relay writes the very last byte to the *old* inode after
 `tail -F` has switched to the *new* path, that byte ships when the
 rotated/compressed old file is ingested by your aggregator (it is
@@ -524,8 +529,10 @@ required, prefer the Vector recipe.
 | journald-centric ops org, no third-party agent on the host    | journal-remote      |
 | You want the audit record AND the journal both shipped        | journal-remote + a copy of the JSONL via Vector or Fluent Bit |
 
-The architectural property each preserves is the same: a remote
-copy of every audit record, written without modifying the on-host
-append-only file, with back-pressure that surfaces rather than
-silently dropping. The relay's audit guarantee ends at the
-filesystem; the shipper extends it to the rest of your stack.
+Each preserves the same property: a remote copy of every audit
+record, written without modifying the on-host append-only file, with
+back-pressure that surfaces rather than silently dropping. The relay's
+audit guarantee ends at the filesystem; the shipper extends it to the
+rest of your stack. For chain verification and a verified rsync mirror
+of the rotated segments, see
+[`deploy/evidence/README.md`](https://github.com/rmednitzer/relay-shell/blob/main/deploy/evidence/README.md).

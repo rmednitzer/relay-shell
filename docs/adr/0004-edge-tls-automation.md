@@ -9,12 +9,11 @@ The HTTP transport binds `127.0.0.1` by design (ADR 0001, `docs/architecture.md`
 A reverse proxy in front terminates TLS and enforces the CIDR allowlist,
 security headers, and access logging. Until now the deployment guide pointed
 at a reference Caddyfile that operators had to hand-edit for their domain,
-email, and CIDRs; the install path stopped at the Python service. That left
-two recurring frictions for production deployers:
+email, and CIDRs; the install path stopped at the Python service. Two
+frictions followed:
 
-1. Bootstrapping the TLS edge correctly (CA contact, ACME directory,
-   loopback upstream, security headers, log paths) was a manual checklist
-   every time, with no validation step.
+1. Bootstrapping the TLS edge (CA contact, ACME directory, loopback upstream,
+   security headers, log paths) was a manual checklist with no validation step.
 2. There was no documented automated-renewal story. Operators familiar with
    certbot tend to reach for a cron + reload pattern that adds moving parts
    we do not need.
@@ -28,7 +27,7 @@ and ship it as a turnkey installer:
   env substitution: `RELAY_SHELL_EDGE_DOMAIN`, `RELAY_SHELL_EDGE_ACME_EMAIL`,
   `RELAY_SHELL_EDGE_CLIENT_CIDRS`, `RELAY_SHELL_EDGE_UPSTREAM`, and
   `RELAY_SHELL_EDGE_ACME_CA`. The same file works for every deployment; the
-  config is the environment, not a fork of the Caddyfile.
+  config is the environment, not a fork.
 - `deploy/install-edge.sh` installs Caddy from the official Cloudsmith apt
   repository when absent, writes a systemd drop-in
   (`/etc/systemd/system/caddy.service.d/relay-shell-edge.conf`) carrying
@@ -46,12 +45,10 @@ and ship it as a turnkey installer:
 ## Consequences
 
 - The supported edge becomes "install Caddy, set three env vars, run the
-  script". Bootstrapping a new deployment no longer requires reading the
-  Caddyfile line by line.
+  script"; no line-by-line Caddyfile reading.
 - No new code paths inside the Python service: TLS termination stays at the
   edge, the server still binds loopback, and the audit/policy layer is
-  unchanged. The capability and security posture documented in ADR 0002 and
-  ADR 0003 are preserved verbatim.
+  unchanged. The posture in ADR 0002 and ADR 0003 is preserved verbatim.
 - Operators using a non-Caddy edge (nginx, HAProxy, an internal load
   balancer) are not constrained. The Caddyfile is the reference and the
   automated path; alternative proxies remain supported, with the operator
@@ -77,9 +74,8 @@ and ship it as a turnkey installer:
 
 ## Operational notes
 
-The day-to-day operator-facing surface for the edge boils down to two
-commands. They live here rather than in `deployment.md` so the
-troubleshooting context stays next to the decision they exercise.
+Two commands cover day-to-day operation. They live here rather than in
+`deployment.md` so the troubleshooting context stays next to the decision.
 
 - **Cert issuance / renewal troubleshooting.** Caddy logs ACME activity
   to its systemd journal stream. The most useful first look:
@@ -93,7 +89,7 @@ troubleshooting context stays next to the decision they exercise.
   the message names the failing challenge (HTTP-01) and the upstream
   reason (rate limit, DNS, port 80 unreachable). Switch to the LE
   staging directory via `RELAY_SHELL_EDGE_ACME_CA` (see
-  `deployment.md` §4a) while reproducing — production rate limits are
+  `deployment.md` §4a) while reproducing; production rate limits are
   unforgiving.
 
 - **Caddyfile drift / validation.** A misconfigured Caddyfile fails
@@ -103,10 +99,8 @@ troubleshooting context stays next to the decision they exercise.
   sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
   ```
 
-  This is what `install-edge.sh` runs internally before swapping the
-  file; running it standalone is the right move when the install
-  finished but a downstream config change (a new CIDR, a header
-  edit) needs a one-off check. Pair with `relay-shell --verify-deploy`
-  (see `deployment.md` §10) for a byte-for-byte comparison against
-  the shipped template — useful when "did someone hand-edit this?"
-  is the operative question.
+  `install-edge.sh` runs this before swapping the file; run it standalone
+  after a later config change (a new CIDR, a header edit). Pair with
+  `relay-shell --verify-deploy` (see `deployment.md` §10) for a byte-for-byte
+  comparison against the shipped template when the question is whether someone
+  hand-edited the file.
