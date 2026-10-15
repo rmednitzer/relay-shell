@@ -7,8 +7,8 @@ registry is transport-agnostic: any object implementing :class:`Transport`
 
 Design choices for reliability:
 
-* Bounded everything: max session count, per-session ring buffer, idle and
-  lifetime reaping.
+* Bounded everything: max session count, per-session ring buffer, reaping of
+  idle sessions and of exited sessions once their output is drained.
 * Opportunistic sweeping on every create/list call, so a dead or idle session
   is reclaimed without an always-on background task.
 * ``recv`` clears its wakeup event *under the buffer lock* immediately

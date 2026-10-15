@@ -64,6 +64,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **README rewritten for focus.** One statement per fact, no ADR references; the tool tables,
+  default behaviour, opt-in controls and compatibility are kept. The README, `SECURITY.md` and
+  the `sessions.py` docstring no longer claim "lifetime" session reaping: sessions are reaped
+  when idle (`RELAY_SHELL_SESSION_IDLE_TIMEOUT`) or exited and drained; there is no maximum
+  lifetime.
 - **Runbook §7 consolidated.** Open items stay in full; each closed item is one ledger row
   (ID, closing PR or ADR, residual caveats) pointing to its record in `BACKLOG.md`, the ADR,
   this changelog or the `audit/` pack. Every 7.x heading is kept, so existing `§7.x`
