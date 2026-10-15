@@ -1,16 +1,16 @@
 """Anchor tests for the compiled regex tables.
 
-These exist alongside ``tests/test_redaction.py`` and ``tests/test_policy.py``
-to make pattern changes auditable as a one-file diff:
+These sit alongside ``tests/test_redaction.py`` and ``tests/test_policy.py``
+so that pattern changes are auditable as a one-file diff:
 
 * the tables compile and re-export under the expected names,
 * the redactor and the classifier consume the same compiled objects
   (no silent shadowing or accidental re-compilation in the executor), and
-* every pattern has at least one positive case and one near-miss
-  negative case (over-scrub / under-scrub for redaction, classify /
-  near-miss for policy heuristics).
+* every pattern has at least one positive case and one near-miss negative
+  case (over-scrub / under-scrub for redaction, classify / near-miss for
+  policy heuristics).
 
-If you add a pattern in ``patterns.py``, also add a pair here.
+A new pattern in ``patterns.py`` needs such a pair here.
 """
 
 from __future__ import annotations
@@ -28,11 +28,10 @@ def _synth(prefix: str, body: str) -> str:
     """Assemble a secret-*shaped* fixture from parts.
 
     Some provider token shapes (Stripe ``sk_live_``/``rk_live_``, GitLab
-    ``glpat-``) are recognised by GitHub secret-scanning *push protection*,
-    which would block this test file from being pushed even though the
-    values are synthetic. Concatenating prefix + body at runtime means no
-    contiguous token literal ever appears in the source bytes the scanner
-    sees, while ``redact`` still receives the identical assembled value.
+    ``glpat-``) trigger GitHub secret-scanning *push protection* even when
+    synthetic. Joining prefix and body at runtime keeps any contiguous token
+    literal out of the source bytes the scanner sees, while ``redact``
+    receives the identical assembled value.
     """
     return prefix + body
 
@@ -63,8 +62,8 @@ def test_tables_compile_and_expose_required_names() -> None:
 
 def test_redaction_consumes_the_published_tables() -> None:
     # The executor must reach the same compiled objects, not a shadow copy.
-    # `redact` reads through the module each call, so monkeypatching the
-    # public name on `patterns` flows through to the public function.
+    # `redact` reads through the module on each call, so patching the public
+    # name on `patterns` flows through.
     saw_called = False
     original = patterns.REDACTION_PREFIX_PATTERNS
 
@@ -83,8 +82,8 @@ def test_redaction_consumes_the_published_tables() -> None:
 
 
 def test_policy_consumes_the_published_tables() -> None:
-    # Same idea for classify(): if we swap TIER3_PATTERN with one that
-    # matches anything, every command should classify Tier 3.
+    # As above: with TIER3_PATTERN swapped for one that matches anything,
+    # every command must classify Tier 3.
     original = patterns.TIER3_PATTERN
     try:
         patterns.TIER3_PATTERN = re.compile(r".+")  # type: ignore[misc]
@@ -97,22 +96,21 @@ def test_policy_consumes_the_published_tables() -> None:
 
 
 def test_authorization_header_positive_and_negative() -> None:
-    # Positive: the `Authorization: <value>` form is redacted (the structure-
-    # preserving pattern collapses the value to the placeholder).
+    # Positive: the structure-preserving pattern collapses the value of
+    # `Authorization: <value>` to the placeholder.
     out = redaction.redact("Authorization: superSecret123")
     assert "superSecret123" not in out
     assert "Authorization:" in out  # prefix preserved
-    # Negative: a literal "authorization" appearing in body text without
-    # the `:`/`=` separator and a value must not be touched.
+    # Negative: "authorization" in body text, without a `:`/`=` separator and
+    # value, is untouched.
     assert "the authorization to act" in redaction.redact("he had the authorization to act")
 
 
 def test_authorization_header_redacts_whole_bearer_value() -> None:
-    # B-023 regression. The previous Authorization regex consumed only the
-    # first whitespace-delimited token after `:`, so `Authorization: Bearer
-    # <token>` collapsed to `Authorization: [REDACTED] <token>` and the
-    # bearer value leaked into the audit log. The widened pattern must
-    # consume the whole header value.
+    # B-023 regression: the Authorization regex consumed only the first
+    # whitespace-delimited token after `:`, so `Authorization: Bearer <token>`
+    # became `Authorization: [REDACTED] <token>` and the bearer value reached
+    # the audit log. The whole header value must be consumed.
     out = redaction.redact("Authorization: Bearer abcdef123456")
     assert "abcdef123456" not in out
     assert "Bearer" not in out
@@ -120,18 +118,15 @@ def test_authorization_header_redacts_whole_bearer_value() -> None:
 
 
 def test_authorization_header_value_stops_at_quote() -> None:
-    # Quoted-CLI form: the redactor must stop at the closing quote so it
-    # does not eat the next argv token. Assert the exact output shape so
-    # the position of the redacted span and the position of the trailing
-    # argv token are both unambiguous (substring-style assertions can
-    # mask off-by-one bleed into the next token).
+    # Quoted-CLI form: the redactor must stop at the closing quote and not eat
+    # the next argv token. Exact-output assertion, because substring checks can
+    # mask off-by-one bleed into the next token.
     out = redaction.redact('curl -H "Authorization: Bearer abc.def-ghi" trailing-arg')
     assert out == 'curl -H "Authorization: [REDACTED]" trailing-arg'
 
 
 def test_authorization_header_handles_basic_auth() -> None:
-    # Non-Bearer Authorization schemes (Basic, Digest, ...) must also be
-    # redacted as a whole value, not just the first token.
+    # Non-Bearer schemes (Basic, Digest, ...) are redacted as a whole value too.
     out = redaction.redact("Authorization: Basic dXNlcjpwYXNzd29yZA==")
     assert "dXNlcjpwYXNzd29yZA" not in out
     assert "Basic" not in out
@@ -139,26 +134,24 @@ def test_authorization_header_handles_basic_auth() -> None:
 
 
 def test_authorization_header_value_stops_at_newline() -> None:
-    # Multi-header input on consecutive lines: redacting the auth header
-    # must not bleed into the next header.
+    # Redacting the auth header must not bleed into the next header line.
     out = redaction.redact("Authorization: Bearer abc\nHost: example.org")
     assert "abc" not in out
     assert "Host: example.org" in out
 
 
 def test_authorization_header_does_not_hide_trailing_shell_suffix() -> None:
-    # Regression for audit-integrity: bare `Authorization:` redaction must
-    # not consume shell suffixes that are outside the header value.
+    # Audit integrity: bare `Authorization:` redaction must not consume shell
+    # suffixes outside the header value.
     text = ": Authorization: cover && echo suffix-output"
     out = redaction.redact(text)
     assert out == ": Authorization: [REDACTED] && echo suffix-output"
 
 
 def test_authorization_header_json_dict_form() -> None:
-    # JSON shape (e.g. a Python `headers={"Authorization": "Bearer X"}`
-    # passed verbatim through to the audit args). The prefix's optional
-    # quote-around-key + quote-around-value lets the pattern reach the
-    # value's closing quote without leaking.
+    # JSON shape (e.g. a Python `headers={"Authorization": "Bearer X"}` passed
+    # verbatim to the audit args): the prefix's optional quotes around key and
+    # value let the pattern reach the closing quote without leaking.
     out = redaction.redact('{"Authorization": "Bearer abc.def-ghi"}')
     assert "Bearer" not in out
     assert "abc.def" not in out
@@ -171,9 +164,9 @@ def test_authorization_header_json_dict_form() -> None:
 def test_authorization_header_aws_sigv4() -> None:
     # AWS Signature v4 splits its value across commas:
     #   Authorization: AWS4-HMAC-SHA256 Credential=AKI..., SignedHeaders=..., Signature=<hex>
-    # The Signature is the request-binding HMAC and IS a secret. Stopping
-    # the redaction at the first comma would strand it. Pattern must
-    # consume through commas to the end-of-line / closing quote.
+    # The Signature is the request-binding HMAC and is a secret; stopping at
+    # the first comma would strand it. The pattern must consume through commas
+    # to end of line or the closing quote.
     sigv4 = (
         "Authorization: AWS4-HMAC-SHA256 "
         "Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, "
@@ -183,33 +176,27 @@ def test_authorization_header_aws_sigv4() -> None:
     out = redaction.redact(sigv4)
     assert "AKIAIOSFODNN7EXAMPLE" not in out
     assert "fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024" not in out
-    assert "SignedHeaders" not in out  # whole value collapsed
+    assert "SignedHeaders" not in out
 
 
 def test_proxy_authorization_pinned() -> None:
-    # The pattern explicitly covers `Proxy-Authorization`; pin it with a
-    # test so a future narrowing of the prefix does not silently drop
-    # this variant.
+    # Pinned so that narrowing the prefix cannot silently drop
+    # `Proxy-Authorization`.
     out = redaction.redact("Proxy-Authorization: Bearer proxysecret123")
     assert "proxysecret123" not in out
     assert "Proxy-Authorization:" in out
 
 
 def test_authorization_single_quoted_cli_form() -> None:
-    # Some operators use single quotes in their shell:
-    #   curl -H 'Authorization: Bearer X'
-    # The value must stop at the closing single quote, not eat past it.
-    # Equality assertion (rather than substring) so the position of the
-    # trailing argv token is unambiguous.
+    # Single-quoted shell form, `curl -H 'Authorization: Bearer X'`: the value
+    # must stop at the closing quote. Exact-output assertion, as above.
     out = redaction.redact("curl -H 'Authorization: Bearer abc' trailing-arg")
     assert out == "curl -H 'Authorization: [REDACTED]' trailing-arg"
 
 
 def test_bearer_positive_and_negative() -> None:
-    # Positive: the entire token (including the hyphenated suffix) must be
-    # scrubbed; assert against the full token, not just an interior
-    # substring, so a regression that stopped at the hyphen would still
-    # fail this test.
+    # The entire token, hyphenated suffix included, must be scrubbed. The
+    # full token is asserted so a regression stopping at the hyphen fails.
     out = redaction.redact("Bearer abc.def-ghi")
     assert "abc.def-ghi" not in out
     assert "abc.def" not in out
@@ -227,17 +214,17 @@ def test_keyvalue_positive_and_negative() -> None:
 
 
 def test_json_quoted_key_secrets_redacted() -> None:
-    # RED-6: the JSON object shape `"key": "value"` puts a quote between the
-    # keyword and the colon, which the pre-RED-6 rules could not anchor past,
-    # so the value leaked verbatim to the audit log. env_json / JSON in
-    # command|stdin is the common delivery shape.
+    # RED-6: the JSON shape `"key": "value"` puts a quote between keyword and
+    # colon, which the earlier rules could not anchor past, so the value
+    # leaked verbatim to the audit log. env_json / JSON in command|stdin is
+    # the common delivery shape.
     r = redaction.redact
     assert "hunter2" not in r('{"password": "hunter2"}')
     assert "s3cret" not in r('{"secret":"s3cret"}')
     assert "toktok" not in r('{"token": "toktok"}')
     assert "keykey" not in r('{"api_key":"keykey"}')
-    # AWS secret access key has NO whole-match fallback — the prefix rule is the
-    # only thing protecting it — in the JSON-quoted-key shape.
+    # The AWS secret access key has no whole-match fallback: in the
+    # JSON-quoted-key shape the prefix rule is the only protection.
     aws = _synth("wJalr", "XUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
     assert aws not in r(f'{{"AWS_SECRET_ACCESS_KEY": "{aws}"}}')
     # Compact multi-field: each secret redacted, non-secret fields preserved.
@@ -248,18 +235,18 @@ def test_json_quoted_key_secrets_redacted() -> None:
 def test_json_quoted_key_negatives_no_overscrub() -> None:
     # Unquoted forms keep the historical single-token behaviour byte-for-byte.
     assert redaction.redact("token=abc next") == "token=[REDACTED] next"
-    # `_PATH` breaks the AWS `key[:=]` adjacency — not a secret, not scrubbed.
+    # `_PATH` breaks the AWS `key[:=]` adjacency: not a secret, not scrubbed.
     assert redaction.redact("SECRET_ACCESS_KEY_PATH=/x") == "SECRET_ACCESS_KEY_PATH=/x"
     # ssh -p22 must remain untouched (the classic under-scrub guard).
     assert redaction.redact("ssh -p22 user@host") == "ssh -p22 user@host"
 
 
 def test_redaction_is_linear_on_recurring_prefix() -> None:
-    # RED-6 regression: a quoted-value lookahead form (`[^"'\r\n]+(?=["'])`) is
-    # O(n^2) when the keyword prefix recurs across a large quote-free argument —
-    # a ReDoS on the synchronous audit path (this bit an early draft of the
-    # RED-6 fix). The shipped char-class form is linear; assert a generous
-    # ceiling (the lookahead form took tens of seconds on ~1 MB).
+    # RED-6 regression: a quoted-value lookahead form (`[^"'\r\n]+(?=["'])`)
+    # is O(n^2) when the keyword prefix recurs across a large quote-free
+    # argument, a ReDoS on the synchronous audit path (it bit an early draft
+    # of the RED-6 fix). The shipped char-class form is linear; the ceiling is
+    # generous (the lookahead form took tens of seconds on ~1 MB).
     import time
 
     payload = ("DB_PASSWORD=" + "x" * 50 + " ") * 20000  # ~1.2 MB, no quotes
@@ -267,7 +254,7 @@ def test_redaction_is_linear_on_recurring_prefix() -> None:
     out = redaction.redact(payload)
     elapsed = time.perf_counter() - t0
     assert elapsed < 3.0, f"redact() took {elapsed:.1f}s — possible ReDoS regression"
-    assert "xxxxx" not in out  # values still redacted
+    assert "xxxxx" not in out
 
 
 def test_tier3_long_option_rm_positive_and_negative() -> None:
@@ -290,8 +277,8 @@ def test_tier3_long_option_rm_positive_and_negative() -> None:
 
 def test_tier3_long_option_is_bounded_no_redos() -> None:
     # RED-7 regression: the long-option alternative bounds the intervening-token
-    # count (`{0,16}?`); an unbounded `*?` would be O(n^2) on `rm rm rm …`
-    # (classify retries every `rm ` position with no `--force` to find).
+    # count (`{0,16}?`); an unbounded `*?` is O(n^2) on `rm rm rm ...` because
+    # classify retries every `rm ` position with no `--force` to find.
     import time
 
     payload = "rm " * 200000  # ~600 KB of `rm `, no destructive flag
@@ -318,16 +305,14 @@ def test_url_creds_positive_and_negative() -> None:
 def test_mysql_compact_password_gated_by_family() -> None:
     # Positive: -p inside a mysql command is redacted.
     assert "leaked" not in redaction.redact("mysql -uroot -pleaked db")
-    # Negative: -p in ssh/nmap is NOT redacted (this is the whole point of
-    # the family gate).
+    # Negative: -p in ssh/nmap is not redacted (the point of the family gate).
     assert "-p22" in redaction.redact("ssh -p22 user@host")
     assert "-p1-1000" in redaction.redact("nmap -p1-1000 host.example")
 
 
 def test_provider_token_shapes_positive_and_negative() -> None:
-    # Positive: each provider shape collapses to the placeholder; assert
-    # against the full input token so a regression that captured a
-    # partial prefix would leave evidence and fail the test.
+    # Each provider shape collapses to the placeholder. Assertions use the
+    # full input token so a partial-prefix capture leaves evidence and fails.
     ghp_token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
     out = redaction.redact(ghp_token)
     assert ghp_token not in out
@@ -345,7 +330,7 @@ def test_provider_token_shapes_positive_and_negative() -> None:
 def test_openai_project_and_service_keys() -> None:
     # The bare `sk-[A-Za-z0-9]{16,}` shape missed the project / service /
     # admin prefixes because the internal hyphen broke the run. Each must
-    # now collapse whole. Assert the full token is gone, not a fragment.
+    # collapse whole; assert the full token is gone, not a fragment.
     for tok in (
         "sk-abcdefghijklmnopqrstuvwx",  # classic (unchanged behavior)
         "sk-proj-abcdefghijklmnopqrstuvwxyz1234",
@@ -449,11 +434,11 @@ def test_anthropic_and_huggingface_shapes_positive_and_negative() -> None:
 def test_tier3_positive_and_negative() -> None:
     assert policy.classify("shell_exec", "rm -rf /tmp/x").name == "IRREVERSIBLE"
     assert policy.classify("shell_exec", "shutdown -h now").name == "IRREVERSIBLE"
-    # Negative: the heuristic's start is anchored with `(?<![\w])`, so an
-    # embedded substring with a word char before "shutdown" does not match.
-    # (Note: the heuristic IS intentionally conservative for boundary-adjacent
-    # forms like "graceful-shutdown.md" — `-` is a non-word char so the anchor
-    # still fires there - so do not over-narrow this test.)
+    # Negative: the start is anchored with `(?<![\w])`, so "shutdown" preceded
+    # by a word char does not match. The heuristic is intentionally
+    # conservative for boundary-adjacent forms such as "graceful-shutdown.md"
+    # (`-` is a non-word char, so the anchor still fires); do not over-narrow
+    # this test.
     assert policy.classify("shell_exec", "echo theshutdown").name == "REVERSIBLE"
 
 
@@ -472,10 +457,10 @@ def test_priv_esc_positive_and_negative() -> None:
 
 
 def test_tier_anchor_catches_nonword_start_alternatives() -> None:
-    # POL-1 (adversarial audit): the classification anchor must let alternatives
-    # that begin with a non-word char (> / :) fire. The old leading `\b` made
-    # them dead code, so disk-wipe-by-redirect, the fork bomb, and >/etc/ writes
-    # classified Tier 1 and were admitted in guarded mode.
+    # POL-1 (adversarial audit): the anchor must let alternatives that begin
+    # with a non-word char (> / :) fire. A leading `\b` made them dead code,
+    # so disk-wipe-by-redirect, the fork bomb and >/etc/ writes classified
+    # Tier 1 and were admitted in guarded mode.
     from relay_shell.policy import Tier, classify
 
     assert classify("shell_exec", "> /dev/sda") == Tier.IRREVERSIBLE
@@ -550,7 +535,7 @@ def test_windows_pwsh_tier3_positive_and_negative() -> None:
 def test_windows_pwsh_tier2_positive_and_negative() -> None:
     # WIN-1: stateful Windows operations (service control, package install,
     # firewall/registry changes, user/task creation, execution policy) classify
-    # Tier 2 — the Windows analogues of systemctl / apt / ufw / crontab.
+    # Tier 2: the Windows analogues of systemctl / apt / ufw / crontab.
     def c(s: str) -> str:
         return policy.classify("ssh_exec", s).name
 
@@ -595,10 +580,9 @@ def test_windows_pwsh_tier2_positive_and_negative() -> None:
 
 
 def test_windows_runas_priv_esc() -> None:
-    # WIN-1: `runas` is the Windows sudo/doas/pkexec analogue, and it also
-    # covers PowerShell's `Start-Process -Verb RunAs` (the RunAs verb token
-    # matches \brunas\b case-insensitively). Privilege escalation bumps to
-    # Tier 2 via PRIV_ESC_PATTERN.
+    # WIN-1: `runas` is the Windows sudo/doas/pkexec analogue; it also covers
+    # PowerShell's `Start-Process -Verb RunAs` (the verb matches \brunas\b
+    # case-insensitively). PRIV_ESC_PATTERN bumps it to Tier 2.
     def c(s: str) -> str:
         return policy.classify("ssh_exec", s).name
 
@@ -609,10 +593,10 @@ def test_windows_runas_priv_esc() -> None:
 
 
 def test_windows_classification_is_redos_bounded() -> None:
-    # WIN-1 regression: the bounded-gap Windows rules (`Remove-Item …
-    # -Recurse`, `del … /s`, `format … <drive>`) use the same `{0,N}?` ceiling
-    # as the RED-7 `rm` long-option rule, so classify stays linear on a large
-    # argument that repeats the verb with no destructive flag to find.
+    # WIN-1 regression: the bounded-gap Windows rules (`Remove-Item ...
+    # -Recurse`, `del ... /s`, `format ... <drive>`) use the same `{0,N}?`
+    # ceiling as the RED-7 `rm` long-option rule, so classify stays linear on
+    # a large argument that repeats the verb with no destructive flag.
     import time
 
     for payload in (
@@ -627,10 +611,10 @@ def test_windows_classification_is_redos_bounded() -> None:
 
 
 def test_redaction_compound_keyword_assignments() -> None:
-    # RED-1 (adversarial audit): a secret keyword that is the suffix of a
-    # compound name (DB_PASSWORD=, APP_SECRET=, API_TOKEN=) is preceded by `_`,
-    # so the old `\b`-anchored prefix pattern never fired and the value leaked
-    # into the audit log. The trailing `\s*[:=]\s*\S+` still gates it.
+    # RED-1 (adversarial audit): a secret keyword ending a compound name
+    # (DB_PASSWORD=, APP_SECRET=, API_TOKEN=) is preceded by `_`, so a
+    # `\b`-anchored prefix pattern never fired and the value leaked into the
+    # audit log. The trailing `\s*[:=]\s*\S+` still gates it.
     for c in (
         "export DB_PASSWORD=prod-p@ss",
         "docker run -e API_TOKEN=abc123xyz svc",
@@ -662,15 +646,15 @@ def test_pem_redaction_matches_and_is_redos_bounded() -> None:
     key = "-----BEGIN RSA PRIVATE KEY-----\n" + "MIIBdummy" * 40 + "\n-----END RSA PRIVATE KEY-----"
     assert redaction.redact(key) == "[REDACTED]"
     # RED-2: many unterminated BEGIN markers must not drive O(n^2) backtracking
-    # on the synchronous audit redaction path. The length-bounded matcher keeps
-    # it linear; the generous guard catches an O(n^2) regression (this input was
+    # on the synchronous audit redaction path. The length-bounded matcher is
+    # linear; the generous guard catches an O(n^2) regression (this input took
     # ~7.6s before the fix, ~1s after).
     blob = "-----BEGIN PRIVATE KEY-----\n" * 6400
     t0 = time.perf_counter()
     out = redaction.redact(blob)
     assert time.perf_counter() - t0 < 5.0
-    # v16: an unterminated block is collapsed too (header plus the key-like body), so a
-    # key cut off by the argument cap cannot leak its first 500 characters.
+    # v16: an unterminated block is collapsed too (header plus key-like body),
+    # so a key cut off by the argument cap cannot leak its first 500 characters.
     assert "[REDACTED]" in out
 
 
@@ -712,8 +696,8 @@ def test_tier_still_detected_after_the_redos_rewrite() -> None:
 
 
 def test_authorization_redaction_does_not_swallow_following_commands() -> None:
-    # A bare-value Authorization used to consume the rest of the command line, so
-    # a destructive command after `;` vanished from the audit record.
+    # Regression: a bare-value Authorization consumed the rest of the command
+    # line, so a destructive command after `;` vanished from the audit record.
     out = redaction.redact("echo authorization: x; rm -rf /var/lib/db")
     assert "x" not in out.split(";")[0].split("[REDACTED]")[-1]
     assert "rm -rf /var/lib/db" in out

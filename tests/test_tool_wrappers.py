@@ -1,16 +1,14 @@
 """End-to-end coverage tests for every tool wrapper in `server.py`.
 
-Most tool wrappers in `server.py` are only exercised by the stdio e2e
-test (a subprocess), so their bodies show up as uncovered in unit
-coverage. This module calls each tool through `mcp.call_tool()` with
-arguments that produce either valid output or a structured error
-string - either way exercises the wrapper body so the audit, policy,
-and truncate path is verified for every tool.
+Most wrappers in `server.py` are otherwise exercised only by the stdio e2e
+test (a subprocess), so unit coverage misses their bodies. This module calls
+each tool through `mcp.call_tool()` with arguments that yield either valid
+output or a structured error string, which verifies the audit, policy and
+truncate path for every tool.
 
-The tests do not attempt to drive deep semantic behavior - dedicated
-modules cover that (`test_shell.py`, `test_ssh_integration.py`,
-`test_ssh_keyscan_tool.py`, etc.). This module exists for coverage
-breadth across the wrapper layer.
+Deep semantics are covered by dedicated modules (`test_shell.py`,
+`test_ssh_integration.py`, `test_ssh_keyscan_tool.py`, etc.); this module is
+for breadth across the wrapper layer.
 """
 
 from __future__ import annotations
@@ -45,12 +43,11 @@ async def test_shell_script_wrapper(settings: Settings) -> None:
 
 # --- boundary-contract tests: env_json reaches policy + audit (F-1) ---
 #
-# Pre-fix shell_script and shell_spawn built policy_text from the
-# script/command only, dropping env_json. A RELAY_SHELL_POLICY_DENY
-# pattern matching only env content (LD_PRELOAD, PATH=, ...) would not
-# fire and the audit record would lose the env. These tests pin the
-# fix: env_json must reach both the admission probe and the audit args,
-# matching the shape shell_exec already had.
+# F-1: if shell_script and shell_spawn built policy_text from the script/command
+# alone, a RELAY_SHELL_POLICY_DENY pattern matching only env content
+# (LD_PRELOAD, PATH=, ...) would not fire and the audit record would lose the
+# env. env_json must reach both the admission probe and the audit args, as it
+# does for shell_exec.
 
 
 async def test_shell_script_env_json_in_policy_text(tmp_path: Path) -> None:
@@ -95,8 +92,7 @@ async def test_shell_script_env_json_in_audit_args(tmp_path: Path) -> None:
     assert "env_json" in rec["args"], (
         f"shell_script must record env_json in audit args; got {rec['args']!r}"
     )
-    # cwd defaulted to "" but is now present alongside env_json for parity
-    # with shell_exec.
+    # cwd is recorded (default "") alongside env_json, as for shell_exec.
     assert "cwd" in rec["args"]
 
 
@@ -139,8 +135,7 @@ async def test_shell_spawn_env_json_in_audit_args(tmp_path: Path) -> None:
             {"command": "/bin/sh", "env_json": '{"MY_VAR": "value"}'},
         )
     ).content
-    # Best-effort cleanup so the registry doesn't carry a live PTY across
-    # tests; the audit record we care about is already written.
+    # Best-effort cleanup so no live PTY leaks into other tests.
     sid_text = _text(content)
     if "session " in sid_text:
         sid = sid_text.split("session ", 1)[1].split()[0]
@@ -159,25 +154,21 @@ async def test_shell_spawn_env_json_in_audit_args(tmp_path: Path) -> None:
 async def test_session_lifecycle_covers_session_wrappers(settings: Settings) -> None:
     mcp = build_server(settings)
 
-    # shell_spawn: starts a PTY session and returns the id in the body.
     content = (await mcp.call_tool("shell_spawn", {"command": "/bin/sh"})).content
     spawn_out = _text(content)
-    # Body format is "[session <id> started] ...". Extract the id.
+    # Body format: "[session <id> started] ..."
     assert "started" in spawn_out
-    # ID is the first non-bracketed token after "session "
     sid = spawn_out.split("session ", 1)[1].split()[0]
     try:
-        # session_list shows it.
         content = (await mcp.call_tool("session_list", {})).content
         assert sid in _text(content)
 
-        # session_send writes to it.
         content = (
             await mcp.call_tool("session_send", {"session_id": sid, "data": "echo hi-$((20+22))\n"})
         ).content
         assert _text(content) == f"sent 20 bytes to {sid}"
 
-        # session_recv pulls accumulated output; the shell computed 20+22.
+        # The shell computes 20+22.
         recv_out = ""
         for _ in range(10):
             content = (
@@ -188,13 +179,11 @@ async def test_session_lifecycle_covers_session_wrappers(settings: Settings) -> 
                 break
         assert "hi-42" in recv_out
 
-        # session_resize accepts cols/rows.
         content = (
             await mcp.call_tool("session_resize", {"session_id": sid, "cols": 80, "rows": 24})
         ).content
         assert _text(content) == f"resized {sid} to 80x24"
     finally:
-        # session_kill terminates the PTY.
         content = (await mcp.call_tool("session_kill", {"session_id": sid})).content
         assert _text(content) == f"killed and closed {sid}"
 
@@ -240,11 +229,9 @@ async def test_session_list_empty(settings: Settings) -> None:
 
 # --- ssh wrappers: error-path coverage --------------------------------
 #
-# The fixture settings have ssh_known_hosts="ignore" and an empty
-# inventory, so every ssh_* tool call against an unresolvable host
-# falls into the wrapper's exception-handling branch. That's enough
-# to exercise the wrapper body for coverage; deep behaviour is
-# covered by tests/test_ssh_integration.py.
+# The fixture has ssh_known_hosts="ignore" and an empty inventory, so an ssh_*
+# call against an unresolvable host takes the wrapper's exception-handling
+# branch. Deep behaviour is covered by tests/test_ssh_integration.py.
 
 
 async def test_ssh_exec_unreachable_wrapper(settings: Settings) -> None:
@@ -335,7 +322,7 @@ async def test_ssh_forward_close_unknown_id_wrapper(settings: Settings) -> None:
 
 
 async def test_ssh_check_against_inventory_wrapper(settings: Settings) -> None:
-    # Empty inventory + empty hosts arg -> the "no hosts" short-circuit.
+    # Empty inventory and empty hosts: the "no hosts" short-circuit.
     mcp = build_server(settings)
     content = (await mcp.call_tool("ssh_check", {})).content
     assert _text(content) == "[no hosts configured; pass hosts= or add an inventory]"
@@ -352,11 +339,10 @@ async def test_ssh_check_with_explicit_hosts_wrapper(settings: Settings) -> None
 
 async def test_ssh_check_bounds_per_host_output(settings: Settings) -> None:
     # PERF-4: ssh_check is Tier 0 (permitted even in `readonly` mode) and its
-    # `hosts` are caller-chosen, so the probe's remote exec must bound the
-    # buffered output like every other SSH tool - otherwise a malicious or
-    # compromised sshd could stream unbounded data back regardless of what
-    # "echo ok" asked for. Regression test for a gap where this call omitted
-    # max_output_bytes entirely (unlike ssh_exec/ssh_fanout).
+    # `hosts` are caller-chosen, so the probe's remote exec must bound buffered
+    # output like every other SSH tool; otherwise a malicious or compromised sshd
+    # could stream unbounded data back. Regression for a call that omitted
+    # max_output_bytes (unlike ssh_exec/ssh_fanout).
     from relay_shell.server import _SSH_CHECK_PER_HOST_OUTPUT_CAP
     from relay_shell.sshpool import SshPool
 
@@ -384,24 +370,19 @@ async def test_ssh_hosts_wrapper(settings: Settings) -> None:
 
 
 async def test_server_info_reports_documented_fields(settings: Settings) -> None:
-    # T-002 from runbook section 5.3: server_info is exercised via the
-    # stdio e2e test but not by itself. A direct test confirming every
-    # documented field is present catches silent removals.
+    # T-002 from runbook section 5.3: a direct check that every documented field
+    # is present catches silent removals.
     mcp = build_server(settings)
     content = (await mcp.call_tool("server_info", {})).content
     info = json.loads(_text(content))
-    # Required top-level fields per docs/tools.md.
+    # Top-level fields per docs/tools.md.
     for key in ("name", "version", "transport", "policy_mode", "runtime", "limits", "audit", "ssh"):
         assert key in info, f"server_info missing top-level key: {key}"
-    # The version is non-empty.
     assert info["version"]
-    # The audit substructure carries the documented fields, including the
-    # serialization format and whether the tamper-evident chain is active.
     assert "path" in info["audit"]
     assert "degraded" in info["audit"]
     assert "format" in info["audit"]
     assert "chain" in info["audit"]
-    # The limits substructure carries every clamp the server enforces.
     for limit in (
         "default_timeout",
         "max_timeout",
@@ -410,9 +391,8 @@ async def test_server_info_reports_documented_fields(settings: Settings) -> None
         "max_sessions",
     ):
         assert limit in info["limits"], f"server_info.limits missing {limit}"
-    # The SSH substructure now reports the connection-pool knobs so
-    # operators can diff the live posture against their env file
-    # without re-deriving the values from RELAY_SHELL_* env names.
+    # The ssh substructure reports the connection-pool knobs so operators can diff
+    # the live posture against their env file.
     for ssh_key in (
         "known_hosts_default",
         "inventory_hosts",
@@ -428,11 +408,10 @@ async def test_server_info_reports_documented_fields(settings: Settings) -> None
 
 
 def test_connect_kwargs_omits_connect_timeout_by_default(settings: Settings) -> None:
-    """Without an overlay, connect_kwargs returns the historical shape.
+    """Without an overlay, ``connect_timeout`` is omitted.
 
-    SshPool.connect already falls back to settings.ssh_connect_timeout
-    when the dict has no ``connect_timeout`` key, so omitting it from
-    the helper keeps the audit-record args minimal.
+    SshPool.connect falls back to settings.ssh_connect_timeout when the dict has
+    no such key, and omitting it keeps the audit-record args minimal.
     """
     from relay_shell.server import Relay
 
@@ -448,7 +427,7 @@ def test_connect_kwargs_omits_connect_timeout_by_default(settings: Settings) -> 
 
 
 def test_connect_kwargs_overlays_connect_timeout(settings: Settings) -> None:
-    """Positive overlay is injected; SshPool.connect honors it over settings."""
+    """A positive overlay is injected and SshPool.connect honors it over settings."""
     from relay_shell.server import Relay
 
     relay = Relay(settings)
@@ -469,10 +448,10 @@ def test_connect_kwargs_zero_overlay_falls_through(settings: Settings) -> None:
 
 # --- policy_text builder contract (runbook R-002) -----------------------
 #
-# One builder per tool with a non-empty policy surface; each must include
-# every byte the executor will see. Asserting exact output (not just
-# substring presence) also pins the joining scheme, so a refactor cannot
-# silently drop a part or fuse two parts into an unmatchable line.
+# One builder per tool with a non-empty policy surface; each must include every
+# byte the executor will see. Exact output (not substring presence) also pins
+# the joining scheme, so a refactor cannot drop a part or fuse two parts into an
+# unmatchable line.
 
 
 def test_policy_text_builders_include_every_executor_visible_part() -> None:
@@ -485,7 +464,7 @@ def test_policy_text_builders_include_every_executor_visible_part() -> None:
     assert srv._policy_text_shell_spawn("CMD", "ENV") == "CMD\nENV"
     # F2: the SSH command tools fold the destination host into the probe so
     # RELAY_SHELL_POLICY_DENY can gate the *target*, not just the command. The
-    # command stays first (unchanged tier tokens); the host follows on its own
+    # command stays first (tier tokens unchanged); the host follows on its own
     # line. A plain hostname adds no canonical-IP suffix.
     assert srv._policy_text_ssh_exec("host1", "CMD") == "CMD\nhost1"
     assert srv._policy_text_ssh_spawn("host1", "") == "\nhost1"  # login shell
@@ -498,14 +477,14 @@ def test_policy_text_builders_include_every_executor_visible_part() -> None:
     assert down.startswith("download ") and "h:/rem" in down and "/loc" in down
     fwd = srv._policy_text_ssh_forward("L:8080:db:5432")
     assert fwd.startswith("forward ") and "L:8080:db:5432" in fwd
-    # ssh_keyscan: the caller-chosen scan targets are the executor-visible
-    # part the deny list must see (SEC-1); the builder passes them through.
+    # SEC-1: the caller-chosen scan targets are the executor-visible part the deny
+    # list must see.
     assert srv._policy_text_ssh_keyscan("h1, h2") == "h1, h2"
 
 
 async def test_ssh_check_caps_host_count(settings: Settings) -> None:
-    # SSH-2: a host list over the per-call cap returns a bounded error before
-    # any connection is attempted (mirrors ssh_fanout / ssh_keyscan).
+    # SSH-2: a host list over the per-call cap errors before any connection
+    # (as in ssh_fanout / ssh_keyscan).
     mcp = build_server(settings)
     hosts = " ".join(f"h{i}.invalid" for i in range(101))
     content = (await mcp.call_tool("ssh_check", {"hosts": hosts, "timeout": 1})).content
@@ -515,9 +494,8 @@ async def test_ssh_check_caps_host_count(settings: Settings) -> None:
 
 async def test_ssh_tools_record_known_hosts_in_audit(settings: Settings) -> None:
     # SSH-1: the per-call host-key verification mode is recorded in the audit
-    # args, so a per-call `ignore` MITM downgrade is visible. An explicit value
-    # is recorded verbatim; absent one, the effective server default is used
-    # (the fixture default is "ignore").
+    # args, so a per-call `ignore` downgrade is visible. An explicit value is
+    # recorded verbatim; absent one, the effective server default is (here "ignore").
     mcp = build_server(settings)
     await mcp.call_tool(
         "ssh_exec",
@@ -551,11 +529,11 @@ def test_ssrf2_transfer_and_forward_probes_append_canonical_ip() -> None:
         _policy_text_ssh_upload,
     )
 
-    # Packed-decimal 127.0.0.1 destination -> canonical form appended.
+    # Packed-decimal and hex spellings of 127.0.0.1 get the canonical form appended.
     assert "127.0.0.1" in _policy_text_ssh_upload("2130706433", "/tmp/x", "/srv/y")
     assert "127.0.0.1" in _policy_text_ssh_download("0x7f000001", "/srv/y", "/tmp/x")
     assert "127.0.0.1" in _policy_text_ssh_forward("L:8080:2130706433:80")
-    # Negatives: a hostname destination and a dhost-less D: forward are unchanged.
+    # A hostname destination and a destination-less D: forward are unchanged.
     assert "[" not in _policy_text_ssh_upload("web01.example.com", "/a", "/b")
     assert _policy_text_ssh_forward("D:1080") == "forward D:1080"
     assert _policy_text_ssh_forward("garbage") == "forward garbage"
@@ -589,10 +567,10 @@ async def test_ssrf2_upload_deny_not_dodged_by_ip_encoding(tmp_path: Path) -> No
 
 
 async def test_f2_deny_gates_host_for_rce_tools(tmp_path: Path) -> None:
-    # F2 (2026-07-15): RELAY_SHELL_POLICY_DENY on a host must gate the tools
-    # that grant remote execution — not only the transfer/scan tools. A denied
-    # host is refused before any connection attempt, and the deny is not dodged
-    # by an alternate IP spelling (SSRF widening reaches the command tools too).
+    # F2 (2026-07-15): RELAY_SHELL_POLICY_DENY on a host must gate the tools that
+    # grant remote execution, not only the transfer/scan tools. A denied host is
+    # refused before any connection attempt, and an alternate IP spelling does not
+    # dodge the deny (SSRF widening reaches the command tools too).
     settings = Settings(
         transport="stdio",
         audit_path=str(tmp_path / "audit.jsonl"),
@@ -611,7 +589,7 @@ async def test_f2_deny_gates_host_for_rce_tools(tmp_path: Path) -> None:
         ).content
     )
     assert "DENIED" in exec_out
-    # decimal spelling of the metadata IP is still gated (SSRF widening)
+    # The decimal spelling of the metadata IP is still gated.
     fanout_out = _text(
         (
             await mcp.call_tool(
@@ -630,8 +608,7 @@ async def test_f2_deny_gates_host_for_rce_tools(tmp_path: Path) -> None:
         ).content
     )
     assert "DENIED" in check_out
-    # a non-denied host is not blocked by the deny gate (it fails to connect
-    # instead, which is a different, non-DENIED result)
+    # A non-denied host fails to connect instead, which is not a DENIED result.
     ok_out = _text(
         (
             await mcp.call_tool(
@@ -675,7 +652,7 @@ async def test_deny_list_sees_the_jump_host(
         ).content
     )
     assert "DENIED" in out
-    # And a harmless jump host is not refused by the deny list.
+    # A harmless jump host is not refused.
     ok = _text(
         (
             await mcp.call_tool(
@@ -689,7 +666,7 @@ async def test_deny_list_sees_the_jump_host(
 def test_jump_is_part_of_the_ssh_policy_probe() -> None:
     from relay_shell import server as srv
 
-    # No jump: byte-identical to the previous probe text.
+    # No jump: the probe text is unchanged.
     assert srv._policy_text_ssh_exec("h", "CMD") == "CMD\nh"
     assert srv._policy_text_ssh_exec("h", "CMD", "u@j:22") == "CMD\nh\nu@j:22"
     # A hex-spelled jump IP also gets its canonical form appended.

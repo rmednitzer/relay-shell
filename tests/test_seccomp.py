@@ -2,11 +2,11 @@
 
 Two layers:
 
-* **Portable unit tests** — the BPF assembler/filter, syscall-name mapping,
+* **Portable unit tests**: the BPF assembler/filter, syscall-name mapping,
   notification parsing, platform gating, the cap/overflow dispatch, the
   ContextVar plumbing, and the parent-side arm/stop lifecycle. These run
   anywhere (no privilege, no real filter install).
-* **Privileged end-to-end tests** — marked ``seccomp`` and skipped unless
+* **Privileged end-to-end tests**: marked ``seccomp`` and skipped unless
   the host can actually install a USER_NOTIF listener
   (Linux/x86_64/kernel>=5.5/CAP_SYS_ADMIN). They drive a real child and
   assert the observed syscalls, the fail-open posture, and the audit shape.
@@ -77,8 +77,8 @@ def test_build_filter_is_well_formed() -> None:
 
 
 def test_build_filter_guards_on_arch() -> None:
-    # A wrong arch must route to ALLOW, never into the number table — assert the
-    # arch constant appears as the comparison key of the first JEQ.
+    # A wrong arch must route to ALLOW, never into the number table: assert the
+    # arch constant is the comparison key of the first JEQ.
     prog = seccomp.build_filter("x86_64")
     instrs = [struct.unpack_from("HBBI", prog, i) for i in range(0, len(prog), 8)]
     jeqs = [k for (code, _jt, _jf, k) in instrs if code == 0x15]
@@ -114,9 +114,9 @@ def test_build_filter_rejects_empty_eq_values(monkeypatch: pytest.MonkeyPatch) -
 # --- classic-BPF simulator: portable positive / near-miss semantics ----------
 #
 # The assembled program is pure data; interpreting it over a synthetic
-# ``seccomp_data`` asserts the real ALLOW/NOTIFY decision — argument
-# predicates included — on any host, without privilege. Implements exactly
-# the opcode set the assembler emits (LD_W_ABS, JEQ, JSET, JA, RET).
+# ``seccomp_data`` asserts the real ALLOW/NOTIFY decision (argument predicates
+# included) on any host, without privilege. Implements exactly the opcode set
+# the assembler emits (LD_W_ABS, JEQ, JSET, JA, RET).
 
 
 def _run_bpf(prog: bytes, *, arch: int, nr: int, args: tuple[int, ...] = (0, 0, 0, 0, 0, 0)) -> int:
@@ -187,7 +187,7 @@ def test_simulated_prctl_notifies_every_listed_option() -> None:
 
 def test_simulated_prctl_near_miss_options_fall_to_allow() -> None:
     # Near-miss half: benign / read-only options (including the adjacent GET
-    # twins) must NOT notify — that is what bounds the event volume.
+    # twins) must NOT notify; that bounds the event volume.
     prog = seccomp.build_filter("x86_64")
     for opt in (
         _PR_SET_PDEATHSIG,
@@ -239,8 +239,7 @@ def test_dispatch_callback_exception_is_isolated() -> None:
 
     m = seccomp.SeccompMonitor(cap=10, arch="x86_64", on_event=boom, on_overflow=lambda pid: None)
     m._dispatch(pid=1, nr=59, args=(0, 0, 0, 0, 0, 0))  # must not raise
-    # The throwing sink was reached (count advanced) but its exception was
-    # swallowed by _safe_call, so control returned here normally.
+    # The sink was reached (count advanced); _safe_call swallowed its exception.
     assert m._count == 1
 
 
@@ -283,7 +282,7 @@ def test_arm_then_stop_without_spawn_is_clean() -> None:
 #
 # On an unprivileged host the child-side filter install fails (fail-open: the
 # child runs unfiltered, the supervisor degrades) but the parent-side
-# lifecycle is identical to the privileged one — which is exactly the
+# lifecycle is identical to the privileged one, which is the
 # contract these tests pin: the spawn arms the active monitor, the transport
 # adopts it for the session's lifetime, and aclose() stops it.
 
@@ -402,7 +401,7 @@ def test_handshake_without_sockets_returns_none() -> None:
 
 def test_supervise_handshakes_then_drains_to_completion() -> None:
     # Full _supervise: receive a (hung-up) pipe as the fake listener, then
-    # _drain sees POLLHUP and returns — covering the success tail with no
+    # _drain sees POLLHUP and returns, covering the success tail with no
     # privilege and no real notification.
     m = _monitor()
     _wire(m)
@@ -728,7 +727,7 @@ async def test_prctl_filter_notifies_only_listed_options_live(tmp_path: Path) ->
 @requires_seccomp
 async def test_shell_spawn_session_emits_syscall_notify_lines(tmp_path: Path) -> None:
     # B-026: a PTY session's child carries the filter for the session's whole
-    # life — the spawned shell's own execve and commands run *inside* the
+    # life: the spawned shell's own execve and commands run *inside* the
     # session are observed, and closing the session releases the supervisor.
     settings = _settings(tmp_path)
     mcp = build_server(settings)

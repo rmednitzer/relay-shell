@@ -1,14 +1,13 @@
 """End-to-end tests for the ``python -m relay_shell`` entrypoint.
 
-These exercise the process-level surface (`__main__.main`):
+Covers the process-level surface (`__main__.main`):
 
-* ``--check-config`` (B-013) - validate config + build server, no transport.
-* The pre-existing print-and-return-2 path for invalid configuration
+* ``--check-config`` (B-013): validate config and build the server, no transport.
+* The print-and-return-2 path for invalid configuration
   (T-001 from `docs/runbook.md` section 5.3).
 
-We use real subprocess invocations rather than calling ``main()`` in
-the test process: argparse + ``get_settings`` + ``build_server`` together
-touch process-global state that's awkward to roll back.
+Real subprocesses are used because argparse, ``get_settings`` and ``build_server``
+together touch process-global state that is awkward to roll back in-process.
 """
 
 from __future__ import annotations
@@ -122,8 +121,8 @@ def test_verify_audit_help_lists_the_flags() -> None:
 def test_verify_audit_fails_closed_on_head_truncation(tmp_path: Path) -> None:
     """Fail-closed: head-truncation fails by default; --segment accepts it.
 
-    A non-genesis start is treated as head-truncation unless the operator
-    asserts (via --segment) that the file is a mid-stream rotation segment.
+    A non-genesis start is treated as head-truncation unless --segment asserts
+    that the file is a mid-stream rotation segment.
     """
     import json
 
@@ -188,10 +187,8 @@ def test_verify_audit_fails_closed_on_unchained_log(tmp_path: Path) -> None:
 def test_main_returns_two_on_invalid_config_without_check_flag(tmp_path: Path) -> None:
     """T-001 from runbook section 5.3: main() exits 2 on invalid config.
 
-    Without --check-config the entrypoint would normally try to start
-    the transport. We pass an invalid RELAY_SHELL_TRANSPORT so it bails
-    at get_settings() and never reaches build_server, exercising the
-    print-and-return-2 path that previously had no test.
+    An invalid RELAY_SHELL_TRANSPORT makes the entrypoint bail at get_settings(),
+    before build_server and the transport.
     """
     proc = _run_main(
         [],

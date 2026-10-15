@@ -68,7 +68,7 @@ def test_gauge_provider_exception_is_swallowed() -> None:
 
     m.register_gauge(ACTIVE_FORWARDS, _boom)
     text = m.render()
-    # HELP/TYPE still emitted, but no sample line for the misbehaving metric.
+    # HELP/TYPE are still emitted; the failing metric has no sample line.
     assert f"# HELP {ACTIVE_FORWARDS}" in text
     assert f"# TYPE {ACTIVE_FORWARDS} gauge" in text
     assert f"\n{ACTIVE_FORWARDS} " not in text
@@ -107,7 +107,7 @@ def test_seccomp_counters_increment_and_render() -> None:
     assert f"# TYPE {SECCOMP_NOTIFY_EVENTS_TOTAL} counter" in text
     assert f'{SECCOMP_NOTIFY_EVENTS_TOTAL}{{syscall="execve"}} 2' in text
     assert f'{SECCOMP_NOTIFY_EVENTS_TOTAL}{{syscall="openat"}} 1' in text
-    # The overflow counter is unlabelled.
+    # Unlabelled.
     assert f"{SECCOMP_NOTIFY_OVERFLOW_TOTAL} 1" in text
 
 
@@ -131,13 +131,11 @@ def _http_settings(tmp_path, policy_mode: str = "open") -> Settings:
 async def _http_get(app, path: str) -> httpx.Response:
     """GET one path against an in-process ASGI app, without starlette.testclient.
 
-    starlette.testclient warns that pairing it with the `httpx` package is
-    deprecated and tells you to install `httpx2` instead (REL-1) — independent
-    of the installed httpx version (here httpx 0.28.1). Using httpx's own
-    ASGITransport directly sidesteps starlette.testclient entirely, so the
-    warning never fires and no `httpx2` dependency is needed. The `/metrics`
-    custom route does not touch the MCP session-manager lifespan, so a plain
-    transport GET is sufficient (no lifespan context needed).
+    REL-1: starlette.testclient warns that pairing it with the `httpx` package is
+    deprecated and asks for `httpx2`, whatever the installed httpx version.
+    httpx's own ASGITransport avoids the warning and the extra dependency. The
+    `/metrics` route does not touch the MCP session-manager lifespan, so no
+    lifespan context is needed.
     """
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -161,10 +159,10 @@ async def test_metrics_route_serves_exposition(tmp_path) -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/plain")
     body = resp.text
-    # Every metric block is announced even with no samples yet.
+    # Every metric block is announced even before any sample exists.
     for name in (TOOL_CALLS_TOTAL, ACTIVE_SESSIONS, ACTIVE_FORWARDS, AUDIT_DEGRADED):
         assert f"# HELP {name}" in body
-    # Gauges read live: audit is not degraded so it samples as 0.0.
+    # Gauges are read live; audit is not degraded, so it samples as 0.0.
     assert f"{AUDIT_DEGRADED} 0.0" in body
     assert f"{ACTIVE_SESSIONS} 0.0" in body
     assert f"{ACTIVE_FORWARDS} 0.0" in body
@@ -175,7 +173,7 @@ async def test_tool_call_ok_ticks_counter_via_route(tmp_path) -> None:
     mcp = build_server(_http_settings(tmp_path))
     await mcp.call_tool("shell_exec", {"command": "echo hello"})
     body = (await _http_get(mcp.streamable_http_app(), "/metrics")).text
-    # `echo hello` has no tier-2/3 keyword; classify() returns REVERSIBLE.
+    # No tier-2/3 keyword, so classify() returns REVERSIBLE (tier 1).
     assert f'{TOOL_CALLS_TOTAL}{{mode="open",outcome="ok",tier="1",tool="shell_exec"}} 1' in body
 
 
@@ -191,7 +189,7 @@ async def test_tool_call_denied_ticks_counter_via_route(tmp_path) -> None:
 
 async def test_tool_call_error_ticks_counter_via_route(tmp_path) -> None:
     mcp = build_server(_http_settings(tmp_path))
-    # Unreachable host -> work() raises RelayError -> outcome=error.
+    # Unreachable host: work() raises RelayError, so outcome=error.
     await mcp.call_tool(
         "ssh_exec",
         {"host": "no-such-host-123.invalid", "command": "true", "timeout": 1},

@@ -1,8 +1,8 @@
 """A14-C3b: a redacted value must not swallow the shell command glued to it.
 
-Pre-fix, ``token=a;rm -rf /srv`` was audited as ``token=[REDACTED] -rf /srv`` (the value
-ran on past the ``;``), so the destructive command's name vanished from the record.
-Synthetic secrets only.
+If the value ran on past the ``;``, ``token=a;rm -rf /srv`` would be audited as
+``token=[REDACTED] -rf /srv`` and the destructive command's name would vanish from the
+record. Synthetic secrets only.
 """
 
 from __future__ import annotations

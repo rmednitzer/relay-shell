@@ -48,10 +48,10 @@ Add an **opt-in, additive** per-record hash chain to the audit log.
   new fields, no new code on the write path, no lock taken.
 - **Additive record shape.** When on, each record gains three trailing
   fields and nothing else changes:
-  - `seq` — a monotonic integer, 0 at genesis.
-  - `prev` — the previous record's `chain` (the 64-zero genesis anchor for
+  - `seq`: a monotonic integer, 0 at genesis.
+  - `prev`: the previous record's `chain` (the 64-zero genesis anchor for
     `seq` 0).
-  - `chain` — `SHA-256(prev || canonical(record-without-chain))`, where the
+  - `chain`: `SHA-256(prev || canonical(record-without-chain))`, where the
     canonical form is the record serialized with **sorted keys** and compact
     separators so the value is independent of dict insertion order and of
     the on-disk formatter. The existing fields (`ts`, `tool`, `tier`,
@@ -89,7 +89,7 @@ Add an **opt-in, additive** per-record hash chain to the audit log.
   operator/forensic action, not something the audited model should drive
   (this also leaves the 21-tool contract, `tests/test_server.py::_EXPECTED`,
   untouched). The library `audit.verify_chain` is
-  *structural* — it reports `ok` (no in-region break), `records`, `present`,
+  *structural*: it reports `ok` (no in-region break), `records`, `present`,
   and whether the region is genesis-`anchored`. The CLI applies a
   **fail-closed policy**: exit 0 only when the file exists, carries a chained
   record, verifies clean, and is genesis-anchored; a missing / empty /
@@ -108,7 +108,7 @@ isolation, prove the boundaries:
 
 - **Head-truncation** (excising leading records, including `seq` 0): the
   remaining records still form a valid sub-chain. Caught by the **genesis
-  anchor** — a log built from genesis but no longer starting at `seq` 0 /
+  anchor**: a log built from genesis but no longer starting at `seq` 0 /
   genesis `prev` has had leading records removed. The CLI **fails this by
   default** (`ChainResult.anchored` exposes it programmatically); `--segment`
   opts out for a mid-stream rotation segment that legitimately starts at
@@ -116,7 +116,7 @@ isolation, prove the boundaries:
   to "refuse" unless the operator asserts the segment.
 - **Tail-truncation** (dropping the newest records): leaves a shorter but
   valid prefix and is **not detectable from the file alone**. The defense is
-  the off-host copy, which holds the later records — the same off-host
+  the off-host copy, which holds the later records, the same off-host
   shipping this ADR already designates as the durability/truncation control.
   An on-host high-water-mark would not change this: the residual-risk attacker
   who can truncate the log can clear an on-host checkpoint too (the same reason
@@ -201,9 +201,9 @@ Implemented and validated in the same PR (the ADR 0005 four-step pass; full
 record in `docs/adr/0005-codebase-validation.md` §"Validation outcome
 (2026-06-01)" and `audit/2026-06-01-engagement.md`):
 
-- `ruff check`, `ruff format --check`, `mypy --strict` clean. `pytest -q` —
+- `ruff check`, `ruff format --check`, `mypy --strict` clean. `pytest -q`:
   277 passed, 13 deselected (up from 250; +27 chain/config/CLI tests).
-  `pytest -m fuzz` — 13 invariants pass. `coverage` — 92% with subprocess
+  `pytest -m fuzz`: 13 invariants pass. `coverage`: 92% with subprocess
   collection (floor 90%); `config.py` 99%, `audit.py` 95%.
 - 21 MCP tools and 3 resources unchanged: the chain adds a **CLI verb**, not a
   tool, so `tests/test_server.py::_EXPECTED` is untouched.
@@ -228,7 +228,7 @@ lenient by default. A keyless single-file chain cannot detect boundary
 truncation, and a verifier must not bless an absent or front-excised log. The
 fix kept the architecture (no sidecar, no external anchor, both rejected above)
 and (a) made `--verify-audit`
-**fail-closed** — a missing / empty / unchained log, a broken chain, or a
+**fail-closed**: a missing / empty / unchained log, a broken chain, or a
 non-genesis start (head-truncation) all exit 2 by default, with `--segment`
 the explicit opt-out for a rotation segment; (b) added `ChainResult.anchored`
 / `present` so head-truncation and absence are surfaced; (c) scoped

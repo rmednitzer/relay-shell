@@ -1,21 +1,21 @@
 """Tests for the MCP resources exposed by `build_server`.
 
-Resources are read-only context the client can list and pull on its own.
+Resources are read-only context the client can list and read on its own.
 Three are registered:
 
   - `relay-shell://inventory`           full host list
   - `relay-shell://inventory/{host}`    one host's resolved spec
   - `relay-shell://ssh-config`          ssh_config metadata (path + aliases)
 
-Each read is audited (tier 0). The audit `tool` field is STABLE per
+Each read is audited (tier 0). The audit `tool` field is stable per
 resource (no user-controlled data interpolated):
 
   - ``resource:inventory``        for the flat list
   - ``resource:inventory_host``   for the templated read (host in `args`)
   - ``resource:ssh-config``       for the config metadata
 
-Resource reads do not flow through ``Relay.run`` - that path is for
-tool calls that need policy admission, timeouts, and exit codes.
+Resource reads do not go through ``Relay.run``, which is for tool calls
+that need policy admission, timeouts and exit codes.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ async def test_inventory_resource_returns_host_list(tmp_path: Path) -> None:
     assert isinstance(data, list)
     names = {h["name"] for h in data}
     assert names == {"web-01", "db-01"}
-    # Source label is preserved so a client can tell where a spec came from.
+    # The source label tells a client where a spec came from.
     assert all(h["source"] == "inventory" for h in data)
 
 
@@ -85,7 +85,7 @@ async def test_inventory_resource_audited_tier_zero(tmp_path: Path) -> None:
     assert len(matching) == 1
     assert matching[0]["tier"] == 0
     assert matching[0]["denied"] is False
-    # Output body is never written - only its hash/length.
+    # The output body is never written, only its hash and length.
     assert "output_sha256" in matching[0]
     assert "args" in matching[0] and matching[0]["args"] == {}
 
@@ -114,15 +114,15 @@ async def test_inventory_host_resource_passthrough_unknown(tmp_path: Path) -> No
     spec = json.loads(body)
     assert spec["name"] == "not-registered"
     assert spec["hostname"] == "not-registered"
-    # Passthrough specs default to source="explicit" - distinguishes them
-    # from inventory-backed entries when a client renders both.
+    # Passthrough specs default to source="explicit", distinguishing them
+    # from inventory-backed entries.
     assert spec["source"] == "explicit"
 
 
 async def test_inventory_host_resource_audited_with_stable_tool_name(tmp_path: Path) -> None:
-    # The audit `tool` field is the STABLE name (no host interpolated);
-    # the host moves into `args` so redaction can run and tool-name
-    # cardinality stays bounded for audit consumers.
+    # The audit `tool` is the stable name (no host interpolated); the host
+    # moves into `args` so redaction runs and tool-name cardinality stays
+    # bounded.
     cfg = _settings_with_inventory(tmp_path, {"x": {"hostname": "h"}})
     mcp = build_server(cfg)
     await mcp.read_resource("relay-shell://inventory/x")
@@ -161,7 +161,7 @@ async def test_ssh_config_resource_reports_path_and_aliases(tmp_path: Path) -> N
     body = _read(await mcp.read_resource("relay-shell://ssh-config"))
     payload = json.loads(body)
     assert payload["path"] == str(cfg_file)
-    # Wildcard aliases are excluded; both real aliases on the Host beta gamma
+    # Wildcard aliases are excluded; both aliases on the `Host beta gamma`
     # line are listed.
     assert payload["aliases"] == ["alpha", "beta", "gamma"]
 
@@ -171,8 +171,8 @@ async def test_ssh_config_resource_when_no_file(tmp_path: Path) -> None:
     mcp = build_server(cfg)
     body = _read(await mcp.read_resource("relay-shell://ssh-config"))
     payload = json.loads(body)
-    # Missing config file -> path is null and aliases empty; the resource
-    # still returns valid JSON instead of raising into the transport.
+    # Missing config file: path is null and aliases empty, as valid JSON
+    # rather than an exception into the transport.
     assert payload["path"] is None
     assert payload["aliases"] == []
 
@@ -188,10 +188,9 @@ async def test_ssh_config_resource_audited(tmp_path: Path) -> None:
 
 
 async def test_ssh_config_aliases_survive_inventory_override(tmp_path: Path) -> None:
-    # The ssh_config resource must report aliases that are declared in the
-    # active ssh_config file, even when an inventory entry overrides the
-    # spec for the same alias. Filtering merged hosts by source=="ssh_config"
-    # would silently drop these from the list - regression coverage.
+    # The resource must list aliases declared in the active ssh_config even
+    # when an inventory entry overrides the same alias. Regression: filtering
+    # merged hosts by source=="ssh_config" silently dropped them.
     cfg_file = tmp_path / "sshconfig"
     cfg_file.write_text("Host shared\n  HostName 10.0.0.1\n")
     inv_file = tmp_path / "inv.json"
@@ -217,15 +216,14 @@ async def test_ssh_config_aliases_survive_inventory_override(tmp_path: Path) -> 
 
 
 async def test_inventory_resource_is_bounded_by_max_output(tmp_path: Path) -> None:
-    # A pathologically large inventory must not produce an unbounded
-    # response: the resource applies the same `clamp_output(max_output)`
-    # cap that tools observe through `Relay.run`.
+    # A very large inventory must not yield an unbounded response: the
+    # resource applies the same `clamp_output(max_output)` cap as tools.
     inventory = {f"host-{i:05d}": {"hostname": f"10.0.{i // 250}.{i % 250}"} for i in range(2000)}
     cfg = _settings_with_inventory(tmp_path, inventory)
-    # Force a tiny cap so the truncation path fires deterministically.
+    # A tiny cap makes the truncation path deterministic.
     cfg = cfg.model_copy(update={"max_output": 2048})
     mcp = build_server(cfg)
     body = _read(await mcp.read_resource("relay-shell://inventory"))
     assert "[TRUNCATED" in body
-    # Output stays under the cap (plus the marker's small overhead).
+    # Under the cap plus the marker's small overhead.
     assert len(body.encode("utf-8")) < 4096

@@ -57,15 +57,14 @@ def _extract_tools_from_docs() -> set[str]:
     inside the body sections (skip the resources/errors prose).
     """
     text = (_REPO_ROOT / "docs" / "tools.md").read_text(encoding="utf-8")
-    # The Sessions table doesn't use H3 headers — it lists tools in a
-    # markdown table. Capture both shapes.
+    # The Sessions table has no H3 headers; it lists tools in a markdown
+    # table. Capture both shapes.
     h3_section = re.compile(r"^### (.+)$", re.MULTILINE)
     found: set[str] = set()
     for hdr in h3_section.findall(text):
         for name in re.findall(r"`([a-z][a-z0-9_]*)`", hdr):
             found.add(name)
-    # The Sessions section uses a single table; the first column is the
-    # tool name in backticks.
+    # Sessions is a single table; the first column is the backticked tool name.
     sessions_block = re.search(r"## Sessions[^\n]*\n.*?\n(?=## )", text, flags=re.DOTALL)
     if sessions_block:
         for row in sessions_block.group(0).splitlines():
@@ -87,8 +86,8 @@ def _extract_tools_from_readme() -> set[str]:
     text = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
     found: set[str] = set()
     for line in text.splitlines():
-        # Only consider rows whose second pipe-cell starts with a
-        # backticked identifier — skips the header/divider rows.
+        # Only rows whose second pipe-cell starts with a backticked
+        # identifier; skips the header/divider rows.
         m = re.match(r"\|\s*([^|]+?)\s*\|", line)
         if not m:
             continue

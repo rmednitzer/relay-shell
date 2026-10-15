@@ -1,13 +1,11 @@
 """Tests for the MCP prompt exposed by `build_server`.
 
-A prompt is reusable, client-pullable guidance. One is registered:
+One prompt is registered: `operating_guide` (how to choose and drive relay-shell's tools).
 
-  - `operating_guide`   how to choose and drive relay-shell's tools
-
-Like a resource read, a prompt fetch is audited (tier 0,
-`tool="prompt:operating_guide"`) and does not flow through `Relay.run`.
-`prompts/list` returns metadata only and must NOT audit; `prompts/get` renders
-the body and audits the pull. The body is hashed, never written. See ADR 0008.
+Like a resource read, a fetch is audited (tier 0, `tool="prompt:operating_guide"`) and
+does not flow through `Relay.run`. `prompts/list` returns metadata only and must NOT
+audit; `prompts/get` renders the body and audits the pull. The body is hashed, never
+written. See ADR 0008.
 """
 
 from __future__ import annotations
@@ -44,9 +42,8 @@ async def test_operating_guide_prompt_renders_guidance(settings: Settings) -> No
 
 
 async def test_listing_prompt_does_not_audit(settings: Settings) -> None:
-    # Discovery returns metadata only - it must not call the function, so no
-    # `prompt:*` line appears until a real fetch. (The audit file itself is
-    # created at build time, so check for the line, not the file.)
+    # Discovery must not call the function, so no `prompt:*` line appears until a
+    # real fetch. (The audit file exists from build time; check for the line.)
     mcp = build_server(settings)
     await mcp.list_prompts()
     lines = _audit_lines(Path(settings.audit_path))
@@ -63,7 +60,7 @@ async def test_fetching_prompt_is_audited_tier_zero(settings: Settings) -> None:
     assert matching[0]["denied"] is False
     # Stable tool label, no user-controlled args interpolated.
     assert matching[0]["args"] == {}
-    # Body is never written - only its hash/length, same as tools/resources.
+    # Only hash and length of the body are recorded, as for tools/resources.
     assert "output_sha256" in matching[0]
     assert "output_len" in matching[0]
 

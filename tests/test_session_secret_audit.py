@@ -1,9 +1,9 @@
 """Input typed at a secret prompt must not reach the audit log (audit H5, M6).
 
-``session_send`` audited its ``data`` argument after keyword redaction only. A
-password typed at a ``sudo`` prompt has no keyword, so it was written verbatim
-to a log that is meant to be shipped off-host - and the tool docs recommend
-exactly that workflow.
+Regression: ``session_send`` audited its ``data`` argument after keyword
+redaction only. A password typed at a ``sudo`` prompt has no keyword, so it was
+written verbatim to a log meant to be shipped off-host, and the tool docs
+recommend exactly that workflow.
 """
 
 from __future__ import annotations

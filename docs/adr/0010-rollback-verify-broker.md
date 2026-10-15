@@ -35,7 +35,7 @@ Accepted.
 **Defer BRK-2.** Do not build the rollback/verify pairing now. Keep this ADR
 `Proposed` as the design of record, and adopt it (status → `Accepted`, with an
 implementing PR) only when a **trigger** below is real. When built, it must
-satisfy the **invariants** below — they are the reason it is not a small change.
+satisfy the **invariants** below; they are the reason it is not a small change.
 
 ### Triggers that would justify building it
 
@@ -43,7 +43,7 @@ Adopt when at least one is concretely true, not hypothetical:
 
 1. A supported **autonomous / unattended** deployment exists (a scheduled or
    agent-driven run with no human and no second agent in the loop to react to a
-   failed Tier-3 op) — the one setting where binding remediation up front beats
+   failed Tier-3 op), the one setting where binding remediation up front beats
    letting the issuing turn remediate.
 2. Operators ask for **operation-bound remediation** that survives the issuing
    turn (an audited guarantee that "if this migration's verify fails, this
@@ -72,8 +72,8 @@ collectively they are why this is a v2, not a parameter:
 
 2. **Rollback and verify are themselves fully policy-gated commands.** They are
    commands, not trusted broker internals. Each MUST pass through the *same*
-   central `Relay.run` admission — deny list first, mode check, tier
-   classification — as any other call. A rollback that is itself Tier 3 (undoing
+   central `Relay.run` admission (deny list first, mode check, tier
+   classification) as any other call. A rollback that is itself Tier 3 (undoing
    `rm` by restoring from backup could be) is classified and admitted as Tier 3.
    **No path may let a rollback/verify string skip the deny list**; that would
    turn the remediation channel into a policy-bypass primitive. This is the most
@@ -83,7 +83,7 @@ collectively they are why this is a v2, not a parameter:
    `sha256(tool \0 op_key)` where `op_key = policy_text \0 canonical(audit_args)`.
    The rollback and verify command text MUST fold into that binding (extend
    `op_key`), so a token armed for `(op, rollback_A, verify_A)` cannot execute
-   with `rollback_B` — the same confused-deputy defense ADR 0009's BRK-3
+   with `rollback_B`, the same confused-deputy defense ADR 0009's BRK-3
    follow-up established for SSH identity. The commands must be fixed at **plan**
    time and surfaced in the `confirm_plan` audit record, never swappable at
    execute.
@@ -105,14 +105,14 @@ collectively they are why this is a v2, not a parameter:
 
 6. **Fail-safe on partial state.** If the process dies mid-loop (after execute,
    before verify/rollback), the system is in the post-execute state with the
-   plan on the audit trail — the same fail-safe posture as a bare ADR 0009
+   plan on the audit trail, the same fail-safe posture as a bare ADR 0009
    execute. No persisted rollback promise (a persisted "run this command later"
    is a replay/again-execution surface strictly worse than the ephemeral token
    ADR 0009 already argued for).
 
 7. **Verify defines failure explicitly.** "Verify failed" must be a precise,
    documented predicate (non-zero exit, or an operator-supplied expected-output
-   match) — not a heuristic — because it is the trigger for *executing another
+   match), not a heuristic, because it is the trigger for *executing another
    command automatically*. Ambiguity here is a footgun that auto-runs a rollback
    on a spurious signal.
 
@@ -122,8 +122,8 @@ Under the trigger, the least-surface realization is an **extension of
 `operation_confirm`**, not new top-level tools: the arm step optionally carries
 `verify_command`, `rollback_command`, and `auto_rollback`, which the broker
 stores against the token (folded into `op_key` per invariant 3). On the bound
-re-issue, the runner executes the main op (`confirm_execute`), then — if
-supplied — runs verify via the same central runner (`confirm_verify`), and on a
+re-issue, the runner executes the main op (`confirm_execute`), then, if
+supplied, runs verify via the same central runner (`confirm_verify`), and on a
 failing verify with `auto_rollback` set, runs rollback (`confirm_rollback`).
 Keeping it on `operation_confirm` preserves ADR 0009's "central gate, no
 per-wrapper param" property and adds no new tool to the contract.
@@ -154,11 +154,11 @@ per-wrapper param" property and adds no new tool to the contract.
 - **Rollback/verify as free-form broker-executed strings, admitted once with
   the main op.** Lets the remediation commands skip their own deny-list/tier
   check (they'd ride the main op's single admission). This is the tempting
-  shortcut and it is a policy-bypass hole — it violates invariant 2. Rejected.
+  shortcut and it is a policy-bypass hole that violates invariant 2. Rejected.
 - **New top-level `rollback_command` / `verify_command` tools.** More surface,
   and it invites callers to run rollback/verify *unbound* from any operation
   (just more Tier-N tools), which is simply the model sequencing calls it can
-  already do — with none of the binding that is the feature. Rejected in favor
+  already do, with none of the binding that is the feature. Rejected in favor
   of extending `operation_confirm` (invariant/shape above).
 - **Persist the rollback promise across restarts.** A stored "run this later"
   is a re-execution/replay surface (ADR 0009's argument for ephemeral state).

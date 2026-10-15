@@ -38,11 +38,10 @@ def test_redact_args_nested() -> None:
 
 def test_p1_scan_is_bounded_and_lossless() -> None:
     # P1 (2026-07-15 perf pass): _scrub_str scans only max_len + a margin, then
-    # truncates to max_len — the dropped tail is never in the record, so bounding
-    # the scan cannot leak a secret it would otherwise catch. A ~2 MB argument
-    # must scrub in well under the old whole-string cost, a secret inside the
-    # kept window is still redacted, and a secret only in the far tail is simply
-    # truncated away (absent from the record).
+    # truncates to max_len. The dropped tail is never in the record, so bounding
+    # the scan cannot leak a secret it would otherwise catch. A ~2 MB argument must
+    # scrub in well under the old whole-string cost; a secret inside the kept window
+    # is still redacted; a secret only in the far tail is truncated away.
     import time
 
     head = 'password="EARLYSECRET" ' + "a" * 400
@@ -58,8 +57,7 @@ def test_p1_scan_is_bounded_and_lossless() -> None:
 
 
 def test_p1_preserves_output_for_normal_size_args() -> None:
-    # An argument that fits inside the scan window is byte-identical to the
-    # pre-P1 output (no behaviour change for realistic inputs).
+    # An argument inside the scan window is byte-identical to the pre-P1 output.
     args = {"command": "echo " + "x" * 2000, "token": "Bearer zzzzzzzzzzzz"}
     out = redact_args(args, max_len=100)
     assert len(out["command"]) <= 120 and out["command"].startswith("echo ")
@@ -120,13 +118,12 @@ def test_redact_cli_flag_handles_quoted_value() -> None:
 
 
 def test_red8_quoted_secret_past_scan_window_does_not_leak_tail() -> None:
-    # RED-8: a quoted CLI-flag secret longer than the redaction scan window
-    # (`_scrub_str` scans only `max_len + 16 KiB`) loses its closing quote to
-    # truncation. Before the unterminated-quote fallback branches, the quoted
-    # regex branch could not match the truncated value and the greedy bare
-    # fallback stopped at the first internal space, leaking the value's tail
-    # into the length-bounded audit record. Full-string redaction always caught
-    # it, so this was a P1 scan-window regression, not a pattern gap.
+    # RED-8: a quoted CLI-flag secret longer than the scan window (`_scrub_str`
+    # scans only `max_len + 16 KiB`) loses its closing quote to truncation. Without
+    # the unterminated-quote fallback, the quoted branch cannot match and the bare
+    # fallback stops at the first internal space, leaking the value's tail into the
+    # length-bounded audit record. Full-string redaction always caught it: a P1
+    # scan-window regression, not a pattern gap.
     marker = "LEAKMARKER"
     # ~20 KiB quoted value, internal spaces, closing quote well past the window.
     value = "a " + (("z" * 40 + " " + marker + " ") * 400)
@@ -137,14 +134,14 @@ def test_red8_quoted_secret_past_scan_window_does_not_leak_tail() -> None:
     assert marker not in scrubbed, "quoted secret tail leaked past the scan window"
     assert scrubbed.startswith("--password=[REDACTED]")
 
-    # And full-string redaction (whole value in view) collapses it as before.
+    # Full-string redaction (whole value in view) also collapses it.
     assert marker not in redact(arg)
 
 
 def test_red8_unterminated_quote_is_redacted_but_wellformed_unchanged() -> None:
-    # The unterminated-quote fallback fires only when the terminated branch
-    # fails, so well-formed quoted values are byte-identical, and a genuinely
-    # unterminated quote is still collapsed (audit-fidelity tradeoff, not a leak).
+    # The unterminated-quote fallback fires only when the terminated branch fails,
+    # so well-formed values are unchanged and a genuinely unterminated quote is
+    # collapsed (audit-fidelity tradeoff, not a leak).
     # Well-formed: trailing content after the closing quote is preserved.
     assert redact('--password="top secret" --host=h') == "--password=[REDACTED] --host=h"
     # Unterminated single-line quote: the whole visible value collapses.
@@ -186,7 +183,7 @@ def test_win1_convertto_securestring_inline_plaintext_redacted() -> None:
 def test_win1_verb_noun_cmdlet_not_overscrubbed() -> None:
     # The `(?<![A-Za-z])` guard keeps the CLI-flag rule from binding the dash of
     # a PowerShell Verb-Noun cmdlet (`Get-Credential`, `Get-Secret`), which
-    # contains `-Credential`/`-Secret` but takes no inline secret — so the next
+    # contains `-Credential`/`-Secret` but takes no inline secret, so the next
     # token (a message, a name) must survive.
     assert redact("Get-Credential -Message hi") == "Get-Credential -Message hi"
     assert redact("Get-Secret Foo") == "Get-Secret Foo"
@@ -350,8 +347,7 @@ def test_red3_slack_webhook_url() -> None:
 
 
 def test_red4_bytes_args_are_decoded_and_redacted() -> None:
-    # A bytes argument used to fall through unredacted; it is now decoded
-    # (lossy) and scrubbed like a str.
+    # A bytes argument is decoded (lossy) and scrubbed like a str; it must not pass through raw.
     out = redact_args({"payload": b"api_key=supersecretvalue123"})
     assert "supersecretvalue123" not in out["payload"]
     assert "[REDACTED]" in out["payload"]

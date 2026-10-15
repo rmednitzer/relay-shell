@@ -1,8 +1,7 @@
 """Unit tests for SshPool that don't need an in-process SSH server.
 
-The heavier integration tests in ``test_ssh_integration.py`` exercise
-the real asyncssh protocol stack; these unit tests focus on the
-connection-cache + single-flight semantics in isolation by
+``test_ssh_integration.py`` exercises the real asyncssh protocol stack; these
+tests cover connection-cache and single-flight semantics in isolation by
 monkeypatching ``asyncssh.connect``.
 """
 
@@ -51,18 +50,17 @@ async def test_connect_single_flight_for_same_target(
 ) -> None:
     """F-2 regression: concurrent connect() to the same target dedupes.
 
-    Pre-fix N concurrent connect() callers for the same key each missed
-    the cache (the cache check happened inside the lock; the
-    ``asyncssh.connect`` happened outside), so each fired a real connect
-    and N-1 of those connections were silently leaked when the second
-    writer overwrote the cache slot.
+    Without single-flight, N concurrent callers for the same key each miss the
+    cache (the check is inside the lock, ``asyncssh.connect`` outside), each
+    fires a real connect, and N-1 connections leak when later writers overwrite
+    the cache slot.
     """
     call_count = 0
 
     async def fake_connect(*_args: object, **_kwargs: object) -> _MockConn:
         nonlocal call_count
         call_count += 1
-        # Yield long enough for other callers to pile up at the cache miss.
+        # Let the other callers pile up at the cache miss.
         await asyncio.sleep(0.05)
         return _MockConn()
 
@@ -83,8 +81,8 @@ async def test_connect_single_flight_for_same_target(
 async def test_connect_different_targets_do_not_dedupe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Distinct targets must NOT share a single in-flight slot — the
-    cache key is ``user@host:port`` and single-flighting per-key only."""
+    """Distinct targets must not share an in-flight slot: the cache key is
+    ``user@host:port`` and single-flight is per key."""
     call_count = 0
 
     async def fake_connect(*_args: object, **_kwargs: object) -> _MockConn:
@@ -124,7 +122,7 @@ async def test_connect_failure_clears_inflight_slot(
 
     with pytest.raises(OSError, match="simulated"):
         await pool.connect("h1.example")
-    # Slot must be released; a follow-up attempt re-dials.
+    # The slot was released, so the follow-up re-dials.
     conn = await pool.connect("h1.example")
     assert conn is not None
     assert attempts == 2
@@ -148,9 +146,7 @@ class _TrackingConn:
 class _SlowSftp:
     """Fake SFTP client whose transfers sleep, to exercise the per-call cap.
 
-    Mirrors the asyncssh surface ``SshPool.sftp_put`` / ``sftp_get`` use:
-    ``conn.start_sftp_client()`` returns an async context manager, and
-    ``put`` / ``get`` are awaitable transfers.
+    Mirrors the asyncssh surface used by ``SshPool.sftp_put`` / ``sftp_get``.
     """
 
     def __init__(self, delay: float) -> None:
@@ -218,7 +214,7 @@ async def test_sftp_get_timeout_fires(tmp_path: Path, monkeypatch: pytest.Monkey
 
 
 async def test_sftp_put_no_cap_completes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # timeout=0 (the default) keeps the historical behaviour: no per-call cap.
+    # timeout=0 (the default) means no per-call cap.
     conn = _SftpConn(delay=0.0)
 
     async def fake_connect(*_a: object, **_k: object) -> _SftpConn:
@@ -282,11 +278,11 @@ async def test_long_run_connection_not_evicted_mid_flight(
 
     Regression for the idle-reaper-vs-in-use bug on the ``run`` path. ``run``
     connects once and drives the channel directly, so its cache entry's
-    ``last_used`` freezes at connect time. When ``max_timeout`` exceeds
-    ``ssh_idle_timeout`` (both are independently configurable — a valid
-    posture), a run can outlive the idle window; before the fix a concurrent
-    ``connect()``'s ``_sweep_conns`` then evicted and closed the connection out
-    from under the running command. ``run`` now pins for its whole duration.
+    ``last_used`` freezes at connect time. ``max_timeout`` and
+    ``ssh_idle_timeout`` are independently configurable, so a run can outlive
+    the idle window; unpinned, a concurrent ``connect()``'s ``_sweep_conns``
+    would close the connection under the running command. ``run`` therefore
+    pins for its whole duration.
     """
     gate = asyncio.Event()
     conn = _GatedConn(gate)
@@ -311,7 +307,7 @@ async def test_long_run_connection_not_evicted_mid_flight(
         pool.run("h1.example", "sleep 3600", timeout=3600, connect_kwargs=_CK)
     )
     try:
-        # Let run connect + reach the drain, then confirm it pinned.
+        # Let run connect and reach the drain.
         for _ in range(50):
             await asyncio.sleep(0)
             if pool._conns:
@@ -319,7 +315,7 @@ async def test_long_run_connection_not_evicted_mid_flight(
         key = next(iter(pool._conns))
         assert pool._conns[key].pins == 1, "an in-flight run must pin its connection"
 
-        # Age the entry past the idle window and fire the sweep. The pin holds.
+        # Age the entry past the idle window; the pin must hold.
         pool._conns[key].last_used = time.monotonic() - 1000
         await pool._sweep_conns()
         assert key in pool._conns, "run's live connection must survive the idle sweep"
@@ -328,7 +324,7 @@ async def test_long_run_connection_not_evicted_mid_flight(
         gate.set()  # let the command finish
         _out, code = await asyncio.wait_for(run_task, 5)
     assert code == 0
-    # Pin released once run returned; the now-idle entry becomes evictable.
+    # The pin is released once run returns, so the idle entry is evictable.
     assert pool._conns[key].pins == 0
     pool._conns[key].last_used = time.monotonic() - 1000
     await pool._sweep_conns()
@@ -338,15 +334,11 @@ async def test_long_run_connection_not_evicted_mid_flight(
 async def test_close_all_during_connect_discards_conn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``close_all`` while an owner's ``asyncssh.connect`` is in flight
-    cancels the in-flight future. The owner must NOT cache the
-    completed connection (the registry has been cleared) and must NOT
-    call ``set_result`` on the cancelled future. It should close the
+    """``close_all`` while an owner's ``asyncssh.connect`` is in flight cancels the
+    in-flight future. The owner must not cache the completed connection (the
+    registry was cleared) and must not call ``set_result`` on the cancelled
+    future (``InvalidStateError`` plus a leaked connection). It must close the
     connection and surface ``CancelledError``.
-
-    Pre-fix the owner reached ``own_future.set_result(conn)`` on a
-    cancelled future, raising ``InvalidStateError`` while leaking the
-    connection.
     """
     connect_gate = asyncio.Event()
     tracking: list[_TrackingConn] = []
@@ -360,24 +352,18 @@ async def test_close_all_during_connect_discards_conn(
     monkeypatch.setattr(asyncssh, "connect", fake_connect)
     pool = _make_pool(tmp_path)
 
-    # Start the connect; it will park at connect_gate.
-    task = asyncio.create_task(pool.connect("h1.example"))
-    # Yield once so the task reaches the await.
+    task = asyncio.create_task(pool.connect("h1.example"))  # parks at connect_gate
     await asyncio.sleep(0)
 
-    # Trigger close_all while the owner is mid-connect. This cancels the
-    # in-flight future on the pending slot.
-    await pool.close_all()
+    await pool.close_all()  # cancels the in-flight future on the pending slot
 
-    # Release the fake connect so the owner sees it succeed, then has to
-    # decide what to do with a now-cancelled future.
+    # The owner now sees the connect succeed but holds a cancelled future.
     connect_gate.set()
 
     with pytest.raises((asyncio.CancelledError, BaseException)):
         await task
 
-    # The completed connection must have been closed (not cached) since
-    # close_all already cleared the registry.
+    # Closed, not cached: close_all already cleared the registry.
     assert len(tracking) == 1
     assert tracking[0].close_count == 1, (
         "owner must close the just-completed connection when the in-flight "
@@ -409,12 +395,10 @@ def test_parse_forward_spec_valid_and_malformed() -> None:
 async def test_sweep_conns_respects_pins(tmp_path: Path) -> None:
     """Idle reaper must not evict a pinned (in-use) connection.
 
-    Regression for the idle-reaper-vs-in-use bug: a session / forward /
-    in-flight transfer holds a connection that nothing has re-``connect()``ed
-    to recently, so its ``last_used`` ages past the idle timeout. Before the
-    fix the sweep evicted it and closed the socket out from under the live
-    holder. With pin-counting the sweep skips ``pins > 0`` and only reaps once
-    the last holder releases.
+    Regression for the idle-reaper-vs-in-use bug: a session, forward or
+    in-flight transfer holds a connection nothing has recently re-``connect()``ed,
+    so its ``last_used`` ages past the idle timeout. The sweep must skip
+    ``pins > 0`` and reap only once the last holder releases.
     """
     from relay_shell.sshpool import _ConnEntry
 
@@ -429,7 +413,6 @@ async def test_sweep_conns_respects_pins(tmp_path: Path) -> None:
     pool = SshPool(settings=settings, inventory=inv)
 
     conn = _MockConn()
-    # last_used far in the past so the idle window has elapsed.
     entry = _ConnEntry(conn=conn, last_used=time.monotonic() - 3600, pins=1)
     pool._conns["u@h:22"] = entry
 
@@ -437,9 +420,8 @@ async def test_sweep_conns_respects_pins(tmp_path: Path) -> None:
     assert "u@h:22" in pool._conns, "pinned connection must survive the idle sweep"
     assert not conn.is_closed(), "pinned connection must not be closed"
 
-    # Release the pin. _unpin refreshes last_used (release counts as recent
-    # activity), so re-age the entry before the next sweep to prove it is now
-    # evictable purely because it is no longer pinned.
+    # _unpin refreshes last_used (release counts as activity); re-age the entry
+    # to prove it is evictable purely because it is no longer pinned.
     await pool._unpin(entry)
     entry.last_used = time.monotonic() - 3600
     await pool._sweep_conns()
@@ -449,7 +431,7 @@ async def test_sweep_conns_respects_pins(tmp_path: Path) -> None:
 
 async def test_sweep_conns_evicts_closed_even_if_pinned(tmp_path: Path) -> None:
     """A *closed* connection is dead regardless of pins and must be purged so a
-    re-connect does not return a dead handle — pinning only defends against
+    re-connect does not return a dead handle; pinning only defends against
     *idle* eviction, never against reaping an already-broken socket."""
     from relay_shell.sshpool import _ConnEntry
 
@@ -498,8 +480,8 @@ async def test_open_process_pins_and_transport_aclose_unpins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A spawned session pins its connection for its whole lifetime and the
-    transport releases the pin in ``aclose`` — so a mid-session idle sweep
-    cannot evict the connection, but a closed session no longer holds it.
+    transport releases the pin in ``aclose``: a mid-session idle sweep cannot
+    evict the connection, but a closed session no longer holds it.
     """
     conn = _ProcConn()
 
@@ -522,12 +504,10 @@ async def test_open_process_pins_and_transport_aclose_unpins(
     key = next(iter(pool._conns))
     assert pool._conns[key].pins == 1, "open_process must pin the connection"
 
-    # Age the entry past the idle window; the pin must keep it alive.
     pool._conns[key].last_used = time.monotonic() - 3600
     await pool._sweep_conns()
     assert key in pool._conns, "pinned session connection survives the idle sweep"
 
-    # Closing the session releases the pin; the now-idle connection is reaped.
     await tr.aclose()
     assert pool._conns[key].pins == 0, "aclose must release the pin"
     pool._conns[key].last_used = time.monotonic() - 3600
@@ -538,9 +518,9 @@ async def test_open_process_pins_and_transport_aclose_unpins(
 async def test_add_forward_enforces_cap(tmp_path: Path) -> None:
     """SSH-3: a saturated forward pool refuses new forwards.
 
-    A persuaded client looping ``ssh_forward`` would otherwise grow
-    ``_forwards`` without bound and exhaust local fds / listen ports. The
-    pre-check fires before any dial, so this needs no real connection.
+    A client looping ``ssh_forward`` would otherwise grow ``_forwards`` without
+    bound and exhaust local fds and listen ports. The pre-check fires before any
+    dial, so no real connection is needed.
     """
     from relay_shell.errors import ForwardError
     from relay_shell.sshpool import ForwardHandle
@@ -561,7 +541,7 @@ async def test_add_forward_enforces_cap(tmp_path: Path) -> None:
     assert pool.forward_count() == 2
     with pytest.raises(ForwardError, match="forward limit reached"):
         await pool.add_forward("h", "L:0:localhost:22", connect_kwargs={})
-    # The refused call neither dialled nor grew the registry.
+    # The refused call did not grow the registry.
     assert pool.forward_count() == 2
 
 
@@ -570,13 +550,12 @@ async def test_conn_cache_enforces_max_conns(
 ) -> None:
     """The connection cache is hard-bounded by ``max_conns``.
 
-    Regression for the unbounded-``_conns`` gap: unlike ``max_sessions`` /
-    ``max_forwards``, the connection cache underneath them had no ceiling and
-    grew until an opportunistic idle sweep happened to reclaim an entry. A
-    caller varying the target (or per-call ``user``/``port``/``key_path``)
-    across many reachable hosts could accumulate live SSH sessions unbounded.
-    Now a new connect evicts the least-recently-used *unpinned* entry so the
-    cache never exceeds the cap; the evicted connection is closed.
+    Regression for the unbounded-``_conns`` gap: the cache underneath
+    ``max_sessions`` / ``max_forwards`` must also have a ceiling, or a caller
+    varying the target (or per-call ``user``/``port``/``key_path``) across many
+    reachable hosts accumulates live SSH sessions until an idle sweep happens to
+    run. A new connect evicts (and closes) the least-recently-used *unpinned*
+    entry so the cache never exceeds the cap.
     """
     conns: list[_MockConn] = []
 
@@ -598,18 +577,15 @@ async def test_conn_cache_enforces_max_conns(
     inv = Inventory(str(tmp_path / "no_ssh_config"), "").load()
     pool = SshPool(settings=settings, inventory=inv)
 
-    # Connect to 5 distinct targets; each opens a fresh cached connection.
     for i in range(5):
         await pool.connect(f"h{i}.example")
-        # Space out last_used so LRU ordering is deterministic.
-        await asyncio.sleep(0)
+        await asyncio.sleep(0)  # space out last_used so LRU order is deterministic
 
     assert len(pool._conns) == 3, f"cache must stay within max_conns=3, got {len(pool._conns)}"
-    # The two least-recently-used connections (h0, h1) were evicted and closed.
+    # h0 and h1 are the least recently used.
     assert conns[0].is_closed() and conns[1].is_closed(), (
         "evicted (LRU) connections must be closed, not leaked"
     )
-    # The three most-recent survive and are open.
     assert not any(c.is_closed() for c in conns[2:])
 
 
@@ -691,10 +667,10 @@ async def test_run_output_budget_is_shared_across_streams(
 ) -> None:
     """``run``'s ``max_output_bytes`` bounds the COMBINED stdout+stderr buffer.
 
-    Regression for the per-stream budget: stdout and stderr each had their own
-    ``cap`` counter, so peak transient memory was up to 2x cap. With both
-    streams producing well over ``cap``, the combined kept bytes (the returned
-    string before the post-drain marker) must not exceed ``cap``.
+    Regression for the per-stream budget: separate ``cap`` counters for stdout and
+    stderr allow peak transient memory of 2x cap. With both streams producing well
+    over ``cap``, the combined kept bytes (the returned string before the
+    post-drain marker) must not exceed ``cap``.
     """
     cap = 8192
     conn = _BulkConn(out_total=cap * 4, err_total=cap * 4)
@@ -709,7 +685,7 @@ async def test_run_output_budget_is_shared_across_streams(
         "h1.example", "bulk", timeout=10, connect_kwargs=_CK, max_output_bytes=cap
     )
     assert code == 0
-    # Strip the truncate marker's tail so we measure only the kept payload.
+    # Drop the truncation marker to measure only the kept payload.
     payload = out.split("\n\n[TRUNCATED", 1)[0]
     assert len(payload.encode("utf-8")) <= cap, (
         f"combined kept bytes {len(payload.encode('utf-8'))} exceeded the shared cap {cap}; "
@@ -721,8 +697,8 @@ async def test_failed_option_building_does_not_poison_the_connect_slot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # An error raised after the single-flight slot is claimed but before the connect
-    # (here: an invalid known_hosts mode) used to leave the slot's future unresolved,
-    # so every later identical call hung forever.
+    # (here: an invalid known_hosts mode) must resolve the slot's future; otherwise
+    # every later identical call hangs forever.
     async def fake_connect(*_a: object, **_k: object) -> _MockConn:
         return _MockConn()
 
@@ -736,7 +712,7 @@ async def test_failed_option_building_does_not_poison_the_connect_slot(
 async def test_cancelled_connect_owner_does_not_cancel_waiters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Waiters on the same key must retry when only the connect OWNER was cancelled.
+    # Waiters on the same key must retry when only the connect owner was cancelled.
     calls = 0
     started = asyncio.Event()
 

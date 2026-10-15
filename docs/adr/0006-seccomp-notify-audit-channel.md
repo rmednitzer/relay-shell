@@ -19,7 +19,7 @@ stdout/stderr and the exit code. Two failure modes follow:
 
 1. **Audit gap on the child side of the boundary.** A long-running script
    may open files, exec further processes, mount/unmount, set/clear
-   capabilities, or call `prctl(PR_SET_DUMPABLE, 0)` — none of which
+   capabilities, or call `prctl(PR_SET_DUMPABLE, 0)`, none of which
    appear in the audit trail. The hash-of-output invariant from ADR 0002
    is preserved, but "did the child shell out to `nc` after the first
    stdout line?" cannot be answered from `audit.jsonl` alone.
@@ -56,7 +56,7 @@ floor for this design is **Linux >= 5.5** because
   (5.5 for `ADDFD`/`CONTINUE`; 6.0+ recommended for stable
   `seccomp_notify_id_valid` semantics) when the implementing PR lands.
 - **Narrow syscall set.** The filter notifies on a small,
-  forensically-interesting list — `execve`, `execveat`, `openat` with
+  forensically-interesting list: `execve`, `execveat`, `openat` with
   `O_WRONLY|O_RDWR|O_CREAT`, `mount`, `umount2`, `setuid`/`setgid`,
   `unshare`, `prctl` (with capability-relevant `option` values), and
   `ptrace`. Everything else stays in the default `SECCOMP_RET_ALLOW`
@@ -67,10 +67,10 @@ floor for this design is **Linux >= 5.5** because
   `tool="syscall_notify"` and `tier=0` (a passive observation, not a
   call). The event carries the originating `request_id`, the child
   PID, the syscall name and numeric arguments (no buffer
-  dereferencing — that requires `PIDFD_GETFD` and re-introduces a
+  dereferencing, which requires `PIDFD_GETFD` and re-introduces a
   sandbox-shaped attack surface). A per-call event cap
   (`RELAY_SHELL_SECCOMP_NOTIFY_CAP`, default 256) bounds the worst
-  case — beyond the cap, the channel records a single
+  case: beyond the cap, the channel records a single
   `syscall_notify_overflow` line and stops emitting for that call.
 - **Failure isolation.** If the supervisor's notify socket dies, the
   child continues unaffected (the kernel falls back to `ALLOW` for
@@ -123,7 +123,7 @@ floor for this design is **Linux >= 5.5** because
 - **`ptrace(PTRACE_SEIZE)` per child.** Quadratic single-stepping cost
   on syscall-heavy workloads (a `find /` would crawl), a well-known
   DoS surface (the tracer can be stalled by an uncooperative tracee),
-  and Linux limits one tracer per task — adoption would conflict
+  and Linux limits one tracer per task, so adoption would conflict
   with operators running their own `strace`/`gdb` on the same child.
   seccomp-notify is the kernel's purpose-built mechanism for this
   exact case.
@@ -213,8 +213,8 @@ implementation:
   validated against a live host's `<linux/prctl.h>`). The filter assembler
   gained an `eq-any` predicate on `args[0]` alongside the existing
   write-flag predicate, so high-volume benign options (`PR_SET_NAME` from
-  thread naming, glibc's `PR_SET_VMA` tagging) never trap — the volume
-  concern that deferred this in v1. `SECCOMP_FILTER_VERSION` is now **2**.
+  thread naming, glibc's `PR_SET_VMA` tagging) never trap (the volume
+  concern that deferred this in v1). `SECCOMP_FILTER_VERSION` is now **2**.
   The paired positive / near-miss tests run portably through a small
   classic-BPF interpreter in `tests/test_seccomp.py` (near-misses include
   the numerically-adjacent `GET` twins of each notified option), plus a

@@ -1,10 +1,10 @@
 # Authentication (OAuth 2.1)
 
-> **Opt-in — disabled by default.** `relay-shell` runs with **no
+> **Opt-in; disabled by default.** `relay-shell` runs with **no
 > authentication** unless you turn it on. The OAuth 2.1 layer applies **only**
 > to the HTTP transport and **only** when `RELAY_SHELL_AUTH_ENABLED=true`
 > (default `false`, [`config.py`](https://github.com/rmednitzer/relay-shell/blob/main/src/relay_shell/config.py) `auth_enabled`).
-> The stdio transport has no network surface, so it has no auth layer — the
+> The stdio transport has no network surface, so it has no auth layer; the
 > transport itself is the trust boundary there.
 
 This document explains how a client authenticates and **how a single client
@@ -12,12 +12,12 @@ stays authenticated over time**. Enable steps (env vars, the Caddy edge) are in
 [`deployment.md` §5](deployment.md); the threat model is in
 [`SECURITY.md`](https://github.com/rmednitzer/relay-shell/blob/main/SECURITY.md).
 
-## Opt-in by default — and what "off" means
+## Opt-in by default, and what "off" means
 
 | `transport` | `auth_enabled` | Result |
 |-------------|----------------|--------|
 | `stdio` (default) | (ignored) | No OAuth layer; the local transport is the boundary. |
-| `http` | `false` (default) | HTTP served **without** auth — you are relying entirely on the network edge (loopback bind + the Caddy CIDR allowlist in [`deployment.md` §4](deployment.md)). |
+| `http` | `false` (default) | HTTP served **without** auth; you are relying entirely on the network edge (loopback bind + the Caddy CIDR allowlist in [`deployment.md` §4](deployment.md)). |
 | `http` | `true` | OAuth 2.1 enforced: every tool call needs a valid bearer access token. |
 
 The provider is constructed only when both conditions hold
@@ -31,8 +31,8 @@ HTTP transport beyond loopback, enable it.
 OAuth 2.1 **authorization server**: dynamic client registration (DCR) with
 optional single-client lockdown, PKCE (the SDK enforces the challenge),
 short-lived authorization codes, and **rotating** refresh tokens. State is
-four JSON files under `RELAY_SHELL_AUTH_STATE_DIR` — `clients.json`,
-`approvals.json`, `codes.json`, `tokens.json` — created `0o700` and written `0o600`, and the
+four JSON files under `RELAY_SHELL_AUTH_STATE_DIR` (`clients.json`,
+`approvals.json`, `codes.json`, `tokens.json`), created `0o700` and written `0o600`; the
 provider **refuses to start** if the state dir is group/other-accessible
 (SEC-8). No database.
 
@@ -41,14 +41,14 @@ provider **refuses to start** if the state dir is group/other-accessible
 ### 1. Register once → a persistent identity
 
 The client performs DCR and receives a `client_id`, stored in `clients.json`
-(`register_client`). The id is persistent — the client reuses it and never
+(`register_client`). The id is persistent: the client reuses it and never
 needs to re-register.
 
 ### 2. Authorize with PKCE → a short-lived, one-shot code
 
 `authorize` mints an authorization code bound to the client's
 `code_challenge`, valid for `auth_code_ttl` (**default 300 s**). It is consumed
-on first use (`exchange_authorization_code` deletes it) — single-use per
+on first use (`exchange_authorization_code` deletes it), so it is single-use per
 RFC 6749.
 
 ### 3. Exchange the code → access + refresh tokens
@@ -66,7 +66,7 @@ calls `load_access_token` to validate it. Two guards matter there:
 
 - a `refresh:`-prefixed string is **rejected** as an access token, so a refresh
   token cannot be replayed as an access token (token-type confusion, AUTH-1);
-- expiry is enforced **lazily on read** — an expired token is deleted and the
+- expiry is enforced **lazily on read**: an expired token is deleted and the
   call gets `None` → 401. There is no background sweeper, so expired records that
   are never presented are dropped whenever a new token or authorization code is
   written, which bounds the files;
@@ -81,18 +81,18 @@ calls `load_access_token` to validate it. Two guards matter there:
 - the whole-file read that backs each authenticated request runs on a worker
   thread, so it does not block the event loop.
 
-### 5. Staying authenticated past one hour — the rotation loop
+### 5. Staying authenticated past one hour: the rotation loop
 
 This is the core of "how a single client stays authenticated." The access
 token lives only an hour. When it expires, the client presents its **refresh
 token** to `exchange_refresh_token`:
 
-- the presented refresh token is **consumed** (rotation is single-use — the old
+- the presented refresh token is **consumed** (rotation is single-use: the old
   one is deleted);
 - a **brand-new** access + refresh pair is issued.
 
 So the client rolls forward indefinitely as long as it refreshes at least once
-per refresh-TTL window — **each rotation resets the 30-day window** on the new
+per refresh-TTL window; **each rotation resets the 30-day window** on the new
 refresh token. The client must persist the *latest* refresh token; if two
 requests race a refresh, one wins and the other gets `invalid_grant`
 (single-use is enforced by deleting the record before issuing).
@@ -144,21 +144,21 @@ sender-constraining. `client_secret` values are stored as the SDK compares them 
 ### 6. Persistence across restarts
 
 Token state is file-backed, so a server restart does **not** log the client
-out — the access and refresh tokens are still valid on disk. (The state dir is
+out: the access and refresh tokens are still valid on disk. (The state dir is
 `0o700`, fail-closed.)
 
 ### 7. When a full re-authentication is required
 
 Only if the client is idle **longer than the refresh TTL (30 days by
 default)**: the refresh token has expired and the client must run the PKCE
-authorize flow again (step 2). It still does **not** re-register — the
+authorize flow again (step 2). It still does **not** re-register: the
 `client_id` persists, which matters under single-client lockdown (below).
 
 ### 8. Revocation
 
 `revoke_token` removes the presented token. Revocation does **not** cascade
 between an access token and its paired refresh token (RFC 7009 leaves that
-unspecified and the provider opts out, in both directions — see the
+unspecified and the provider opts out, in both directions; see the
 `test_revoke_*` cases). To fully cut a client off, revoke both, or let the
 short access TTL expire and revoke the refresh token.
 
@@ -264,7 +264,7 @@ With `RELAY_SHELL_AUTH_SINGLE_CLIENT=true` (**the default**), DCR is frozen
 once the first client registers:
 
 - a **new** `client_id` is refused (`Dynamic client registration is closed`);
-- the **existing** client cannot be **modified** — in particular its
+- the **existing** client cannot be **modified**; in particular its
   `redirect_uri` cannot be overwritten, which would otherwise let someone who
   learned the `client_id` steer the next authorization code to their own URL
   (AUTH-2);
@@ -291,7 +291,7 @@ metadata updates) applies.
 | Issuer | `RELAY_SHELL_AUTH_ISSUER` | `https://localhost:8080` | Advertised issuer URL. |
 | Resource URL | `RELAY_SHELL_AUTH_RESOURCE_URL` | empty (= the issuer URL) | The exact public MCP endpoint that tokens are bound to (RFC 8707). |
 
-## Security model — why opt-in
+## Security model: why opt-in
 
 `relay-shell` executes commands with the full privileges of its service
 account (ADR 0002). The OAuth layer is one of the *compensating controls*, not
@@ -300,7 +300,7 @@ a sandbox. It is opt-in because the supported deployment shapes differ:
 - **stdio** (e.g. a local MCP client): no network surface, no auth needed.
 - **HTTP behind a trusted edge**: the Caddy CIDR allowlist + loopback bind may
   be the operator's chosen boundary; OAuth adds defence in depth.
-- **HTTP exposed more widely**: enable OAuth — it is required, not optional, in
+- **HTTP exposed more widely**: enable OAuth; it is required, not optional, in
   that posture.
 
 The default transport is stdio and `auth_enabled` defaults to `false`, so a
