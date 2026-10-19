@@ -21,6 +21,16 @@
         "astral-sh/ruff-pre-commit"
       ],
       "groupName": "ruff toolchain"
+    },
+    {
+      "description": "Keep build, release and auxiliary jobs on the tested Python line until CI support and hashed build locks are updated together.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "allowedVersions": "<3.15"
     }
   ]
 }
