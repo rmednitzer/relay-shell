@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep release, SBOM and auxiliary tooling on tested Python 3.14; constrain Renovate
+  interpreter updates below 3.15 until CI coverage and hashed tooling locks are ready.
+
 ## [0.4.0] - 2026-10-15
 
 ### Fixed
