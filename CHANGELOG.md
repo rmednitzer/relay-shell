@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Require a signed v0.3.0-to-current cross-version fixture with complete hashed dependency admission, authenticated PKCE/resource/refresh/revocation checks and explicit snapshot rollback that resets grants and preserves accepted audit history.
+- Retain the legacy SDK session-advisory finding with a source/live stateless-only disposition; fail on unknown or incomplete audit findings without changing current-runtime gates.
+
 - Explicitly reinstall the locally built wheel so same-version source upgrades replace stale package bytes; exercise this with a changed-module control.
 
 - Replace optional seccomp Python preexec callbacks with an isolated fresh-process launcher; preserve exec errors and move monitor cleanup off the event loop.

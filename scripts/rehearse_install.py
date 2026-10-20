@@ -90,7 +90,7 @@ def service(active: bool) -> None:
     checked(["systemctl", "start" if active else "stop", "relay-shell"])
 
 
-def mcp_proof() -> None:
+def mcp_proof(token: str | None = None) -> None:
     session = None
 
     def request(body: dict[str, object]) -> dict[str, object]:
@@ -100,6 +100,8 @@ def mcp_proof() -> None:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+        if token:
+            headers["Authorization"] = "Bearer " + token
         if session:
             headers["Mcp-Session-Id"] = session
         try:

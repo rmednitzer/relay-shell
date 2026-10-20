@@ -802,3 +802,31 @@ identity. A valid local audit prefix alone does not establish that no tail was
 lost. Live-host recovery, cross-version state migration, real OAuth issuance/refresh,
 edge TLS, off-host custody
 and full-host disaster recovery remain separately qualified.
+
+### 11b. Cross-version migration and rollback limits
+
+The required release rehearsal also qualifies one signed v0.3.0 fixture with its
+frozen SDK 1.x closure to current source on Ubuntu 24.04/Python 3.12. Its receipt
+records tag/source, wheel and lock identities. This is a newly qualified fixture,
+not evidence of the dependencies on any historical operational installation.
+
+Current code hashes legacy token storage, carries existing client approval forward,
+and rejects old grants without resource binding. The operator must reauthorize;
+do not add an audience to old grants merely to avoid that security transition.
+The fixture exercises authenticated MCP over loopback HTTP, PKCE, reauthorization,
+resource refusal, refresh rotation/replay refusal and token revocation.
+
+A snapshot rollback is not automatically state-preserving. The fixture retains
+all accepted audit records, restores the old runtime/configuration together, clears
+access/refresh grants and pending codes before restart, and verifies fresh
+reauthorization and continued audit chaining. It confirms backed-up credentials
+are not revived. Other state/policy changes after a real snapshot need their own
+review and reconciliation while external access remains stopped. Blindly restoring
+old tokens can undo revocations; restoring an older log can discard accepted audit
+history. Binary-only downgrade and automatic rollback remain unqualified.
+
+This does not recommend deploying the old release or qualify arbitrary versions,
+operational clients, TLS/edge configuration, full-host recovery or all newer policy
+semantics under old software. The historical fixture's advisory disposition is
+scoped in [its README](https://github.com/rmednitzer/relay-shell/blob/main/tests/fixtures/upgrade-v0.3/README.md); current-runtime
+security gates are unchanged.

@@ -1,0 +1,10 @@
+# Frozen v0.3.0 HTTP fixture; a newly qualified closure, not historical deployment evidence.
+mcp==1.28.1
+pydantic>=2.11,<3
+pydantic-settings>=2.14.2,<3
+asyncssh>=2.23.0,<3
+uvicorn>=0.34,<1
+starlette>=1.3.0,<2
+anyio>=4.6,<5
+PyJWT>=2.13.0,<3
+cryptography>=48.0.1,<51
