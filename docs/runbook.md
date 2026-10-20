@@ -432,7 +432,9 @@ remediation input; Dependabot security-update PRs are disabled to avoid competin
 branches. The pip-compile manager owns requirements-build.txt and
 requirements-sbom.txt, including their recorded uv regeneration commands. Direct
 pip_requirements edits to those generated outputs are disabled, and complete
-tooling refreshes require review rather than automerge. Generated hashes must be reviewed
+tooling refreshes require review rather than automerge. A custom manager also
+tracks the embedded Caddy release pin used by the real edge-routing tests; the
+Go module checksum verification remains in force. Generated hashes must be reviewed
 with their inputs using section 6.6. A version edit alone does not refresh hashes.
 
 The required ci-success aggregate polls all pages of check results once per cycle.

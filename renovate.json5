@@ -57,5 +57,20 @@
     "managerFilePatterns": [
       "/^requirements-(?:build|sbom)\\.txt$/"
     ]
-  }
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track the Caddy prerequisite used by the real edge-routing CI tests.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/ci\\.yml$/"
+      ],
+      "matchStrings": [
+        "go install github\\.com/caddyserver/caddy/v2/cmd/caddy@(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "depNameTemplate": "caddyserver/caddy",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver"
+    }
+  ]
 }
