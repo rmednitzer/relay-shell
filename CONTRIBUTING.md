@@ -187,9 +187,13 @@ local. Review policy changes and actual dependency extraction before merging.
 
 ## CI run ownership
 
-The PR-validation workflows updated here cancel superseded runs only for the
-same pull request. Their push, scheduled and manual invocations use their own run
-IDs so a newer revision cannot cancel verification or replace pending evidence.
+The PR-validation workflows updated here coalesce first attempts for the same PR.
+Manual reruns use separate run-ID/attempt groups, so rerunning an old revision
+cannot cancel or replace current-head validation. Non-PR invocations also use
+unique run-ID/attempt groups to preserve each revision's evidence.
+GitHub does not guarantee chronological ordering of initial attempts: a late event
+can still interrupt another initial attempt. Required checks bind to the current
+head; a cancelled current-head check needs a successful rerun before merge.
 Explicit diagnostic/publication serialization in other workflows remains separate. Reusable
 workflows have distinct file prefixes to avoid cancelling a caller or sibling.
 Cancelling an obsolete PR run is not a successful check; the current head still

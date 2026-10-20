@@ -8,10 +8,13 @@ permissions:
   contents: read
 
 
-# Superseded PR work may stop; every non-PR run keeps its own evidence.
+# Coalesce initial PR attempts; isolate reruns and retain non-PR evidence.
 concurrency:
-  group: ci-gate-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: >-
+    ci-gate-${{ github.workflow }}-${{ github.event_name }}-${{
+    github.run_attempt == '1' && github.event.pull_request.number || github.run_id
+    }}-${{ github.run_attempt }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == '1' }}
 
 jobs:
   ci-success:

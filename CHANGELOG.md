@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-- Cancel superseded PR validation only, preserving separate verification runs for every non-PR invocation.
+- Coalesce initial PR validation, isolate manual reruns, and preserve non-PR verification evidence.
 - Use complete lock files for wheel-cache invalidation and reject malformed check snapshots immediately.
 
 - Require underlying CI checks directly in repository settings and add a read-only,
