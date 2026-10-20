@@ -270,7 +270,7 @@ def test_arm_then_stop_without_spawn_is_clean() -> None:
     )
     extras = m.arm()
     try:
-        assert "preexec_fn" in extras and "pass_fds" in extras
+        assert "preexec_fn" not in extras and "pass_fds" in extras
         # A second arm() is a no-op (single-use) so a second child runs unaudited.
         assert m.arm() == {}
     finally:
@@ -974,3 +974,104 @@ def test_persistent_eintr_does_not_close_the_listener(monkeypatch: pytest.Monkey
     # Gave up retrying, but poll will report the listener again: keep serving it.
     assert seccomp._recv_and_continue(5, 1, 2, 80, seccomp._RESP_PACK) == (True, None)
     assert fake.calls == [1] * seccomp._EINTR_RETRIES
+
+
+def test_filter_v3_covers_creat_and_all_openat2_calls() -> None:
+    assert seccomp.SECCOMP_FILTER_VERSION >= 3
+    prog = seccomp.build_filter("x86_64")
+    for name in ("creat", "openat2"):
+        assert _run_bpf(prog, arch=_SIM_ARCH, nr=_SIM_NR[name]) == _NOTIF
+        assert _run_bpf(prog, arch=0x40000003, nr=_SIM_NR[name]) == _ALLOW
+
+
+async def test_launcher_isolated_from_cwd_and_pythonpath(tmp_path: Path) -> None:
+    # A fresh -I -S interpreter cannot import caller-controlled startup code.
+    (tmp_path / "sitecustomize.py").write_text("raise SystemExit(91)\n")
+    (tmp_path / "socket.py").write_text("raise SystemExit(92)\n")
+    m = _monitor()
+    token = seccomp.set_active(m)
+    try:
+        out, code = await run_command(
+            "/bin/echo 'literal; $HOME'",
+            use_shell=False,
+            cwd=str(tmp_path),
+            env_json=json.dumps({"PYTHONPATH": str(tmp_path)}),
+            timeout=10,
+        )
+        assert code == 0 and out == "literal; $HOME\n"
+        assert m._stopped
+    finally:
+        seccomp.clear_active(token)
+        await m.astop()
+
+
+async def test_async_stop_keeps_loop_responsive_and_completes_on_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    m = _monitor()
+    entered, release = threading.Event(), threading.Event()
+    original = m.stop
+
+    def slow_stop() -> None:
+        entered.set()
+        if not release.wait(2):
+            raise AssertionError("event loop failed to release cleanup")
+        original()
+
+    monkeypatch.setattr(m, "stop", slow_stop)
+    task = asyncio.create_task(m.astop())
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        task.cancel()
+        await asyncio.sleep(0.01)
+        assert not task.done()
+        task.cancel()
+        await asyncio.sleep(0.01)
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert m._stopped
+    finally:
+        release.set()
+        if not task.done():
+            await task
+
+
+@pytest.mark.seccomp
+@requires_seccomp
+async def test_live_creat_and_openat2_are_observed(tmp_path: Path) -> None:
+    from relay_shell.shelltools import run_script
+
+    events: list[seccomp.SyscallEvent] = []
+    m = seccomp.SeccompMonitor(
+        cap=128, arch="x86_64", on_event=events.append, on_overflow=lambda _: None
+    )
+    script = r"""
+import ctypes, os
+lib = ctypes.CDLL(None, use_errno=True)
+class How(ctypes.Structure):
+    _fields_ = [("flags", ctypes.c_uint64), ("mode", ctypes.c_uint64),
+                ("resolve", ctypes.c_uint64)]
+path = b"creat-proof"
+fd = lib.syscall(85, path, 0o600)
+assert fd >= 0, ctypes.get_errno()
+os.write(fd, b"proof")
+os.close(fd)
+how = How(os.O_RDONLY, 0, 0)
+fd = lib.syscall(437, -100, path, ctypes.byref(how), ctypes.sizeof(how))
+assert fd >= 0, ctypes.get_errno()
+assert os.read(fd, 5) == b"proof"
+os.close(fd)
+print("continued")
+"""
+    token = seccomp.set_active(m)
+    try:
+        out, code = await run_script(script, interpreter="python", timeout=10, cwd=str(tmp_path))
+        assert code == 0 and out == "continued\n"
+        assert {"creat", "openat2"} <= {event.syscall for event in events}
+    finally:
+        seccomp.clear_active(token)
+        await m.astop()

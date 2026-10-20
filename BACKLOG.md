@@ -276,3 +276,13 @@ Open deferrals (severity order; smaller effort first):
 | ID | Item | Sev | Effort | Rationale / approach | Owner role |
 |---|---|---|---|---|---|
 | OPS-2 (L4) | `pip-audit` has no KEV/EPSS exploit prioritization | info | S | Lesson from the comparison: layer Known-Exploited / EPSS signal on top of the existing `pip-audit` gate for prioritization. Advisory only: `pip-audit` already fails closed. Low value for the small pinned set; revisit if the dependency set grows. | maintainer |
+
+## 2026-10-20 seccomp and installer recovery
+
+The deferred L4 seccomp work is closed in current source: no threaded-parent
+Python preexec callback, async stop/join off the event loop, and filter v3
+creat/openat2 coverage. ADR 0014 defines the scoped hazard/threat analysis.
+The required release rehearsal adds actual disposable-VM installation, repeat
+upgrade, injected partial runtime replacement and complete service-state recovery.
+Live-host qualification, real OAuth flows, edge TLS, off-host custody, full-host
+rebuild and atomic/automatic rollback remain separate work.

@@ -278,3 +278,11 @@ rationale is here.
   events ride the same JSONL stream the three existing recipes already tail,
   and the schema discriminator (`tool` field) is exactly what
   Vector/Fluent Bit/`journal-remote` already key on.
+
+### 2026-10-20: launcher and coverage refinement
+
+[ADR 0014](0014-seccomp-launch-and-install-recovery.md) replaces the Python
+post-fork callback with an isolated fresh interpreter, moves async stop/join off
+the event loop and adds creat/openat2 (filter version 3). Every openat2 is notified;
+flags behind user pointers are not decoded. Existing listener-loss and detached
+capacity limitations remain.

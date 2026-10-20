@@ -26,14 +26,16 @@ no local child (``asyncssh`` runs in-process), so nothing is observed there.
 Linux + ``x86_64`` only; any other platform or arch, or a kernel below 5.5,
 reports ``supported=False`` and no-ops.
 
-Everything here is fail-open for the child: if the filter cannot be
-installed, the handshake fails, or the supervisor dies, the child runs
-unfiltered and the audit pipeline records the gap as degraded; a tool call
-is never broken.
+Filter-installation refusal leaves the target unfiltered and records degraded
+auditing. Once installed, the filter requires a live supervisor to answer
+CONTINUE: losing every listener makes notified syscalls fail with ENOSYS, rather
+than removing the filter. Detached handoff reduces this gap but has a finite cap;
+this audit channel is not an availability-independent observer.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import ctypes
 import errno
@@ -41,6 +43,7 @@ import logging
 import os
 import platform
 import select
+import signal
 import socket
 import struct
 import sys
@@ -73,9 +76,10 @@ _log = logging.getLogger("relay_shell.seccomp")
 # Bump whenever the installed filter or the notified-syscall set changes, so
 # the audit trail and server_info can pin which policy produced an event.
 # Mirrors patterns.PATTERNS_VERSION.
+# 3: creat and all openat2 calls joined (pointer flags are not dereferenced).
 # 2: prctl joined the notified set, gated on the privilege-relevant
 #    PRCTL_NOTIFIED_OPTIONS via the eq-any predicate (runbook B-024).
-SECCOMP_FILTER_VERSION: Final = 2
+SECCOMP_FILTER_VERSION: Final = 3
 
 # --- kernel ABI constants (validated against a live host; see ADR 0006) -----
 
@@ -116,6 +120,8 @@ _SYSCALLS: Final[dict[str, dict[str, int]]] = {
         "setresgid": 119,
         "openat": 257,
         "open": 2,
+        "creat": 85,
+        "openat2": 437,
         "prctl": 157,
     },
 }
@@ -193,6 +199,9 @@ NOTIFIED_SYSCALLS: Final[tuple[_Notify, ...]] = (
     _Notify("setresgid"),
     _Notify("openat", flag_arg=2, flag_mask=_O_WRITE_MASK),
     _Notify("open", flag_arg=1, flag_mask=_O_WRITE_MASK),
+    # openat2 flags live behind a pointer: record every call without dereferencing.
+    _Notify("creat"),
+    _Notify("openat2"),
     _Notify("prctl", eq_arg=0, eq_values=PRCTL_NOTIFIED_OPTIONS),
 )
 
@@ -640,13 +649,27 @@ class _DetachedServer:
 _DETACHED = _DetachedServer()
 
 
+async def _await_owned[T](task: asyncio.Task[T]) -> T:
+    """Finish an owned worker even if its caller is cancelled repeatedly."""
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    result = task.result()
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
+
+
 class SeccompMonitor:
     """Installs the filter on one child and supervises its notifications.
 
-    Single-use and fail-open: at most one child is audited per monitor; any
-    failure on the seccomp path lets the child run unfiltered and reports a
-    degraded gap. Construction performs no syscalls — only :meth:`popen_extras`
-    (called pre-spawn) and :meth:`start` (post-spawn) touch the kernel.
+    Single-use: at most one child is audited per monitor. Filter-installation
+    refusal leaves the child unfiltered; an installed filter depends on listener
+    availability. Arming starts the supervisor before the isolated launcher
+    installs the filter; no Python post-fork callback is used.
     """
 
     def __init__(
@@ -676,6 +699,8 @@ class SeccompMonitor:
         self._fprog: ctypes.Structure | None = None
         self._psock: socket.socket | None = None
         self._csock: socket.socket | None = None
+        self._exec_r: int | None = None
+        self._exec_w: int | None = None
         self._used = False
 
         # Supervisor state.
@@ -691,11 +716,9 @@ class SeccompMonitor:
     def arm(self) -> dict[str, object]:
         """Prepare the child filter, start the supervisor, return ``Popen`` kwargs.
 
-        The supervisor thread is started **here, before the spawn**: a
-        ``preexec_fn``-installed USER_NOTIF filter traps the child's own
-        ``execve``, and ``Popen`` does not return until that ``execve``
-        completes. Only a supervisor already draining the listener can answer
-        CONTINUE and let the spawn finish — so arming must precede spawning.
+        The supervisor starts before the fresh launcher process installs the
+        filter. No Python callback runs between fork and exec in the threaded
+        parent. The launcher sends its listener before execing the target.
 
         Single-use: a second call (a tool spawning more than one local child)
         returns ``{}`` so the extra child runs unaudited rather than reusing a
@@ -713,24 +736,66 @@ class SeccompMonitor:
         self._fprog = _Fprog(len(prog) // 8, ctypes.cast(self._prog_buf, ctypes.c_void_p))
         self._psock, self._csock = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
         self._stop_r, self._stop_w = os.pipe()
+        self._exec_r, self._exec_w = os.pipe()
         self._thread = threading.Thread(
             target=self._supervise, name="relay-seccomp-notify", daemon=True
         )
         self._thread.start()
-        return {"preexec_fn": self._install_in_child, "pass_fds": (self._csock.fileno(),)}
+        return {"pass_fds": (self._csock.fileno(), self._exec_w)}
+
+    def wrap_argv(self, argv: list[str]) -> list[str]:
+        """Fresh isolated interpreter; target arguments are never shell-interpolated."""
+        if self._csock is None:
+            return argv
+        return [
+            sys.executable,
+            "-I",
+            "-S",
+            str(Path(__file__).resolve()),
+            str(self._csock.fileno()),
+            str(self._exec_w),
+            self._arch,
+            "--",
+            *argv,
+        ]
+
+    async def wait_exec(self, proc: asyncio.subprocess.Process) -> None:
+        """Preserve Popen's exec-failure contract across the launcher hop."""
+        if self._exec_w is None or self._exec_r is None:
+            return
+        os.close(self._exec_w)
+        self._exec_w = None
+        fd = self._exec_r
+
+        def read_status() -> bytes:
+            poller = select.poll()
+            poller.register(fd, select.POLLIN | select.POLLHUP)
+            if not poller.poll(_START_HANDSHAKE_TIMEOUT * 1000):
+                raise TimeoutError("seccomp launcher did not exec target in time")
+            return os.read(fd, 32)
+
+        task = asyncio.create_task(asyncio.to_thread(read_status))
+        try:
+            status = await _await_owned(task)
+        except BaseException:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            await proc.wait()
+            raise
+        if status:
+            code = int(status)
+            await proc.wait()
+            raise OSError(code, os.strerror(code))
+
+    async def astop(self) -> None:
+        """Complete owned cleanup off the event loop, including on cancellation."""
+        await _await_owned(asyncio.create_task(asyncio.to_thread(self.stop)))
 
     def _install_in_child(self) -> None:  # pragma: no cover
-        """Runs in the forked child, after fd cleanup, before ``exec``.
+        """Install in a fresh launcher interpreter, never a post-fork callback.
 
-        Must NEVER raise (a raising ``preexec_fn`` aborts the spawn and would
-        break the tool). On any failure it signals the parent and returns so
-        ``exec`` proceeds unfiltered. Kept to bare syscalls on pre-built
-        buffers to minimise the post-fork window.
-
-        Not coverable: this executes in the forked child between fork and
-        ``exec``; the child then replaces itself via ``execve`` so the
-        coverage tracer's data is never written back. The ``seccomp``-marked
-        end-to-end tests exercise it for real on a privileged host.
+        Installation failure signals degraded auditing and executes the target
+        unfiltered. This path is exercised by subprocess and privileged tests.
         """
         csock = self._csock
         nr_seccomp = _NR_SECCOMP.get(self._arch, -1)
@@ -770,8 +835,9 @@ class SeccompMonitor:
 
         Phase 1 waits (interruptibly) for the child's handshake datagram;
         phase 2 answers CONTINUE for every notification and audits up to the
-        per-call cap. Fail-open throughout: a missing handshake or any ioctl
-        error ends the thread and the child keeps running.
+        per-call cap. A missing handshake or ioctl error records a gap. After
+        filter installation, continued child execution depends on a listener;
+        stop() hands surviving holders to the bounded detached server.
         """
         listener = self._handshake()
         if self._psock is not None:
@@ -887,7 +953,7 @@ class SeccompMonitor:
             # Some process still carries the filter (a backgrounded job): closing
             # the listener now would make its notified syscalls fail with ENOSYS.
             self._listener_fd = None
-        for attr in ("_listener_fd", "_stop_r", "_stop_w"):
+        for attr in ("_listener_fd", "_stop_r", "_stop_w", "_exec_r", "_exec_w"):
             fd = getattr(self, attr)
             if fd is not None:
                 with contextlib.suppress(Exception):
@@ -961,3 +1027,38 @@ def get_active() -> SeccompMonitor | None:
 def clear_active(token: Token[SeccompMonitor | None]) -> None:
     with contextlib.suppress(Exception):
         _active.reset(token)
+
+
+def _launch() -> None:  # pragma: no cover - replaces this subprocess with target
+    """Internal launcher entry, invoked by absolute filename with -I -S."""
+    fd = int(sys.argv[1])
+    error_fd = int(sys.argv[2])
+    os.set_inheritable(error_fd, False)
+    arch = sys.argv[3]
+    if sys.argv[4] != "--" or len(sys.argv) < 6:
+        raise SystemExit(2)
+    target = sys.argv[5:]
+    monitor = SeccompMonitor(cap=1, arch=arch, on_event=lambda _: None, on_overflow=lambda _: None)
+    prog = build_filter(arch)
+    monitor._prog_buf = (ctypes.c_char * len(prog)).from_buffer_copy(prog)
+
+    class Fprog(ctypes.Structure):
+        _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.c_void_p)]
+
+    monitor._fprog = Fprog(len(prog) // 8, ctypes.cast(monitor._prog_buf, ctypes.c_void_p))
+    monitor._csock = socket.socket(fileno=fd)
+    monitor._install_in_child()
+    # Match subprocess restore_signals=True after Python startup ignored SIGPIPE.
+    for name in ("SIGPIPE", "SIGXFZ", "SIGXFSZ"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            signal.signal(sig, signal.SIG_DFL)
+    try:
+        os.execvpe(target[0], target, os.environ)
+    except OSError as exc:
+        os.write(error_fd, str(exc.errno or errno.EIO).encode("ascii"))
+        raise SystemExit(127) from None
+
+
+if __name__ == "__main__":  # pragma: no cover - isolated subprocess entry
+    _launch()
