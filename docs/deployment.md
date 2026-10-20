@@ -753,7 +753,7 @@ race with a write into the unmoved file. The drift-detection CLI
 (`relay-shell --verify-deploy`, §10) confirms the systemd unit + Caddyfile
 + logrotate config match the templates after a restore.
 
-What is **not** in scope for backup:
+Additional recovery material and rebuild limits:
 
 - A venv may be rebuilt for disaster recovery from a retained source revision,
   qualified interpreter and matching hashed runtime/build profiles. An unpinned
