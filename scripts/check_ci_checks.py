@@ -13,6 +13,8 @@ def evaluate(
 ) -> tuple[int, list[str]]:
     if not sha or not required or not all(name for name in required):
         raise ValueError("missing check policy")
+    if not isinstance(pages, list) or not pages:
+        raise ValueError("invalid paginated snapshot")
     latest: dict[str, dict[str, Any]] = {}
     for page in pages:
         for check in page["check_runs"]:

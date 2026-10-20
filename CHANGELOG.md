@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Coalesce initial PR validation, isolate manual reruns, and preserve non-PR verification evidence.
+- Use complete lock files for wheel-cache invalidation and reject malformed check snapshots immediately.
+- Use HTTP/1.1 for the CI Caddy download/build client after repeated checksum-service HTTP/2 stream errors; retain TLS and module checksum verification.
+
 - Require underlying CI checks directly in repository settings and add a read-only,
   non-publishing release/SBOM and complete-runtime recovery rehearsal.
 - Test signed-tag admission with real synthetic signatures; reject multiline tag

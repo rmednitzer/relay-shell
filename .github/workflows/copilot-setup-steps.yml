@@ -10,6 +10,15 @@ on:
       - pyproject.toml
 permissions:
   contents: read
+
+# Coalesce initial PR attempts; isolate reruns and retain non-PR evidence.
+concurrency:
+  group: >-
+    copilot-setup-steps-${{ github.workflow }}-${{ github.event_name }}-${{
+    github.run_attempt == '1' && github.event.pull_request.number || github.run_id
+    }}-${{ github.run_attempt }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == '1' }}
+
 jobs:
   copilot-setup-steps:
     runs-on: ubuntu-24.04

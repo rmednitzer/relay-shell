@@ -30,6 +30,8 @@ jobs:
         with:
           python-version: "3.14"
           cache: "pip"
+          cache-dependency-path: |
+            requirements/development-py3.14.txt
 
       - name: Install
         run: |

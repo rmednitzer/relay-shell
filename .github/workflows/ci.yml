@@ -8,6 +8,15 @@ on:
 permissions:
   contents: read
 
+
+# Coalesce initial PR attempts; isolate reruns and retain non-PR evidence.
+concurrency:
+  group: >-
+    ci-${{ github.workflow }}-${{ github.event_name }}-${{
+    github.run_attempt == '1' && github.event.pull_request.number || github.run_id
+    }}-${{ github.run_attempt }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == '1' }}
+
 jobs:
   check:
     permissions:
@@ -32,6 +41,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
+          cache-dependency-path: |
+            requirements/development-py${{ matrix.python-version }}.txt
 
       - name: Install
         run: |
@@ -54,6 +65,8 @@ jobs:
         if: matrix.python-version == '3.13'
         env:
           GOBIN: ${{ runner.temp }}/caddy-bin
+          # Avoid checksum-service HTTP/2 stream failures; TLS and Go sums stay enabled.
+          GODEBUG: http2client=0
         run: |
           command -v go
           go install github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.7

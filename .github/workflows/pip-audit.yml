@@ -19,6 +19,15 @@ on:
 permissions:
   contents: read
 
+
+# Coalesce initial PR attempts; isolate reruns and retain non-PR evidence.
+concurrency:
+  group: >-
+    pip-audit-${{ github.workflow }}-${{ github.event_name }}-${{
+    github.run_attempt == '1' && github.event.pull_request.number || github.run_id
+    }}-${{ github.run_attempt }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == '1' }}
+
 jobs:
   audit:
     name: pip-audit (CVE scan)
@@ -33,6 +42,9 @@ jobs:
         with:
           python-version: "3.14"
           cache: "pip"
+          cache-dependency-path: |
+            requirements/development-py3.14.txt
+            requirements-audit.txt
 
       - name: Prepare separate locked subject and audit-tool environments
         run: |
