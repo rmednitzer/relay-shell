@@ -250,14 +250,18 @@ def rehearse(output: Path) -> None:
             service(True)
             mcp_proof()
             active_refusal = run(installer)
-            if active_refusal.returncode == 0 or "must remain stopped" not in active_refusal.stdout:
+            if active_refusal.returncode == 0 or "must remain stopped" not in (
+                active_refusal.stdout + active_refusal.stderr
+            ):
                 raise RuntimeError("installer did not refuse an active service")
             mcp_proof()
             service(False)
             with Path("/run/relay-shell-installer/lock").open("w") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 locked_refusal = run(installer)
-                if locked_refusal.returncode == 0 or "holds the lock" not in locked_refusal.stdout:
+                if locked_refusal.returncode == 0 or "holds the lock" not in (
+                    locked_refusal.stdout + locked_refusal.stderr
+                ):
                     raise RuntimeError("concurrent installer was not refused")
             attributes = run(["lsattr", "-d", str(LOG / "audit.jsonl")])
             append_only = attributes.returncode == 0 and "a" in attributes.stdout.split()[0]
