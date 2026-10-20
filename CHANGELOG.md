@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Restore the prior installer runtime and managed configuration after ordinary
+  installation failures or handled termination; require a stopped service and
+  serialize installers. Preserve explicit recovery for SIGKILL/host loss.
+
+
 - Reconcile the dedicated installer runtime with the complete target dependency
   lock, removing obsolete distributions left by earlier releases.
 

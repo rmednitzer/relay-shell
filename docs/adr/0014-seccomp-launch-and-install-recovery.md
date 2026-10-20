@@ -118,3 +118,31 @@ UCA-16 is reporting an upgrade complete while legacy-only dependencies remain
 importable. The dedicated venv is reconciled as the service UID; failures stop
 installation and require snapshot recovery. Operator tools belong outside this
 venv. The rehearsal independently checks the resulting inventory.
+
+### Installer failure recovery decision (2026-10-20)
+
+Extend SC-10/SC-13 with SC-14: an ordinary failed installation or handled
+termination must restore the prior runtime and managed configuration before
+returning failure, without starting a service or changing OAuth/SSH/audit state.
+UCA-17 is leaving a partially replaced runtime after a detected installation
+failure; CS-17 includes pip failure, managed-file installation failure and TERM.
+UCA-18 is restoring a snapshot while a service writes state: require stopped
+service feedback before mutation and restoration. Serialize cooperating installers.
+The operator must prevent external service starts throughout installation.
+
+No change preserves manual-only recovery. Atomic directory replacement needs
+relocatable venv entry points and a separate commit protocol; defer it. Select
+root-private snapshots of the venv and managed configuration, an EXIT rollback
+handler and explicit signal exits. Build first without mutating the runtime.
+Keep failure snapshots for intervention; success removes its own snapshot. Never
+roll back audit records, OAuth stores or SSH trust. Reject symlinked top-level
+managed targets. Root copies bytes but never executes the service-owned Python.
+The service remains stopped after either outcome.
+
+Rollback failure must retain evidence and report failure; it must not claim
+recovery. SIGKILL, host loss, filesystem exhaustion/corruption, processes outside
+the systemd unit and external starts are outside this automatic guarantee. Keep
+full explicit snapshot recovery qualification for those cases. Root/service UID
+compromise remains outside this maintenance transaction trust model. Revert the
+installer/source before deployment to remove this behavior; never delete retained
+failure snapshots until recovery is independently verified.

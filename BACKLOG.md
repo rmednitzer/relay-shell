@@ -296,3 +296,13 @@ client approval continuity and actual authenticated route behaviour are checked.
 Rollback preserves post-snapshot audit records and resets grants/codes before
 reauthorization. Operational TLS/clients, broader state-policy reconciliation,
 binary-only downgrades, automatic rollback and live-host recovery remain open.
+
+
+### Installer rollback qualification (2026-10-20)
+
+Implemented automatic restoration for ordinary installer errors and handled
+termination, with stopped-service admission, installer serialization and retained
+root-private failure snapshots. Hosted acceptance covers partial pip failure,
+TERM and late managed-file failure, plus active/concurrent refusal. SIGKILL still
+requires explicit snapshot recovery; preserve that separate qualification. This
+is not atomic commit, power-loss recovery or live-host recovery evidence.

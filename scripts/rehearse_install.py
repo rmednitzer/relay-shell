@@ -7,6 +7,7 @@ only a source-bound JSON receipt is exported. Production install.sh is unmodifie
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import http.client
 import json
@@ -248,7 +249,16 @@ def rehearse(output: Path) -> None:
             oauth_proof()
             service(True)
             mcp_proof()
+            active_refusal = run(installer)
+            if active_refusal.returncode == 0 or "must remain stopped" not in active_refusal.stdout:
+                raise RuntimeError("installer did not refuse an active service")
+            mcp_proof()
             service(False)
+            with Path("/run/relay-shell-installer/lock").open("w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked_refusal = run(installer)
+                if locked_refusal.returncode == 0 or "holds the lock" not in locked_refusal.stdout:
+                    raise RuntimeError("concurrent installer was not refused")
             attributes = run(["lsattr", "-d", str(LOG / "audit.jsonl")])
             append_only = attributes.returncode == 0 and "a" in attributes.stdout.split()[0]
             before = {str(path): inventory(path) for path in TARGETS}
@@ -298,6 +308,75 @@ def rehearse(output: Path) -> None:
                     raise RuntimeError("repeat installer changed retained state")
             if not list((PREFIX / "preinstall-backups").iterdir()):
                 raise RuntimeError("edited unit was not backed up")
+            # Ordinary failure and handled TERM restore state automatically. Late
+            # managed-file failure also repairs units modified before the failure.
+            automatic_targets = (
+                PREFIX / "venv",
+                CONFIG,
+                LOG,
+                UNIT,
+                DROPIN,
+                ROTATE,
+                PREFIX / "oauth",
+                PREFIX / ".ssh",
+            )
+            automatic_before = {str(path): inventory(path) for path in automatic_targets}
+            automatic = work / "automatic-shim"
+            automatic.mkdir()
+            automatic_sudo = automatic / "sudo"
+            automatic_install = automatic / "install"
+            for scenario in ("pip-error", "term", "managed-file-error"):
+                marker = work / scenario
+                automatic_sudo.write_text(
+                    "#!/bin/bash\n"
+                    "target=/var/lib/relay-shell/venv/bin/python\n"
+                    'if [[ "$*" == "-u relay-shell $target -m pip install '
+                    '--quiet --only-binary"* ]]; then\n'
+                    + (
+                        '    /usr/bin/sudo -u relay-shell "$target" -m pip '
+                        "uninstall -y mcp >/dev/null\n"
+                        + f"    touch {marker}\n"
+                        + (
+                            '    kill -TERM "$PPID"\n    exit 143\n'
+                            if scenario == "term"
+                            else "    exit 47\n"
+                        )
+                        if scenario != "managed-file-error"
+                        else "    :\n"
+                    )
+                    + 'fi\nexec /usr/bin/sudo "$@"\n'
+                )
+                automatic_install.write_text(
+                    "#!/bin/bash\n"
+                    + (
+                        'if [[ "${!#}" == /etc/logrotate.d/relay-shell ]]; then\n'
+                        f"    touch {marker}\n"
+                        "    printf '# synthetic partial unit replacement\\n' "
+                        "> /etc/systemd/system/relay-shell.service\n"
+                        "    exit 47\nfi\n"
+                        if scenario == "managed-file-error"
+                        else ""
+                    )
+                    + 'exec /usr/bin/install "$@"\n'
+                )
+                automatic_sudo.chmod(0o755)
+                automatic_install.chmod(0o755)
+                failure = run(installer, env={**os.environ, "PATH": f"{automatic}:/usr/bin:/bin"})
+                if failure.returncode == 0 or not marker.exists():
+                    raise RuntimeError("automatic recovery fault was not reached")
+                if "Prior runtime and configuration restored" not in failure.stdout:
+                    raise RuntimeError("installer did not report completed automatic restoration")
+                for path in automatic_targets:
+                    if inventory(path) != automatic_before[str(path)]:
+                        raise RuntimeError(
+                            f"automatic {scenario} recovery changed retained identity: {path}"
+                        )
+                checked(["sudo", "-u", "relay-shell", PYTHON, "-m", "pip", "check"])
+                oauth_proof()
+            retained = list(Path("/var/backups/relay-shell-installer").glob("install-*"))
+            if len(retained) != 3 or any(path.stat().st_mode & 0o077 for path in retained):
+                raise RuntimeError("failure snapshots were not retained privately")
+            # SIGKILL cannot execute traps; retain the explicit snapshot recovery proof.
             # Inject partial dependency replacement at the actual runtime pip boundary.
             shim = work / "shim"
             shim.mkdir()
@@ -310,8 +389,8 @@ if [[ "$*" == "-u relay-shell $target -m pip install --quiet --only-binary"* ]];
     touch "'''
                 + str(work / "injected")
                 + """"
-    kill -TERM "$PPID"
-    exit 143
+    kill -KILL "$PPID"
+    exit 137
 fi
 exec /usr/bin/sudo "$@"
 """
@@ -368,6 +447,9 @@ exec /usr/bin/sudo "$@"
                 ).hexdigest(),
                 "python": checked(["sudo", "-u", "relay-shell", PYTHON, "-V"]).strip(),
                 "fresh_install": "passed",
+                "active_service_and_concurrent_installer_refused": "passed",
+                "automatic_pip_error_term_managed_file_recovery": "passed",
+                "sigkill_explicit_snapshot_recovery": "passed",
                 "same_version_package_replacement": "passed",
                 "upgrade_scope": "repeat same-revision installer; no cross-version state migration",
                 "repeat_upgrade_state_preservation": "passed",
