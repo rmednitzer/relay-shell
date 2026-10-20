@@ -29,12 +29,11 @@ def test_every_checkout_drops_the_token() -> None:
     assert seen >= 8
 
 
-def test_ci_gate_distinguishes_a_missing_check_from_a_pending_one() -> None:
+def test_ci_gate_uses_paginated_snapshots_and_the_tested_evaluator() -> None:
     text = (WORKFLOWS / "ci-gate.yml").read_text(encoding="utf-8")
-    # `.check_runs[0]` is null when GitHub has no run by that name; without
-    # `// empty` the row was "\t" (non-empty) and "(missing)" could never fire.
-    assert "(.check_runs[0] // empty)" in text
-    assert "(missing)" in text
+    assert "--paginate --slurp" in text and "filter=all" in text
+    assert "python3 scripts/check_ci_checks.py" in text
+    assert "2) ;;" in text  # only the evaluator's explicit pending result is retried
 
 
 def test_ci_runs_the_caddy_routing_tests_and_the_privileged_seccomp_tests() -> None:

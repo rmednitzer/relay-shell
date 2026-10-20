@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Prepare Copilot with constrained dependencies and verified test discovery.
+- Evaluate required CI checks from one paginated snapshot per poll, accepting only
+  GitHub Actions checks for the requested head and the latest check attempt.
+
 - Keep release, SBOM and auxiliary tooling on tested Python 3.14; constrain Renovate
   interpreter updates below 3.15 until CI coverage and hashed tooling locks are ready.
 

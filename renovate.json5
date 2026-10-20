@@ -32,6 +32,30 @@
         "actions/python-versions"
       ],
       "allowedVersions": "<3.15"
+    },
+    {
+      "description": "Generated tooling outputs belong to pip-compile so version and hash regeneration stay coupled.",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchFileNames": [
+        "requirements-build.txt",
+        "requirements-sbom.txt"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Review complete hashed build and SBOM closure refreshes before integration.",
+      "matchManagers": [
+        "pip-compile"
+      ],
+      "automerge": false,
+      "platformAutomerge": false
     }
-  ]
+  ],
+  "pip-compile": {
+    "managerFilePatterns": [
+      "/^requirements-(?:build|sbom)\\.txt$/"
+    ]
+  }
 }
