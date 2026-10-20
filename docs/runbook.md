@@ -1151,13 +1151,32 @@ See [the query's threat model](https://codeql.github.com/codeql-query-help/actio
 The source admission path restricts dispatch to main, validates one canonical tag,
 requires an annotated SSH signature against the independently fetched protected-main
 signer file, binds the checked-out commit to that tag and requires main ancestry.
-Only the resulting immutable commit reaches the build job. Real signature and
-negative-path fixtures test these conditions. The three reports are individually
+Within the canonical workflow, only the resulting immutable commit reaches the
+build job. Real signature and negative-path fixtures test these conditions; they
+do not prove that a tag-controlled workflow cannot replace its own verifier.
+
+The independent outer control was observed through the GitHub ruleset API on
+2026-10-20: `release-tag-creators` (24913638) actively restricts creation of
+`refs/tags/v*` to the repository owner alone (one explicit User bypass actor).
+`release-tag-integrity` (24913096) actively refuses updates and deletion of those
+tags with no bypass actors. Ordinary repository writers and workflow tokens are
+not release-tag creators. Thus tag-push workflow authority depends on the trusted
+owner, not on self-validation of arbitrary collaborator-created tags. Main-only
+dispatch instead executes the protected-main workflow and admits the selected
+release commit through its verifier. These are separate trust arguments. The tag
+rules do not themselves enforce main ancestry or a signature, and the fixture
+tests do not establish server-side tag-rule rejection. Owner error/compromise or
+changes to the outer rules can invalidate the tag-push argument. The owner must
+verify the target and canonical workflow before creating a release tag.
+
+ The three reports are individually
 classified as false positives for the claimed **untrusted revision** path, rather
 than suppressed by query/path exclusions. This disposition assumes protected main
-and its signing authority remain trusted; it does not establish that reviewed code
+and its signing and owner-only tag-creation authorities remain trusted; it does not establish that reviewed code
 or hashed third-party dependencies cannot be malicious. Reopen if admission,
-protected-main signer custody, dispatch guards or checkout identity changes.
+protected-main signer custody, owner-only tag creation, tag integrity, dispatch
+guards or checkout identity changes. This is a dated settings observation, not
+a claim that workflow tests enforce those external rules.
 
 The main ruleset directly requires the three Python checks, gitleaks, pip-audit,
 dependency review, both CodeQL jobs and release-rehearsal alongside ci-success. Checks are bound to
