@@ -422,8 +422,8 @@ CI-config bug; fix that, not the test.
 
 ### 4.1a Hosted development and dependency ownership
 
-The Copilot setup workflow installs hash-locked build tooling, then the editable
-project using the same direct constraints as CI. It checks dependency consistency,
+The Copilot setup workflow installs the complete hash-locked development profile,
+then the editable project without resolving dependencies. It checks dependency consistency,
 linters and representative stdio/SSH test discovery without contacting a fleet.
 Runtime/development profiles lock the full dependency closure separately for
 Python 3.12, 3.13 and 3.14; the direct constraints remain regeneration inputs.
