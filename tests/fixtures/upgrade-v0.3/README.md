@@ -41,3 +41,7 @@ Rollback preserves the accepted audit tail and clears grants/codes before the ol
 service starts; snapshot tokens must not silently become usable again. This does
 not preserve every newer security policy or make the old release suitable for an
 operational downgrade. No operational hosts, clients, credentials or TLS are used.
+
+The current SDK revocation request model requires a `client_secret` field even
+for this public client. The fixture sends empty form text (no credential) and
+then verifies that both revoked access and refresh tokens are refused.

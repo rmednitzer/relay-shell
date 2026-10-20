@@ -582,7 +582,14 @@ def rehearse(output: Path, build_python: str, audit_report: Path) -> None:
                 status, _, _ = request(
                     "POST",
                     "/revoke",
-                    {"client_id": client, "token": rotated[key], "token_type_hint": key},
+                    # SDK revocation model requires this nullable field even for
+                    # a public client; empty form text carries no credential.
+                    {
+                        "client_id": client,
+                        "client_secret": "",
+                        "token": rotated[key],
+                        "token_type_hint": key,
+                    },
                     form=True,
                 )
                 if status != 200:
