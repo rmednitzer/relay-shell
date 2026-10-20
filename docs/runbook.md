@@ -1160,7 +1160,7 @@ or hashed third-party dependencies cannot be malicious. Reopen if admission,
 protected-main signer custody, dispatch guards or checkout identity changes.
 
 The main ruleset directly requires the three Python checks, gitleaks, pip-audit,
-dependency review and both CodeQL jobs alongside ci-success. Checks are bound to
+dependency review, both CodeQL jobs and release-rehearsal alongside ci-success. Checks are bound to
 the GitHub Actions app with strict freshness; no bypass actor is configured.
 The aggregate remains a convenience, not the authority for which dependencies are
 required. This prevents an aggregate-only edit from removing required coverage;
