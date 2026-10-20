@@ -189,8 +189,15 @@ jobs:
           # --no-build-isolation installs and `python -m build` use these exact
           # (not freshly resolved) hatchling/build/twine.
           python -m pip install --require-hashes -r "$RUNNER_TEMP/requirements-build.txt"
-          # Direct dependency pins from requirements.txt act as constraints.
-          python -m pip install --no-build-isolation -c requirements.txt -e ".[dev]"
+          if [ -r requirements/development-py3.14.txt ]; then
+            # Refuse disagreement with the workflow's independently selected build tools.
+            python -m pip install --only-binary=:all: --require-hashes -r requirements/development-py3.14.txt -c "$RUNNER_TEMP/requirements-build.txt"
+            python -m pip install --no-deps --no-build-isolation -e ".[dev]"
+          else
+            # Historical signed tags predate complete profiles; retain their documented recovery path.
+            python -m pip install --no-build-isolation -c requirements.txt -e ".[dev]"
+          fi
+          python -m pip check
 
       - name: Run full test suite
         run: pytest -q

@@ -1,12 +1,83 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "github>rmednitzer/infra:renovate-preset"
+    "config:best-practices",
+    ":semanticCommits",
+    "schedule:weekly"
   ],
-  "pre-commit": {
-    "enabled": true
+  "timezone": "Europe/Vienna",
+  "labels": [
+    "dependencies"
+  ],
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 2,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 5am on monday"
+    ],
+    "automerge": false,
+    "description": "Complete lock refreshes require review because they can change transitive dependencies across version boundaries."
   },
+  "vulnerabilityAlerts": {
+    "labels": [
+      "dependencies",
+      "security"
+    ],
+    "schedule": [
+      "at any time"
+    ],
+    "minimumReleaseAge": null,
+    "description": "Security remediation bypasses the routine update window and release-age delay; update-type review rules still apply."
+  },
+  "osvVulnerabilityAlerts": true,
   "packageRules": [
+    {
+      "description": "Permit non-major automerge only after required checks and a three-day release-age delay. The delay is not proof of compatibility or supply-chain integrity.",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pin",
+        "pinDigest"
+      ],
+      "automerge": true,
+      "platformAutomerge": true,
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Group all GitHub Actions updates so concurrent bumps do not collide on the same workflow files. separateMajorMinor is on by default, so majors still split into their own 'github-actions (major)' PR, which the major rule below labels and keeps out of automerge.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "github-actions"
+    },
+    {
+      "description": "Group non-major Python dependency updates into a single PR.",
+      "matchManagers": [
+        "pep621",
+        "pip_requirements",
+        "pip-compile",
+        "poetry",
+        "setup-cfg"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "python dependencies"
+    },
+    {
+      "description": "Major updates: separate, labelled, never automerged, across every manager. Majors already fail to match the automerge rule above, so automerge is false by default; it is stated for the same reason as lockFileMaintenance. This rule deliberately carries no matchManagers so that a major GitHub Actions, Docker, or Terraform bump is labelled for review like a major code dependency.",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false,
+      "labels": [
+        "dependencies",
+        "major-review"
+      ]
+    },
     {
       "description": "Group pre-commit hook updates into one PR.",
       "matchManagers": [
@@ -40,7 +111,9 @@
       ],
       "matchFileNames": [
         "requirements-build.txt",
-        "requirements-sbom.txt"
+        "requirements-sbom.txt",
+        "requirements-audit.txt",
+        "requirements/*.txt"
       ],
       "enabled": false
     },
@@ -53,12 +126,31 @@
       "platformAutomerge": false
     }
   ],
-  "pip-compile": {
-    "managerFilePatterns": [
-      "/^requirements-(?:build|sbom)\\.txt$/"
-    ]
-  },
   "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track exact Python package pins embedded in CI workflow commands.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "\\b(?<depName>[A-Za-z][A-Za-z0-9_.-]*)(?:\\[[A-Za-z0-9_,.-]+\\])?==(?<currentValue>\\d+\\.\\d+(?:\\.[0-9A-Za-z-]+)*)"
+      ],
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "customType": "regex",
+      "description": "Track exact npm CLI pins invoked through npx in CI workflows.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "npx\\s+(?:-y|--yes)\\s+(?:--package\\s+)?(?<depName>[A-Za-z0-9_.-]+)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "semver"
+    },
     {
       "customType": "regex",
       "description": "Track the Caddy prerequisite used by the real edge-routing CI tests.",
@@ -72,5 +164,16 @@
       "datasourceTemplate": "github-releases",
       "versioningTemplate": "semver"
     }
-  ]
+  ],
+  "pruneStaleBranches": true,
+  "pruneBranchAfterAutomerge": true,
+  "pre-commit": {
+    "enabled": true
+  },
+  "pip-compile": {
+    "managerFilePatterns": [
+      "/^requirements-(?:build|sbom|audit)\\.txt$/",
+      "/^requirements/(?:runtime|development)-py3\\.(?:12|13|14)\\.txt$/"
+    ]
+  }
 }
