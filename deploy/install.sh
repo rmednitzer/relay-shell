@@ -35,13 +35,34 @@ require_stopped() {
 }
 require_stopped || exit 1
 
+RECOVERY_ROOT=/var/backups/relay-shell-installer
+[ ! -L "$RECOVERY_ROOT" ] || die "recovery directory is a symlink"
+mkdir -p "$RECOVERY_ROOT"
+[ "$(stat -c %u "$RECOVERY_ROOT")" -eq 0 ] || die "recovery directory is not root-owned"
+chmod 0700 "$RECOVERY_ROOT"
+TRANSACTION_DRIVER="$SRC_DIR/scripts/installer_transaction.py"
+case "${1:-}" in
+    --recover)
+        [ "$#" -eq 1 ] || die "usage: install.sh [--recover]"
+        /usr/bin/python3 "$TRANSACTION_DRIVER" restore
+        systemctl daemon-reload
+        /usr/bin/python3 "$TRANSACTION_DRIVER" complete-restoration
+        log "Interrupted installation restored and verified; service remains stopped"
+        exit 0 ;;
+    "") [ "$#" -eq 0 ] || die "usage: install.sh [--recover]" ;;
+    *) die "usage: install.sh [--recover]" ;;
+esac
+if [ -e "$RECOVERY_ROOT/pending.json" ] || [ -L "$RECOVERY_ROOT/pending.json" ]; then
+    die "unfinished installation requires explicit recovery with install.sh --recover"
+fi
+
 BUILD_DIR=
 TRANSACTION=
 MUTATING=false
 TARGETS=("$PREFIX/venv" /etc/relay-shell /etc/systemd/system/relay-shell.service
          /etc/systemd/system/relay-shell.service.d /etc/logrotate.d/relay-shell)
 finish() {
-    local result=$? index target rollback_ok=true
+    local result=$? rollback_ok=true
     trap - EXIT
     trap '' HUP INT TERM
     if [ -n "$BUILD_DIR" ]; then
@@ -49,15 +70,10 @@ finish() {
     fi
     if [ "$result" -ne 0 ] && [ "$MUTATING" = true ]; then
         log "Installation failed; restoring prior runtime and managed configuration"
-        if require_stopped; then
-            for index in "${!TARGETS[@]}"; do
-                target=${TARGETS[$index]}
-                if ! rm -rf -- "$target"; then rollback_ok=false; continue; fi
-                if [ -e "$TRANSACTION/$index" ]; then
-                    cp -a -- "$TRANSACTION/$index" "$target" || rollback_ok=false
-                fi
-            done
-            systemctl daemon-reload || rollback_ok=false
+        if require_stopped && /usr/bin/python3 "$TRANSACTION_DRIVER" restore &&
+            systemctl daemon-reload &&
+            /usr/bin/python3 "$TRANSACTION_DRIVER" complete-restoration; then
+            rollback_ok=true
         else
             rollback_ok=false
         fi
@@ -68,6 +84,10 @@ finish() {
         fi
         log "Retained private recovery snapshot: $TRANSACTION"
     elif [ -n "$TRANSACTION" ]; then
+        if [ "$MUTATING" = true ] && ! /usr/bin/python3 "$TRANSACTION_DRIVER" complete; then
+            log "FATAL: transaction completion unresolved; retain snapshot: $TRANSACTION" >&2
+            exit 1
+        fi
         rm -rf -- "$TRANSACTION" || log "WARN: private snapshot cleanup incomplete: $TRANSACTION"
     fi
     exit "$result"
@@ -129,11 +149,6 @@ wheels=("$BUILD_DIR"/dist/*.whl)
 
 # Freeze only installer-owned runtime/configuration. Mutable auth, SSH and audit
 # state are not restored. /var/backups is outside the service-owned home.
-RECOVERY_ROOT=/var/backups/relay-shell-installer
-[ ! -L "$RECOVERY_ROOT" ] || die "recovery directory is a symlink"
-mkdir -p "$RECOVERY_ROOT"
-[ "$(stat -c %u "$RECOVERY_ROOT")" -eq 0 ] || die "recovery directory is not root-owned"
-chmod 0700 "$RECOVERY_ROOT"
 TRANSACTION=$(mktemp -d "$RECOVERY_ROOT/install-XXXXXXXX")
 printf '%s\n' "${TARGETS[@]}" >"$TRANSACTION/targets.txt"
 for index in "${!TARGETS[@]}"; do
@@ -145,6 +160,7 @@ for index in "${!TARGETS[@]}"; do
 done
 require_stopped || exit 1
 MUTATING=true
+/usr/bin/python3 "$TRANSACTION_DRIVER" begin "$TRANSACTION"
 log "Creating venv at $PREFIX/venv"
 if [ ! -x "$PREFIX/venv/bin/python" ]; then
     sudo -u relay-shell python3 -m venv "$PREFIX/venv"
