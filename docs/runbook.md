@@ -418,6 +418,32 @@ pytest -q
 A green local loop is the bar before pushing. A failure in CI only is a
 CI-config bug; fix that, not the test.
 
+### 4.1a Hosted development and dependency ownership
+
+The Copilot setup workflow installs hash-locked build tooling, then the editable
+project using the same direct constraints as CI. It checks dependency consistency,
+linters and representative stdio/SSH test discovery without contacting a fleet.
+The direct snapshot is not a complete transitive runtime lock. Copilot can continue
+when setup fails; report that failure and do not claim validation from setup alone.
+Privileged seccomp and Caddy routing acceptance remain in the existing CI matrix.
+
+Renovate owns dependency PRs. GitHub vulnerability alerts remain enabled as
+remediation input; Dependabot security-update PRs are disabled to avoid competing
+branches. The pip-compile manager owns requirements-build.txt and
+requirements-sbom.txt, including their recorded uv regeneration commands. Direct
+pip_requirements edits to those generated outputs are disabled, and complete
+tooling refreshes require review rather than automerge. A custom manager also
+tracks the embedded Caddy release pin used by the real edge-routing tests; the
+Go module checksum verification remains in force. Generated hashes must be reviewed
+with their inputs using section 6.6. A version edit alone does not refresh hashes.
+
+The required ci-success aggregate polls all pages of check results once per cycle.
+It accepts only GitHub Actions checks for the requested PR head and selects the
+latest check ID for each required name. Missing/in-progress work remains pending;
+failures, cancellations and unexpected skips refuse the merge. API/parse failures
+fail closed. The gate does not replace source review of workflows that define
+those names. Roll back through a reviewed PR, preserving the ci-success name.
+
 ### 4.2 Targeted runs
 
 ```bash
@@ -747,8 +773,8 @@ The hash-locked tooling files are generated, not hand-edited. To refresh after a
 bump (Renovate proposes updates; regenerate to keep transitive hashes consistent):
 
 ```bash
-uv pip compile requirements-build.in --generate-hashes --python-version 3.14 -o requirements-build.txt
-uv pip compile requirements-sbom.in  --generate-hashes --python-version 3.14 -o requirements-sbom.txt
+uv pip compile requirements-build.in --generate-hashes --python-version=3.14 --output-file=requirements-build.txt
+uv pip compile requirements-sbom.in  --generate-hashes --python-version=3.14 --output-file=requirements-sbom.txt
 pytest -q tests/test_release_workflows.py   # pins shared with requirements.txt must agree
 ```
 

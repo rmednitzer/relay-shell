@@ -28,82 +28,34 @@ jobs:
       # result is an explicitly valid outcome for that protected dependency.
       ALLOWED_SKIPPED_CHECKS: ""
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Require protected checks to pass
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-
-          mapfile -t required <<< "${REQUIRED_CHECKS}"
-          mapfile -t allowed_skipped <<< "${ALLOWED_SKIPPED_CHECKS}"
-
-          is_allowed_skipped() {
-            local candidate="$1"
-            local item
-            for item in "${allowed_skipped[@]}"; do
-              [ -n "$item" ] && [ "$candidate" = "$item" ] && return 0
-            done
-            return 1
-          }
-
+          snapshot=$(mktemp)
+          trap 'rm -f "$snapshot"' EXIT
           deadline=$((SECONDS + 1500))
-          tab="$(printf '\t')"
-
           while :; do
-            pending=()
-            failed=()
-
-            for name in "${required[@]}"; do
-              [ -n "$name" ] || continue
-
-              row="$(
-                gh api --method GET \
-                  "repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/check-runs" \
-                  -f check_name="$name" \
-                  -f filter=latest \
-                  -F per_page=1 \
-                  --jq '(.check_runs[0] // empty) | [.status, (.conclusion // "")] | @tsv'
-              )"
-
-              if [ -z "$row" ]; then
-                pending+=("$name (missing)")
-                continue
-              fi
-
-              IFS="$tab" read -r status conclusion <<< "$row"
-
-              if [ "$status" != "completed" ]; then
-                pending+=("$name ($status)")
-                continue
-              fi
-
-              if [ "$conclusion" = "success" ]; then
-                continue
-              fi
-
-              if [ "$conclusion" = "skipped" ] && is_allowed_skipped "$name"; then
-                continue
-              fi
-
-              failed+=("$name ($conclusion)")
-            done
-
-            if [ "${#failed[@]}" -gt 0 ]; then
-              printf '::error::Protected dependency failed: %s\n' "${failed[*]}"
-              exit 1
-            fi
-
-            if [ "${#pending[@]}" -eq 0 ]; then
-              echo "All protected dependencies passed."
-              exit 0
-            fi
-
+            # One paginated snapshot per poll, rather than one API call per name.
+            # An API failure is a failure, never an empty/successful snapshot.
+            gh api --method GET --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/check-runs" \
+              -f filter=all -F per_page=100 > "$snapshot"
+            result=0
+            python3 scripts/check_ci_checks.py < "$snapshot" || result=$?
+            case "$result" in
+              0) exit 0 ;;
+              2) ;;
+              *) echo '::error::Protected dependency failed or snapshot invalid'; exit 1 ;;
+            esac
             if [ "$SECONDS" -ge "$deadline" ]; then
-              printf '::error::Timed out waiting for protected dependencies: %s\n' "${pending[*]}"
+              echo '::error::Timed out waiting for protected dependencies'
               exit 1
             fi
-
-            printf 'Waiting for protected dependencies: %s\n' "${pending[*]}"
             sleep 10
           done

@@ -32,6 +32,45 @@
         "actions/python-versions"
       ],
       "allowedVersions": "<3.15"
+    },
+    {
+      "description": "Generated tooling outputs belong to pip-compile so version and hash regeneration stay coupled.",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchFileNames": [
+        "requirements-build.txt",
+        "requirements-sbom.txt"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Review complete hashed build and SBOM closure refreshes before integration.",
+      "matchManagers": [
+        "pip-compile"
+      ],
+      "automerge": false,
+      "platformAutomerge": false
+    }
+  ],
+  "pip-compile": {
+    "managerFilePatterns": [
+      "/^requirements-(?:build|sbom)\\.txt$/"
+    ]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track the Caddy prerequisite used by the real edge-routing CI tests.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/ci\\.yml$/"
+      ],
+      "matchStrings": [
+        "go install github\\.com/caddyserver/caddy/v2/cmd/caddy@(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "depNameTemplate": "caddyserver/caddy",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver"
     }
   ]
 }
