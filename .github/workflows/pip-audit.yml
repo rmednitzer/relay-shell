@@ -62,4 +62,8 @@ jobs:
         # requirements-build.txt / requirements-sbom.txt feed the jobs that build,
         # sign and publish (A14-D7); they are not part of the package's own tree, so
         # audit them explicitly. They are fully pinned, so no resolution is needed.
-        run: .audit-tool/bin/pip-audit --disable-pip --no-deps -r requirements-build.txt -r requirements-sbom.txt -r requirements-audit.txt
+        run: |
+          .audit-tool/bin/pip-audit --disable-pip --no-deps -r requirements-build.txt
+          .audit-tool/bin/pip-audit --disable-pip --no-deps -r requirements-sbom.txt
+          .audit-tool/bin/pip-audit --disable-pip --no-deps -r requirements-audit.txt
+
