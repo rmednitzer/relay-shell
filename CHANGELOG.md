@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Require underlying CI checks directly in repository settings and add a read-only,
+  non-publishing release/SBOM and complete-runtime recovery rehearsal.
+- Test signed-tag admission with real synthetic signatures; reject multiline tag
+  inputs and require checkout/tag identity before admitting release code.
+- Record individual release CodeQL dispositions and reconcile closed lock/policy gaps.
+
 - Add complete hashed runtime/development profiles for Python 3.12–3.14 and use
   them in CI, Copilot, installer and current release/SBOM preparation.
 - Isolate and hash-lock the audit tool environment; retain fresh advisory queries.

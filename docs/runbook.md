@@ -894,8 +894,6 @@ mode is on.
 
 Open (owner or repository-settings actions, tracked in `BACKLOG.md`):
 
-- **A14-D12**: add `Analyze (actions)` to the ruleset's required checks.
-- **A14-D14**: superseded by repository-owned Renovate policy and complete dependency profiles; no external project preset remains.
 - **A14-X1**: the owner checks `.env.example` against `Settings` (drop the mention of a
   nonexistent `--require-genesis` flag, confirm `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS`,
   reword `RELAY_SHELL_DEFAULT_TIMEOUT`); agent sessions may not read the file.
@@ -904,6 +902,8 @@ Closed:
 
 | ID | What | Record |
 |----|------|--------|
+| A14-D12 | Underlying CI dependencies are required directly by the main ruleset, independently of the PR-owned aggregate; Actions app binding and strict freshness retained | 2026-10-20 settings verification |
+| A14-D14 / L8 | Complete runtime/development locks and repository-owned Renovate policy; no external project preset remains | PR #238 |
 | B-022 | sshpool fault-injection tests; coverage floor 90% (baseline ~92%) | CHANGELOG |
 | QUAL-1 | Observable asserts on the five seccomp termination tests (PR #89) | `BACKLOG.md` (2026-06-12) |
 | REL-1 | `/metrics` tests moved from `starlette.testclient` to httpx `ASGITransport`; default suite at zero warnings (PR #92) | `BACKLOG.md` (2026-06-12) |
@@ -1101,3 +1101,68 @@ builder/tool environments and operator-controlled recovery before activation.
 The scope remains package preparation; transport authority, audit and no-sandbox
 runtime posture are unchanged. CI covers profile installation, packaging and
 preflight refusal; operational restore acceptance remains deployment-specific.
+
+
+### Release preparation and recovery rehearsal
+
+`release-rehearsal` runs on PRs and main with a read-only token, without shared
+caches, signing or publishing rights. `scripts/rehearse_release.py` archives the
+committed source into a disposable directory and executes the named release
+install/build/distribution-check and SBOM preparation/generation shell steps
+verbatim. It uses Python 3.14 and the same workflow-revision tooling locks.
+The normal three-version CI matrix runs the full test suite; the rehearsal does
+not run it again. Its receipt binds source, interpreter, distribution/SBOM hashes
+and the restoration results. Workflow artifacts retain the receipt and outputs.
+
+To repeat without publishing, from a committed checkout with the hashed development
+profile installed, run:
+
+```bash
+python scripts/rehearse_release.py --output /tmp/relay-release-rehearsal-result
+```
+
+Choose a new output directory. The rehearsal snapshots the complete runtime venv,
+removes MCP to model partial dependency replacement, requires dependency failure,
+and restores the snapshot at the original absolute path. It checks every saved
+file and symlink before verifying dependencies and importing the server. Venvs
+are not generally relocatable. This establishes disposable package-environment
+recovery only: no service account, systemd activation, configuration, audit state,
+live requests, cross-host restore or atomic installer rollback is qualified.
+An operator must still preserve and restore deployment-specific state before
+activation; failed installation must not be treated as permission to restart.
+
+Release tag admission is exercised independently using ephemeral SSH keys and
+local Git remotes. Tests execute the workflow's actual resolver and verifier:
+trusted signed main ancestry is accepted; unsigned/lightweight tags, foreign
+signers (including a substituted checkout trust file), outside-main commits,
+checkout/tag mismatch and multiline output injection are refused. All generated
+keys and tags are synthetic and local; no release tag is created by these tests.
+
+### Release CodeQL disposition and merge enforcement
+
+CodeQL alerts 4, 5 and 6 report `actions/cache-poisoning/poisonable-step` for the
+release install, test and build steps after the dynamic release-commit checkout.
+The relevant risk includes stealing the runner cache token even when no explicit
+cache action is present; disabling pip caching alone is not a sufficient argument.
+See [the query's threat model](https://codeql.github.com/codeql-query-help/actions/actions-cache-poisoning-poisonable-step/).
+
+The source admission path restricts dispatch to main, validates one canonical tag,
+requires an annotated SSH signature against the independently fetched protected-main
+signer file, binds the checked-out commit to that tag and requires main ancestry.
+Only the resulting immutable commit reaches the build job. Real signature and
+negative-path fixtures test these conditions. The three reports are individually
+classified as false positives for the claimed **untrusted revision** path, rather
+than suppressed by query/path exclusions. This disposition assumes protected main
+and its signing authority remain trusted; it does not establish that reviewed code
+or hashed third-party dependencies cannot be malicious. Reopen if admission,
+protected-main signer custody, dispatch guards or checkout identity changes.
+
+The main ruleset directly requires the three Python checks, gitleaks, pip-audit,
+dependency review and both CodeQL jobs alongside ci-success. Checks are bound to
+the GitHub Actions app with strict freshness; no bypass actor is configured.
+The aggregate remains a convenience, not the authority for which dependencies are
+required. This prevents an aggregate-only edit from removing required coverage;
+it does not make PR-edited workflows immutable or establish independent human
+review. Zero required approvals and CODEOWNERS enforcement remain separate policy
+choices. Restore settings only from a reviewed prior ruleset, preserving required
+check identity; removing an aggregate is not an equivalent rollback.

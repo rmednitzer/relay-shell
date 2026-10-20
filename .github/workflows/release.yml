@@ -6,8 +6,8 @@ name: release
 #   1. verify     - the tag is annotated, SSH-signed against the trusted key
 #                   in deploy/release-signing.pub, and matches the version
 #                   declared in pyproject.toml
-#   2. build      - dev install (direct pins from requirements.txt as
-#                   constraints), full test suite on Python 3.14 (per-PR CI
+#   2. build      - complete hashed development profile (historical tags retain
+#                   direct constraints), full test suite on Python 3.14 (per-PR CI
 #                   exercises the 3.12-3.14 matrix), then `python -m build`
 #                   to produce wheel + sdist. Build tooling comes from the
 #                   hash-locked requirements-build.txt and the build runs with
@@ -67,7 +67,7 @@ jobs:
           else
             tag="${REF#refs/tags/}"
           fi
-          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([+.\-].+)?$'; then
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "ERROR: $tag does not match the v<MAJOR>.<MINOR>.<PATCH> pattern" >&2
             exit 1
           fi
@@ -117,6 +117,7 @@ jobs:
           fi
           release_commit=$(git rev-list -n1 "${TAG}^{}")
           test -n "$release_commit"
+          test "$(git rev-parse HEAD)" = "$release_commit"
           # A tag is not an authority for its own signer trust anchor.
           # Fetch the protected default branch independently and require the
           # tagged commit to have passed the main-branch merge gate.
