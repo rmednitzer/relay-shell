@@ -787,7 +787,8 @@ automatic rollback. It preserves EnvironmentFiles and backs up replaced managed
 templates, but those copies alone are not a complete recovery set.
 
 The required release rehearsal runs the actual installer on an empty disposable
-hosted VM. It checks fresh/repeat installation, injected partial dependency
+hosted VM. It checks fresh/repeat installation, replacement of deliberately changed
+installed module bytes at the same package version, injected partial dependency
 replacement, complete original-path snapshot restoration, dependency consistency,
 synthetic OAuth token loading, MCP shell execution and continued audit chaining.
 `scripts/rehearse_install.py` refuses existing relay-shell paths/accounts and is
@@ -798,5 +799,6 @@ run `pip check`, verify audit segments against retained off-host anchors, restor
 filesystem append-only flags where supported, and review unit/template drift.
 Then test authentication and representative tool execution under the restored
 identity. A valid local audit prefix alone does not establish that no tail was
-lost. Live-host recovery, real OAuth issuance/refresh, edge TLS, off-host custody
+lost. Live-host recovery, cross-version state migration, real OAuth issuance/refresh,
+edge TLS, off-host custody
 and full-host disaster recovery remain separately qualified.

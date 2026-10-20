@@ -32,7 +32,9 @@ existing event cap still bounds emission; every notification receives CONTINUE.
 
 Extend the required release rehearsal with the actual installer on a fresh
 GitHub-hosted disposable VM, using synthetic configuration/OAuth/SSH/audit state.
-Test a repeat upgrade, inject partial dependency loss at the runtime-install
+Force reinstall the locally built wheel without resolving dependencies so a
+same-version source change cannot silently retain old bytes. Test a repeat
+installation after deliberately altering the installed module, inject partial dependency loss at the runtime-install
 boundary, detect failure, restore complete state at its original absolute paths,
 and verify dependency consistency, OAuth token loading, MCP shell execution and
 continued audit chaining. Refuse pre-existing paths/accounts and occupied ports.

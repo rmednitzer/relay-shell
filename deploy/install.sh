@@ -73,7 +73,7 @@ wheels=("$BUILD_DIR"/dist/*.whl)
 sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip install --quiet \
     --only-binary=:all: --require-hashes -r "$RUNTIME_LOCK"
 sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip install --quiet \
-    --no-index --no-deps "${wheels[0]}"
+    --no-index --no-deps --force-reinstall "${wheels[0]}"
 sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip check
 
 log "Audit log directory"

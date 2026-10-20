@@ -254,8 +254,38 @@ def rehearse(output: Path) -> None:
             snapshot.mkdir(mode=0o700)
             for index, path in enumerate(TARGETS):
                 checked(["cp", "-a", str(path), str(snapshot / str(index))])
+            # A same-version source upgrade must replace installed package bytes.
+            module = Path(
+                checked(
+                    [
+                        "sudo",
+                        "-u",
+                        "relay-shell",
+                        PYTHON,
+                        "-c",
+                        "import relay_shell; print(relay_shell.__file__)",
+                    ]
+                ).strip()
+            )
+            module_hash = hashlib.sha256(module.read_bytes()).hexdigest()
+            checked(
+                [
+                    "sudo",
+                    "-u",
+                    "relay-shell",
+                    PYTHON,
+                    "-c",
+                    "import relay_shell; from pathlib import Path; "
+                    "p=Path(relay_shell.__file__); "
+                    "p.write_text(p.read_text() + '# synthetic installed drift\\n')",
+                ]
+            )
+            if hashlib.sha256(module.read_bytes()).hexdigest() == module_hash:
+                raise RuntimeError("installed-module drift control was not applied")
             # Actual repeat installer: preserve env/OAuth/audit, back up edited unit.
             checked(installer)
+            if hashlib.sha256(module.read_bytes()).hexdigest() != module_hash:
+                raise RuntimeError("same-version reinstall retained stale package bytes")
             for path in (CONFIG, LOG, PREFIX / "oauth", PREFIX / ".ssh"):
                 expected = (
                     before[str(path)]
@@ -336,6 +366,8 @@ exec /usr/bin/sudo "$@"
                 ).hexdigest(),
                 "python": checked(["sudo", "-u", "relay-shell", PYTHON, "-V"]).strip(),
                 "fresh_install": "passed",
+                "same_version_package_replacement": "passed",
+                "upgrade_scope": "repeat same-revision installer; no cross-version state migration",
                 "repeat_upgrade_state_preservation": "passed",
                 "partial_runtime_interruption_detected": True,
                 "restored_content_modes_owners_symlinks_identical": True,
