@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import stat
 from pathlib import Path
 from types import SimpleNamespace
@@ -73,3 +74,33 @@ def test_metadata_reader_rejects_nonregular_unowned_and_oversized_files() -> Non
         info.st_mode, info.st_uid, info.st_size = mode, uid, size
         with pytest.raises(ValueError, match="metadata"):
             transaction.read_json(path, 1024)
+
+
+def test_manifest_binds_ordered_target_paths_and_schema() -> None:
+    paths = [str(path) for path in transaction.TARGETS]
+    snapshots = [None] * len(paths)
+    manifest = {"schema": 1, "targets": paths, "snapshots": snapshots}
+    assert transaction.validate_manifest(manifest) == snapshots
+    for changed in [list(reversed(paths)), ["/different", *paths[1:]]]:
+        with pytest.raises(ValueError, match="target mapping"):
+            transaction.validate_manifest(dict(manifest, targets=changed))
+    with pytest.raises(ValueError, match="schema"):
+        transaction.validate_manifest(dict(manifest, schema=True))
+    with pytest.raises(ValueError, match="incomplete"):
+        transaction.validate_manifest(dict(manifest, snapshots=snapshots[:-1]))
+
+
+def test_atomic_writer_rejects_oversize_before_publishing(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    value = {"synthetic": "é"}
+    size = len((json.dumps(value, sort_keys=True) + "\n").encode())
+    with pytest.raises(ValueError, match="reader bound"):
+        transaction.atomic_json(path, value, bound=size - 1)
+    assert not path.exists()
+    assert not list(tmp_path.iterdir())
+    transaction.atomic_json(path, value, bound=size)
+    before = path.read_bytes()
+    assert len(before) == size and json.loads(before) == value
+    with pytest.raises(ValueError, match="reader bound"):
+        transaction.atomic_json(path, {"synthetic": "longer" * 10}, bound=size)
+    assert path.read_bytes() == before

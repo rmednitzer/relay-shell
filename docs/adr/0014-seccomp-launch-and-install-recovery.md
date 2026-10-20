@@ -173,3 +173,8 @@ this detects corruption and ambiguity, not malicious root replacement. Real powe
 loss, storage failure, host rebuild and live operational recovery remain unqualified.
 Revert before deployment to remove these commands; never bypass a pending record
 or discard its evidence merely to allow a new installation.
+
+Review refinement: the sealed manifest includes the ordered absolute target mapping;
+recovery rejects even a same-sized reordered/replaced target contract. Apply the
+reader's byte bound to serialized metadata before publication, so an oversized
+snapshot cannot become an unresolved transaction that the reader can never admit.

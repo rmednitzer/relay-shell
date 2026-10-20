@@ -20,6 +20,7 @@ from typing import Any
 
 ROOT = Path("/var/backups/relay-shell-installer")
 PENDING = ROOT / "pending.json"
+MANIFEST_BOUND = 32 * 1024 * 1024
 TARGETS = (
     Path("/var/lib/relay-shell/venv"),
     Path("/etc/relay-shell"),
@@ -80,12 +81,14 @@ def read_json(path: Path, bound: int) -> Any:
     return json.loads(path.read_text())
 
 
-def atomic_json(path: Path, value: Any) -> None:
+def atomic_json(path: Path, value: Any, *, bound: int) -> None:
+    payload = (json.dumps(value, sort_keys=True) + "\n").encode()
+    if len(payload) > bound:
+        raise ValueError("generated transaction metadata exceeds reader bound")
     descriptor, temporary = tempfile.mkstemp(prefix=".transaction-", dir=path.parent)
     try:
-        with os.fdopen(descriptor, "w") as stream:
-            json.dump(value, stream, sort_keys=True)
-            stream.write("\n")
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
         Path(temporary).replace(path)
@@ -122,11 +125,32 @@ def begin(path: Path) -> None:
         if saved != inventory(target):
             raise ValueError("snapshot differs from original target")
         snapshots.append(saved)
-    atomic_json(path / "manifest.json", {"schema": 1, "snapshots": snapshots})
+    atomic_json(
+        path / "manifest.json",
+        {"schema": 1, "targets": [str(target) for target in TARGETS], "snapshots": snapshots},
+        bound=MANIFEST_BOUND,
+    )
     subprocess.run(["/usr/bin/sync", "-f", str(path)], check=True, timeout=120)
     atomic_json(
-        PENDING, {"transaction": path.name, "manifest_sha256": digest(path / "manifest.json")}
+        PENDING,
+        {"transaction": path.name, "manifest_sha256": digest(path / "manifest.json")},
+        bound=1024,
     )
+
+
+def validate_manifest(manifest: Any) -> list[Any]:
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != {"schema", "targets", "snapshots"}
+        or type(manifest.get("schema")) is not int
+        or manifest["schema"] != 1
+        or manifest["targets"] != [str(target) for target in TARGETS]
+    ):
+        raise ValueError("unsupported transaction schema or target mapping")
+    snapshots = manifest["snapshots"]
+    if not isinstance(snapshots, list) or len(snapshots) != len(TARGETS):
+        raise ValueError("incomplete transaction manifest")
+    return snapshots
 
 
 def pending() -> tuple[Path, list[Any]]:
@@ -137,19 +161,10 @@ def pending() -> tuple[Path, list[Any]]:
     if not isinstance(name, str):
         raise ValueError("malformed pending identity")
     path = transaction_path(name)
-    manifest = read_json(path / "manifest.json", 32 * 1024 * 1024)
+    manifest = read_json(path / "manifest.json", MANIFEST_BOUND)
     if digest(path / "manifest.json") != record["manifest_sha256"]:
         raise ValueError("snapshot manifest integrity changed")
-    if (
-        not isinstance(manifest, dict)
-        or set(manifest) != {"schema", "snapshots"}
-        or type(manifest.get("schema")) is not int
-        or manifest["schema"] != 1
-    ):
-        raise ValueError("unsupported transaction manifest")
-    snapshots = manifest.get("snapshots")
-    if not isinstance(snapshots, list) or len(snapshots) != len(TARGETS):
-        raise ValueError("incomplete transaction manifest")
+    snapshots = validate_manifest(manifest)
     for index, saved in enumerate(snapshots):
         if inventory(path / str(index)) != saved:
             raise ValueError("sealed snapshot integrity changed")
