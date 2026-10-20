@@ -65,6 +65,8 @@ jobs:
         if: matrix.python-version == '3.13'
         env:
           GOBIN: ${{ runner.temp }}/caddy-bin
+          # Avoid checksum-service HTTP/2 stream failures; TLS and Go sums stay enabled.
+          GODEBUG: http2client=0
         run: |
           command -v go
           go install github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.7
