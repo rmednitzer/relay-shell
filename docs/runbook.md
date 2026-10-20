@@ -771,8 +771,8 @@ The hash-locked tooling files are generated, not hand-edited. To refresh after a
 bump (Renovate proposes updates; regenerate to keep transitive hashes consistent):
 
 ```bash
-uv pip compile requirements-build.in --generate-hashes --python-version 3.14 -o requirements-build.txt
-uv pip compile requirements-sbom.in  --generate-hashes --python-version 3.14 -o requirements-sbom.txt
+uv pip compile requirements-build.in --generate-hashes --python-version=3.14 --output-file=requirements-build.txt
+uv pip compile requirements-sbom.in  --generate-hashes --python-version=3.14 --output-file=requirements-sbom.txt
 pytest -q tests/test_release_workflows.py   # pins shared with requirements.txt must agree
 ```
 
