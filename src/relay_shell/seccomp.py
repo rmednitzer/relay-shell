@@ -26,10 +26,11 @@ no local child (``asyncssh`` runs in-process), so nothing is observed there.
 Linux + ``x86_64`` only; any other platform or arch, or a kernel below 5.5,
 reports ``supported=False`` and no-ops.
 
-Everything here is fail-open for the child: if the filter cannot be
-installed, the handshake fails, or the supervisor dies, the child runs
-unfiltered and the audit pipeline records the gap as degraded; a tool call
-is never broken.
+Filter-installation refusal leaves the target unfiltered and records degraded
+auditing. Once installed, the filter requires a live supervisor to answer
+CONTINUE: losing every listener makes notified syscalls fail with ENOSYS, rather
+than removing the filter. Detached handoff reduces this gap but has a finite cap;
+this audit channel is not an availability-independent observer.
 """
 
 from __future__ import annotations
@@ -665,9 +666,9 @@ async def _await_owned[T](task: asyncio.Task[T]) -> T:
 class SeccompMonitor:
     """Installs the filter on one child and supervises its notifications.
 
-    Single-use and fail-open: at most one child is audited per monitor; any
-    failure on the seccomp path lets the child run unfiltered and reports a
-    degraded gap. Arming starts the supervisor before the isolated launcher
+    Single-use: at most one child is audited per monitor. Filter-installation
+    refusal leaves the child unfiltered; an installed filter depends on listener
+    availability. Arming starts the supervisor before the isolated launcher
     installs the filter; no Python post-fork callback is used.
     """
 
@@ -834,8 +835,9 @@ class SeccompMonitor:
 
         Phase 1 waits (interruptibly) for the child's handshake datagram;
         phase 2 answers CONTINUE for every notification and audits up to the
-        per-call cap. Fail-open throughout: a missing handshake or any ioctl
-        error ends the thread and the child keeps running.
+        per-call cap. A missing handshake or ioctl error records a gap. After
+        filter installation, continued child execution depends on a listener;
+        stop() hands surviving holders to the bounded detached server.
         """
         listener = self._handshake()
         if self._psock is not None:

@@ -393,9 +393,10 @@ family, `mount`/`umount2`, `unshare`/`setns`, `chroot`/`pivot_root`,
 `ptrace`, write-`open`/`openat`, `creat`, every `openat2`, and `prctl` for privilege-relevant options
 such as `PR_SET_SECUREBITS` / `PR_CAP_AMBIENT` / `PR_SET_NO_NEW_PRIVS`), and
 a supervisor appends one `syscall_notify` line per observed call to the same
-JSONL stream (it extends the §6a hash chain when that is on). It **never
-blocks** a syscall (the supervisor always answers CONTINUE), so ADR 0002's
-no-sandbox posture is unchanged. For a PTY session the filter rides the
+JSONL stream (it extends the §6a hash chain when that is on). It never intentionally denies a syscall: the supervisor answers CONTINUE.
+The kernel still waits for that answer; losing all listeners produces ENOSYS,
+and the detached-listener cap remains finite. This is an audit aid, not an
+availability-independent observer or a sandbox. For a PTY session the filter rides the
 session child (and everything it forks) for the session's whole life, and
 events carry the spawning call's `request_id`. SSH sessions have no local
 child (`asyncssh` runs in-process), so nothing is observed (or missed)
