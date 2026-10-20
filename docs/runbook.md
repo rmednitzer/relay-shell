@@ -1135,7 +1135,9 @@ Release tag admission is exercised independently using ephemeral SSH keys and
 local Git remotes. Tests execute the workflow's actual resolver and verifier:
 trusted signed main ancestry is accepted; unsigned/lightweight tags, foreign
 signers (including a substituted checkout trust file), outside-main commits,
-checkout/tag mismatch and multiline output injection are refused. All generated
+checkout/tag mismatch and multiline output injection are refused. SBOM generation
+also refuses a component/tag version mismatch using normalized package versions;
+it no longer publishes after merely warning about that identity failure. All generated
 keys and tags are synthetic and local; no release tag is created by these tests.
 
 ### Release CodeQL disposition and merge enforcement

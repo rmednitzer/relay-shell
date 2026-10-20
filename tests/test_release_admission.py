@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -127,3 +129,42 @@ def test_signed_tag_admission_uses_protected_main_trust(tmp_path: Path, case: st
         assert (tmp_path / "outputs").read_text() == f"release_commit={git('rev-parse', 'HEAD')}\n"
     else:
         assert not (tmp_path / "outputs").exists()
+
+
+@pytest.mark.parametrize(
+    ("version", "tag", "accepted"),
+    [
+        ("0.4.0", "v0.4.0", True),
+        ("0.4.0rc1", "v0.4.0-rc.1", True),
+        ("0.4.0", "v0.4.1", False),
+        ("0.0.1", "v0.0.2", False),
+    ],
+)
+def test_sbom_admission_requires_matching_release_version(
+    tmp_path: Path, version: str, tag: str, accepted: bool
+) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/sbom.yml").read_text())
+    step = next(
+        s["run"]
+        for s in workflow["jobs"]["sbom"]["steps"]
+        if s.get("name") == "Generate CycloneDX SBOM"
+    )
+    script = step.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    sbom = tmp_path / "sbom.json"
+    sbom.write_text(
+        json.dumps(
+            {
+                "specVersion": "1.5",
+                "components": [
+                    {"name": "mcp", "version": "2.3.0"},
+                    {"name": "relay-shell", "version": version},
+                ],
+            }
+        )
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(sbom), tag], capture_output=True, text=True, timeout=5
+    )
+    assert (result.returncode == 0) == accepted
+    if not accepted:
+        assert "SBOM_RELEASE_IDENTITY_REFUSED" in result.stderr

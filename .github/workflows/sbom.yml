@@ -159,23 +159,19 @@ jobs:
             .sbom-venv/bin/python
           # Sanity: the SBOM must contain the relay-shell component and
           # the version that triggered the workflow.
-          python - "$OUT_JSON" "$TAG_NAME" <<'PY'
-          import json, re, sys
+          .sbom-tool/bin/python - "$OUT_JSON" "$TAG_NAME" <<'PY'
+          import json, sys
+          from packaging.version import Version
           path, tag = sys.argv[1], sys.argv[2]
           data = json.load(open(path))
-          assert data.get("specVersion") == "1.5", f"unexpected spec {data.get('specVersion')}"
+          if data.get("specVersion") != "1.5":
+              raise SystemExit("SBOM_SPEC_REFUSED")
           comps = {c.get("name"): c.get("version") for c in data.get("components", [])}
-          assert "mcp" in comps, "SBOM missing core dependency 'mcp'"
-          # Tag is like v0.2.0; allow either match or just presence of relay-shell.
-          # The package may appear with name 'relay-shell' or 'relay_shell'.
+          if "mcp" not in comps:
+              raise SystemExit("SBOM_RUNTIME_REFUSED")
           rs = comps.get("relay-shell") or comps.get("relay_shell")
-          assert rs is not None, "SBOM missing relay-shell component"
-          stripped = re.sub(r"^v", "", tag)
-          if stripped and not stripped.startswith("0.0"):
-              # Best-effort: warn but do not fail when running workflow_dispatch
-              # against a non-canonical tag.
-              if rs != stripped:
-                  print(f"::warning::relay-shell version in SBOM ({rs}) does not match tag ({tag})")
+          if rs is None or Version(rs) != Version(tag.removeprefix("v")):
+              raise SystemExit("SBOM_RELEASE_IDENTITY_REFUSED")
           print(f"SBOM OK: relay-shell={rs}, components={len(comps)}")
           PY
 
