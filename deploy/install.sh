@@ -34,10 +34,13 @@ install_managed() {
 
 # Refuse an unsupported/missing profile before changing accounts or installation state.
 INSTALL_PYTHON=python3
+PROBE_PYTHON=(python3)
 if [ -x "$PREFIX/venv/bin/python" ]; then
     INSTALL_PYTHON="$PREFIX/venv/bin/python"
+    # The existing interpreter is service-owned and must never execute as root.
+    PROBE_PYTHON=(sudo -u relay-shell "$INSTALL_PYTHON")
 fi
-PYTHON_PROFILE=$("$INSTALL_PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+PYTHON_PROFILE=$("${PROBE_PYTHON[@]}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 case "$PYTHON_PROFILE" in
     3.12|3.13|3.14) ;;
     *) die "no qualified dependency lock for Python $PYTHON_PROFILE" ;;

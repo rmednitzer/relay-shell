@@ -1068,7 +1068,8 @@ Deploy from an independently supervised transaction with the previous complete r
 ## Locked installation and recovery (2026-10-20)
 
 The installer selects the existing venv interpreter, or system Python for a new
-installation, and requires its qualified runtime lock before account/environment
+installation, probes a service-owned interpreter only as the service account,
+and requires its qualified runtime lock before account/environment
 changes. It builds the wheel as the service account in a disposable venv using
 hash-locked build tools. Only the matching runtime closure and built wheel enter
 the service venv; no pip upgrade, dependency resolution or source-build fallback
