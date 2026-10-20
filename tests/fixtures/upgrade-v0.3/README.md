@@ -45,3 +45,9 @@ operational downgrade. No operational hosts, clients, credentials or TLS are use
 The current SDK revocation request model requires a `client_secret` field even
 for this public client. The fixture sends empty form text (no credential) and
 then verifies that both revoked access and refresh tokens are refused.
+
+The known advisory must remain present exactly once. Its complete reviewed audit
+description is frozen in `advisory-description.txt`, with its hash in the baseline
+manifest. Missing findings or any description change require renewed review.
+The target runtime must match every distribution and version in its lock plus
+the application; only the venv bootstrap tool pip is exempt.

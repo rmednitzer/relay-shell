@@ -56,6 +56,8 @@ def manifest(directory: Path) -> dict[str, object]:
         raise ValueError("baseline dependency profile changed without review")
     if digest(directory / "runtime.in") != data.get("runtime_input_sha256"):
         raise ValueError("baseline dependency contract changed without review")
+    if digest(directory / "advisory-description.txt") != data.get("advisory_description_sha256"):
+        raise ValueError("reviewed advisory description changed without review")
     return data
 
 
@@ -147,6 +149,7 @@ def audit_dispositions(report: Path, directory: Path) -> list[dict[str, str]]:
             r"^([A-Za-z0-9_.-]+)==([^\s]+)", (directory / "runtime.lock").read_text(), re.MULTILINE
         )
     }
+    reviewed_description = (directory / "advisory-description.txt").read_text()
     observed = set()
     dispositions = []
     for dependency in dependencies:
@@ -166,8 +169,7 @@ def audit_dispositions(report: Path, directory: Path) -> list[dict[str, str]]:
             if (
                 key != ("mcp", "1.28.1")
                 or vulnerability.get("id") not in {"CVE-2026-59951", "GHSA-84m7-p3x7-pcfv"}
-                or "stateless_http=True" not in vulnerability.get("description", "")
-                or "Not affected" not in vulnerability.get("description", "")
+                or vulnerability.get("description") != reviewed_description
             ):
                 raise ValueError("dependency finding needs a new reviewed disposition")
             dispositions.append(
@@ -183,6 +185,8 @@ def audit_dispositions(report: Path, directory: Path) -> list[dict[str, str]]:
             )
     if observed != expected:
         raise ValueError("audit did not cover the exact frozen dependency closure")
+    if len(dispositions) != 1:
+        raise ValueError("expected exactly one retained reviewed advisory finding")
     return dispositions
 
 
@@ -516,6 +520,17 @@ def rehearse(output: Path, build_python: str, audit_report: Path) -> None:
             for index, path in enumerate(fixture.TARGETS):
                 fixture.checked(["cp", "-a", str(path), str(snapshot / str(index))])
             fixture.checked(["bash", str(target / "deploy/install.sh")])
+            fixture.checked(
+                [
+                    "sudo",
+                    "-u",
+                    "relay-shell",
+                    fixture.PYTHON,
+                    str(target / "scripts/reconcile_runtime.py"),
+                    str(target / "requirements/runtime-py3.12.txt"),
+                    str(target / "pyproject.toml"),
+                ]
+            )
             target_identity = identity()
             expected_version = tomllib.loads((target / "pyproject.toml").read_text())["project"][
                 "version"
@@ -689,6 +704,7 @@ def rehearse(output: Path, build_python: str, audit_report: Path) -> None:
                 "baseline_identity": {"relay-shell": data["version"], "mcp": data["mcp_version"]},
                 "target_identity": target_identity,
                 "python_minor": minor,
+                "target_complete_distribution_inventory": "passed",
                 "upgrade_raw_token_hash_migration": "passed",
                 "legacy_unbound_grants_refused": "passed",
                 "existing_client_approval_preserved": "passed",

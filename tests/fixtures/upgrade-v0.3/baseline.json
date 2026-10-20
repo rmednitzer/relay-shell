@@ -8,5 +8,6 @@
   "python_minor": "3.12",
   "runtime_lock_sha256": "3df83947917fcf3ba5cc407bb6bbd88bcdd383a158e3bc68aa3aac70852d6f6b",
   "compiler": "uv 0.12.23",
-  "runtime_input_sha256": "055db86c02080679a4446e2dfa6fa9e065803d8947ba91cd84c3c2bb316607cf"
+  "runtime_input_sha256": "055db86c02080679a4446e2dfa6fa9e065803d8947ba91cd84c3c2bb316607cf",
+  "advisory_description_sha256": "2ca21d813a89ead1d1639385ef1a4d6db2ae3ae4394b31bb1695ab5a336c8f8b"
 }

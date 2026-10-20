@@ -830,3 +830,9 @@ operational clients, TLS/edge configuration, full-host recovery or all newer pol
 semantics under old software. The historical fixture's advisory disposition is
 scoped in [its README](https://github.com/rmednitzer/relay-shell/blob/main/tests/fixtures/upgrade-v0.3/README.md); current-runtime
 security gates are unchanged.
+
+The installer owns the dedicated `/var/lib/relay-shell/venv` distribution graph.
+After installing the target lock and wheel, it removes distributions outside
+that graph (except bootstrap pip) and verifies all installed versions. Do not
+install unrelated operator tools in this service venv. Removal or validation
+failure stops installation; use the documented full snapshot recovery procedure.

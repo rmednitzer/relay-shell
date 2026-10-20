@@ -74,6 +74,10 @@ sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip install --quiet \
     --only-binary=:all: --require-hashes -r "$RUNTIME_LOCK"
 sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip install --quiet \
     --no-index --no-deps --force-reinstall "${wheels[0]}"
+# This venv is dedicated to Relay Shell. Remove distributions left by older
+# dependency graphs; pip install/check alone do not enforce the locked inventory.
+sudo -u relay-shell "$PREFIX/venv/bin/python" "$SRC_DIR/scripts/reconcile_runtime.py" \
+    "$RUNTIME_LOCK" "$SRC_DIR/pyproject.toml" --prune
 sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip check
 
 log "Audit log directory"

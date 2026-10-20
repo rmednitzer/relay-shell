@@ -30,7 +30,7 @@ with patch.dict(sys.modules, {"rehearse_install": common}):
 def test_baseline_identity_and_both_dependency_hashes(tmp_path: Path) -> None:
     source = ROOT / "tests/fixtures/upgrade-v0.3"
     assert upgrade.manifest(source)["version"] == "0.3.0"
-    for filename in ("runtime.in", "runtime.lock"):
+    for filename in ("runtime.in", "runtime.lock", "advisory-description.txt"):
         destination = tmp_path / filename.replace(".", "-")
         shutil.copytree(source, destination)
         path = destination / filename
@@ -62,7 +62,9 @@ def test_stateless_precondition_is_a_boolean_literal(tmp_path: Path) -> None:
 def test_advisory_disposition_is_exact_and_requires_complete_audit(tmp_path: Path) -> None:
     (tmp_path / "runtime.lock").write_text("mcp==1.28.1\nother==1.0\n")
     report = tmp_path / "audit.json"
-    finding = {"id": "CVE-2026-59951", "description": "Not affected: stateless_http=True"}
+    description = "Not affected: stateless_http=True"
+    (tmp_path / "advisory-description.txt").write_text(description)
+    finding = {"id": "CVE-2026-59951", "description": description}
     data = {
         "fixes": [],
         "dependencies": [
@@ -83,7 +85,14 @@ def test_advisory_disposition_is_exact_and_requires_complete_audit(tmp_path: Pat
     finding["description"] = "Changed upstream applicability"
     with pytest.raises(ValueError, match="new reviewed disposition"):
         check()
-    finding["description"] = "Not affected: stateless_http=True"
+    finding["description"] = "Previously Not affected with stateless_http=True, but now affected"
+    with pytest.raises(ValueError, match="new reviewed disposition"):
+        check()
+    finding["description"] = description
+    data["dependencies"][0]["vulns"] = []
+    with pytest.raises(ValueError, match="retained reviewed advisory"):
+        check()
+    data["dependencies"][0]["vulns"] = [finding]
     data["dependencies"][0]["version"] = "1.28.2"
     with pytest.raises(ValueError):
         check()

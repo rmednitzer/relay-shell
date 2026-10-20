@@ -111,3 +111,10 @@ retention. Its reauthorization is deliberate state loss, not transparent rollbac
 It does not cover arbitrary versions, operational TLS/clients, new-client/revocation
 policy reconciliation beyond this case, or automatic rollback. The old version's
 security policy is not promoted to the current product policy.
+
+Cross-version review refinement: SC-13 requires the complete installed target
+distribution inventory, not only application/SDK identities or `pip check`.
+UCA-16 is reporting an upgrade complete while legacy-only dependencies remain
+importable. The dedicated venv is reconciled as the service UID; failures stop
+installation and require snapshot recovery. Operator tools belong outside this
+venv. The rehearsal independently checks the resulting inventory.

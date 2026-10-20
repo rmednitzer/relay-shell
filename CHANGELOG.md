@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Reconcile the dedicated installer runtime with the complete target dependency
+  lock, removing obsolete distributions left by earlier releases.
+
+
 - Require a signed v0.3.0-to-current cross-version fixture with complete hashed dependency admission, authenticated PKCE/resource/refresh/revocation checks and explicit snapshot rollback that resets grants and preserves accepted audit history.
 - Retain the legacy SDK session-advisory finding with a source/live stateless-only disposition; fail on unknown or incomplete audit findings without changing current-runtime gates.
 
