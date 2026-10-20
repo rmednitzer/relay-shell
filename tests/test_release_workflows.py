@@ -170,7 +170,7 @@ def test_sbom_pins_the_cyclonedx_spec_version() -> None:
     for fmt in ("JSON", "XML"):
         block = text.split(f"--of {fmt}", 1)[1].split("--output-reproducible", 1)[0]
         assert "--sv 1.5" in block, f"{fmt} SBOM does not pin spec 1.5"
-    assert 'data.get("specVersion") == "1.5"' in text
+    assert 'data.get("specVersion") != "1.5"' in text
 
 
 @pytest.mark.parametrize("minor", ["3.12", "3.13", "3.14"])
