@@ -206,7 +206,10 @@ def rehearse(output: Path) -> None:
                 raise RuntimeError("installer unexpectedly enabled the service")
             env_file = CONFIG / "relay-shell.env"
             with env_file.open("a") as stream:
-                stream.write("\n# synthetic recovery fixture\nRELAY_SHELL_AUDIT_CHAIN=true\n")
+                stream.write(
+                    "\n# synthetic recovery fixture\nRELAY_SHELL_AUDIT_CHAIN=true\n"
+                    "RELAY_SHELL_TRANSPORT=http\n"
+                )
             with UNIT.open("a") as stream:
                 stream.write("\n# synthetic operator customization\n")
             account = pwd.getpwnam("relay-shell")
@@ -349,6 +352,9 @@ exec /usr/bin/sudo "$@"
             }
             (output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
             print(json.dumps(receipt))
+        except BaseException:
+            print(run(["journalctl", "-u", "relay-shell", "-n", "40", "--no-pager"]).stdout)
+            raise
         finally:
             run(["systemctl", "stop", "relay-shell"])
             run(["chattr", "-a", str(LOG / "audit.jsonl")])

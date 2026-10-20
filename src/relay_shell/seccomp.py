@@ -648,13 +648,27 @@ class _DetachedServer:
 _DETACHED = _DetachedServer()
 
 
+async def _await_owned[T](task: asyncio.Task[T]) -> T:
+    """Finish an owned worker even if its caller is cancelled repeatedly."""
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    result = task.result()
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
+
+
 class SeccompMonitor:
     """Installs the filter on one child and supervises its notifications.
 
     Single-use and fail-open: at most one child is audited per monitor; any
     failure on the seccomp path lets the child run unfiltered and reports a
-    degraded gap. Construction performs no syscalls — only :meth:`arm`
-    (called pre-spawn) and :meth:`start` (post-spawn) touch the kernel.
+    degraded gap. Arming starts the supervisor before the isolated launcher
+    installs the filter; no Python post-fork callback is used.
     """
 
     def __init__(
@@ -761,30 +775,20 @@ class SeccompMonitor:
 
         task = asyncio.create_task(asyncio.to_thread(read_status))
         try:
-            try:
-                status = await asyncio.shield(task)
-            except asyncio.CancelledError:
-                with contextlib.suppress(Exception):
-                    await task
-                raise
-            if status:
-                code = int(status)
-                await proc.wait()
-                raise OSError(code, os.strerror(code))
+            status = await _await_owned(task)
         except BaseException:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
             await proc.wait()
             raise
+        if status:
+            code = int(status)
+            await proc.wait()
+            raise OSError(code, os.strerror(code))
 
     async def astop(self) -> None:
         """Complete owned cleanup off the event loop, including on cancellation."""
-        cleanup = asyncio.create_task(asyncio.to_thread(self.stop))
-        try:
-            await asyncio.shield(cleanup)
-        except asyncio.CancelledError:
-            await cleanup
-            raise
+        await _await_owned(asyncio.create_task(asyncio.to_thread(self.stop)))
 
     def _install_in_child(self) -> None:  # pragma: no cover
         """Install in a fresh launcher interpreter, never a post-fork callback.

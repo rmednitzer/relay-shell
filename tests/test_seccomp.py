@@ -1027,6 +1027,9 @@ async def test_async_stop_keeps_loop_responsive_and_completes_on_cancel(
         task.cancel()
         await asyncio.sleep(0.01)
         assert not task.done()
+        task.cancel()
+        await asyncio.sleep(0.01)
+        assert not task.done()
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await task
