@@ -836,3 +836,28 @@ After installing the target lock and wheel, it removes distributions outside
 that graph (except bootstrap pip) and verifies all installed versions. Do not
 install unrelated operator tools in this service venv. Removal or validation
 failure stops installation; use the documented full snapshot recovery procedure.
+
+### 11c. Installer failure recovery
+
+Stop `relay-shell.service` before running `deploy/install.sh`, and prevent external
+starts until installation or recovery is complete. The installer refuses an active
+unit and a concurrent cooperating installer; it never stops or starts the service.
+It builds first, then snapshots its venv, `/etc/relay-shell`, systemd unit/drop-in
+and logrotate configuration in a root-private directory under
+`/var/backups/relay-shell-installer/` before replacing runtime files.
+
+An ordinary command failure or handled HUP/INT/TERM restores those targets and
+reloads systemd, returns failure, and leaves the service stopped. It preserves the
+snapshot and prints its path. OAuth/SSH/audit stores are never rolled back. Verify
+the prior runtime, configuration and audit continuity before starting the service;
+remove the retained snapshot only after recovery is verified. Snapshots may contain
+configuration secrets and require root-only access and operator-managed retention.
+Successful installation deletes only its own transaction snapshot.
+
+This is failure recovery, not an atomic installation or power-loss guarantee.
+SIGKILL does not execute rollback handlers. After SIGKILL, power loss or an
+incomplete rollback, keep the service stopped and follow the full consistent
+snapshot recovery procedure above. Do not restart the installer blindly. The
+private transaction `targets.txt` records the ordered target mapping; a missing
+numbered entry means that target was absent before installation. External service
+starts, unrelated processes and storage corruption remain outside this guarantee.

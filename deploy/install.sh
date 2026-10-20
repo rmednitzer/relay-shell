@@ -16,6 +16,67 @@ die() { log "FATAL: $*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "must run as root"
 
+# A root-owned lock directory avoids following attacker-created /run/lock links.
+LOCK_DIR=/run/relay-shell-installer
+[ ! -L "$LOCK_DIR" ] || die "installer lock directory is a symlink"
+mkdir -p "$LOCK_DIR"
+[ "$(stat -c %u "$LOCK_DIR")" -eq 0 ] || die "installer lock directory is not root-owned"
+chmod 0700 "$LOCK_DIR"
+exec 9>"$LOCK_DIR/lock"
+flock -n 9 || die "another installer holds the lock"
+
+require_stopped() {
+    local state
+    state=$(systemctl is-active relay-shell 2>/dev/null) || true
+    case "$state" in
+        inactive|failed|unknown) ;;
+        *) log "FATAL: relay-shell must remain stopped (state: $state)" >&2; return 1 ;;
+    esac
+}
+require_stopped || exit 1
+
+BUILD_DIR=
+TRANSACTION=
+MUTATING=false
+TARGETS=("$PREFIX/venv" /etc/relay-shell /etc/systemd/system/relay-shell.service
+         /etc/systemd/system/relay-shell.service.d /etc/logrotate.d/relay-shell)
+finish() {
+    local result=$? index target rollback_ok=true
+    trap - EXIT
+    trap '' HUP INT TERM
+    if [ -n "$BUILD_DIR" ]; then
+        sudo -u relay-shell rm -rf -- "$BUILD_DIR" || result=1
+    fi
+    if [ "$result" -ne 0 ] && [ "$MUTATING" = true ]; then
+        log "Installation failed; restoring prior runtime and managed configuration"
+        if require_stopped; then
+            for index in "${!TARGETS[@]}"; do
+                target=${TARGETS[$index]}
+                if ! rm -rf -- "$target"; then rollback_ok=false; continue; fi
+                if [ -e "$TRANSACTION/$index" ]; then
+                    cp -a -- "$TRANSACTION/$index" "$target" || rollback_ok=false
+                fi
+            done
+            systemctl daemon-reload || rollback_ok=false
+        else
+            rollback_ok=false
+        fi
+        if [ "$rollback_ok" = true ]; then
+            log "Prior runtime and configuration restored; service remains stopped"
+        else
+            log "FATAL: automatic restoration incomplete; explicit recovery required" >&2
+        fi
+        log "Retained private recovery snapshot: $TRANSACTION"
+    elif [ -n "$TRANSACTION" ]; then
+        rm -rf -- "$TRANSACTION" || log "WARN: private snapshot cleanup incomplete: $TRANSACTION"
+    fi
+    exit "$result"
+}
+trap finish EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 # Install a managed file. If the target exists and differs from the shipped template (a
 # local edit, or an older release), keep one copy of it first so an upgrade never destroys
 # an operator's change silently (A14-D15). The copy lives outside the directories that
@@ -55,13 +116,8 @@ if ! id relay-shell >/dev/null 2>&1; then
             --shell /usr/sbin/nologin relay-shell
 fi
 
-log "Creating venv at $PREFIX/venv"
-if [ ! -x "$PREFIX/venv/bin/python" ]; then
-    sudo -u relay-shell python3 -m venv "$PREFIX/venv"
-fi
 # Build with locked tooling in an owned disposable environment, not in the runtime.
 BUILD_DIR=$(sudo -u relay-shell mktemp -d "$PREFIX/.build-XXXXXXXX")
-trap 'sudo -u relay-shell rm -rf -- "$BUILD_DIR"' EXIT
 sudo -u relay-shell "$INSTALL_PYTHON" -m venv "$BUILD_DIR/venv"
 sudo -u relay-shell "$BUILD_DIR/venv/bin/python" -m pip install --quiet \
     --only-binary=:all: --require-hashes -r "$SRC_DIR/requirements-build.txt"
@@ -70,6 +126,29 @@ sudo -u relay-shell "$BUILD_DIR/venv/bin/python" -m build --wheel --no-isolation
 shopt -s nullglob
 wheels=("$BUILD_DIR"/dist/*.whl)
 [ "${#wheels[@]}" -eq 1 ] || die "expected one locally built wheel"
+
+# Freeze only installer-owned runtime/configuration. Mutable auth, SSH and audit
+# state are not restored. /var/backups is outside the service-owned home.
+RECOVERY_ROOT=/var/backups/relay-shell-installer
+[ ! -L "$RECOVERY_ROOT" ] || die "recovery directory is a symlink"
+mkdir -p "$RECOVERY_ROOT"
+[ "$(stat -c %u "$RECOVERY_ROOT")" -eq 0 ] || die "recovery directory is not root-owned"
+chmod 0700 "$RECOVERY_ROOT"
+TRANSACTION=$(mktemp -d "$RECOVERY_ROOT/install-XXXXXXXX")
+printf '%s\n' "${TARGETS[@]}" >"$TRANSACTION/targets.txt"
+for index in "${!TARGETS[@]}"; do
+    target=${TARGETS[$index]}
+    [ ! -L "$target" ] || die "managed target is a symlink: $target"
+    if [ -e "$target" ]; then
+        cp -a -- "$target" "$TRANSACTION/$index"
+    fi
+done
+require_stopped || exit 1
+MUTATING=true
+log "Creating venv at $PREFIX/venv"
+if [ ! -x "$PREFIX/venv/bin/python" ]; then
+    sudo -u relay-shell python3 -m venv "$PREFIX/venv"
+fi
 sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip install --quiet \
     --only-binary=:all: --require-hashes -r "$RUNTIME_LOCK"
 sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip install --quiet \
