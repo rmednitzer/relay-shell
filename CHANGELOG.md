@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Refresh certifi to 2026.10.19 in build and development closures after GHSA-6q48-6c7w-9gw2; retain hashed installation and advisory enforcement.
+
 - Reconcile the public environment template with every server setting and its defaults; document SSH override control and actual audit-verification flags, with CI drift coverage.
 
 - Coalesce initial PR validation, isolate manual reruns, and preserve non-PR verification evidence.
