@@ -355,6 +355,13 @@ def rehearse(output: Path, build_python: str, audit_report: Path) -> None:
         archive(current, target)
         require_stateless(legacy / "src/relay_shell/server.py")
         dispositions = audit_dispositions(audit_report, BASELINE)
+        # The service UID cannot traverse the runner checkout. Keep the verified
+        # public fixture in the disposable work directory instead.
+        legacy_lock = work / "legacy-runtime.lock"
+        shutil.copyfile(BASELINE / "runtime.lock", legacy_lock)
+        legacy_lock.chmod(0o644)
+        if digest(legacy_lock) != data["runtime_lock_sha256"]:
+            raise RuntimeError("copied baseline dependency profile changed")
         try:
             fixture.checked(
                 [
@@ -426,7 +433,7 @@ def rehearse(output: Path, build_python: str, audit_report: Path) -> None:
                     "--only-binary=:all:",
                     "--require-hashes",
                     "-r",
-                    str(BASELINE / "runtime.lock"),
+                    str(legacy_lock),
                 ]
             )
             fixture.checked(
