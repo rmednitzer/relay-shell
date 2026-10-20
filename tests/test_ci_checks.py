@@ -39,6 +39,8 @@ def check(check_id: int = 1, **overrides: object) -> dict:
         ([{"check_runs": [check(conclusion="skipped")]}], 1, "skipped"),
         ([{"check_runs": [check(conclusion="neutral")]}], 1, "neutral"),
         ([{"unexpected": []}], 1, "Invalid"),
+        ({}, 1, "Invalid"),
+        ([], 1, "Invalid"),
     ],
 )
 def test_gate_reconciles_current_producer_revision_and_attempt(pages, status, message) -> None:

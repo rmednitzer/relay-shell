@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Cancel superseded PR validation only, preserving separate verification runs for every non-PR invocation.
+- Use complete lock files for wheel-cache invalidation and reject malformed check snapshots immediately.
+
 - Require underlying CI checks directly in repository settings and add a read-only,
   non-publishing release/SBOM and complete-runtime recovery rehearsal.
 - Test signed-tag admission with real synthetic signatures; reject multiline tag

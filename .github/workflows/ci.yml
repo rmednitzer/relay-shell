@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+
+# Superseded PR work may stop; every non-PR run keeps its own evidence.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     permissions:
@@ -32,6 +38,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
+          cache-dependency-path: |
+            requirements/development-py${{ matrix.python-version }}.txt
 
       - name: Install
         run: |

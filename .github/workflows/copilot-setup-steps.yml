@@ -10,6 +10,12 @@ on:
       - pyproject.toml
 permissions:
   contents: read
+
+# Superseded PR work may stop; every non-PR run keeps its own evidence.
+concurrency:
+  group: copilot-setup-steps-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   copilot-setup-steps:
     runs-on: ubuntu-24.04

@@ -19,6 +19,12 @@ on:
 permissions:
   contents: read
 
+
+# Superseded PR work may stop; every non-PR run keeps its own evidence.
+concurrency:
+  group: pip-audit-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   audit:
     name: pip-audit (CVE scan)
@@ -33,6 +39,9 @@ jobs:
         with:
           python-version: "3.14"
           cache: "pip"
+          cache-dependency-path: |
+            requirements/development-py3.14.txt
+            requirements-audit.txt
 
       - name: Prepare separate locked subject and audit-tool environments
         run: |
