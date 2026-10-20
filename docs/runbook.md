@@ -892,16 +892,11 @@ mode is on.
 
 ### 7.2 Quality + automation
 
-Open (owner or repository-settings actions, tracked in `BACKLOG.md`):
-
-- **A14-X1**: the owner checks `.env.example` against `Settings` (drop the mention of a
-  nonexistent `--require-genesis` flag, confirm `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS`,
-  reword `RELAY_SHELL_DEFAULT_TIMEOUT`); agent sessions may not read the file.
-
 Closed:
 
 | ID | What | Record |
 |----|------|--------|
+| A14-X1 | Public environment template covers every server setting/default; SSH override, timeout and audit-verification guidance reconciled; parsed-template CI drift check | Current source |
 | A14-D12 | Underlying CI dependencies are required directly by the main ruleset, independently of the PR-owned aggregate; Actions app binding and strict freshness retained | 2026-10-20 settings verification |
 | A14-D14 / L8 | Complete runtime/development locks and repository-owned Renovate policy; no external project preset remains | PR #238 |
 | B-022 | sshpool fault-injection tests; coverage floor 90% (baseline ~92%) | CHANGELOG |
