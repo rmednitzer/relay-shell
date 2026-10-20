@@ -82,3 +82,39 @@ Those ADR 0006 residuals are not fixed by launch isolation.
 - https://docs.python.org/3/library/subprocess.html#popen-constructor
 - https://docs.kernel.org/userspace-api/seccomp_filter.html
 - https://man7.org/linux/man-pages/man2/openat2.2.html
+
+### Cross-version refinement (2026-10-20)
+
+The separate `rehearse_upgrade.py` job extends SC-10 for one admitted v0.3.0
+fixture (SDK 1.28.1) to current source on Ubuntu 24.04/Python 3.12. The signed source
+and newly qualified frozen closure are distinct identities. Its package advisory
+is handled by the fixture-specific source/live stateless checks described in the
+fixture README; this does not alter current-runtime vulnerability gates.
+
+- SC-11: missing audience binding is not repaired by silently trusting legacy
+  grants. Hash migration preserves confidentiality improvement, but old access
+  and refresh grants must be refused; an existing approved client reauthorizes
+  through the actual HTTP PKCE/token routes. Wrong verifiers/resources, replayed
+  refresh grants and revoked credentials must fail. UCA-14 is accepting an old
+  grant merely because it survived on disk.
+- SC-12: rollback must account for state accepted after the snapshot. Preserve the
+  complete latest audit tail, restore the consistent baseline runtime/configuration,
+  and reset authorization codes/access/refresh grants while stopped. Verify old
+  and current credentials are refused before issuing a fresh baseline grant.
+  UCA-15 is replaying snapshot credentials or discarding post-upgrade audit evidence.
+
+Alternatives: no cross-version claim remains honest but leaves migration unknown;
+binary-only downgrade can mix incompatible stores; blindly restoring every snapshot
+file can revive revoked credentials and lose audit records. The chosen fixture
+uses explicit consistent restoration plus declared grant invalidation and audit
+retention. Its reauthorization is deliberate state loss, not transparent rollback.
+It does not cover arbitrary versions, operational TLS/clients, new-client/revocation
+policy reconciliation beyond this case, or automatic rollback. The old version's
+security policy is not promoted to the current product policy.
+
+Cross-version review refinement: SC-13 requires the complete installed target
+distribution inventory, not only application/SDK identities or `pip check`.
+UCA-16 is reporting an upgrade complete while legacy-only dependencies remain
+importable. The dedicated venv is reconciled as the service UID; failures stop
+installation and require snapshot recovery. Operator tools belong outside this
+venv. The rehearsal independently checks the resulting inventory.

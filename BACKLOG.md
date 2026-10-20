@@ -286,3 +286,13 @@ The required release rehearsal adds actual disposable-VM installation, repeat
 upgrade, injected partial runtime replacement and complete service-state recovery.
 Live-host qualification, real OAuth flows, edge TLS, off-host custody, full-host
 rebuild and atomic/automatic rollback remain separate work.
+
+## 2026-10-20 cross-version recovery qualification
+
+The release rehearsal now covers the explicitly admitted v0.3.0 fixture to
+current source on Ubuntu 24.04/Python 3.12. It does not generalize to arbitrary
+versions or historical installations. Raw-token hashing, legacy grant refusal,
+client approval continuity and actual authenticated route behaviour are checked.
+Rollback preserves post-snapshot audit records and resets grants/codes before
+reauthorization. Operational TLS/clients, broader state-policy reconciliation,
+binary-only downgrades, automatic rollback and live-host recovery remain open.
