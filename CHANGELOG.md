@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Block installation retries after unresolved interruption and add explicit
+  `install.sh --recover` with sealed snapshot verification and retained evidence.
+
+
 - Restore the prior installer runtime and managed configuration after ordinary
   installation failures or handled termination; require a stopped service and
   serialize installers. Preserve explicit recovery for SIGKILL/host loss.

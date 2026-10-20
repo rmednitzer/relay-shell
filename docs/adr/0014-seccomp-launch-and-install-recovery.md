@@ -146,3 +146,35 @@ full explicit snapshot recovery qualification for those cases. Root/service UID
 compromise remains outside this maintenance transaction trust model. Revert the
 installer/source before deployment to remove this behavior; never delete retained
 failure snapshots until recovery is independently verified.
+
+### Interrupted installation decision (2026-10-21)
+
+SC-15: after an unresolved installer interruption, refuse a new installation
+before probing or mutating the service runtime. UCA-19 is overwriting the only
+recovery evidence after SIGKILL; CS-19 is a new installer seeing an unlocked but
+partially replaced venv. Preserve a root-private pending record binding a sealed
+snapshot manifest. An explicit `install.sh --recover` validates its full snapshot
+inventory before any destructive restoration, restores the fixed target set,
+verifies the restored inventory, reloads systemd and clears the pending record.
+Repeated restoration after a recovery interruption uses the same immutable backup.
+
+No change retains ambiguous retry behavior. Automatic boot recovery could restore
+old code after the service or other actors had accepted newer state; reject it.
+Choose operator-invoked recovery, preserving the stopped-service and exclusive
+operator assumptions of SC-14. OAuth/SSH/audit data stay outside this transaction.
+If the service ran after interruption, use reviewed full-state recovery instead.
+
+The pending record is atomically replaced and synchronized after the snapshot;
+clear it only after synchronizing installation/restoration and reloading systemd.
+Snapshot content/modes/ownership/link targets must match the sealed manifest;
+missing entries must never be interpreted as originally absent. Refuse malformed,
+symlinked, escaped or modified transaction records. Root owns the custody boundary;
+this detects corruption and ambiguity, not malicious root replacement. Real power
+loss, storage failure, host rebuild and live operational recovery remain unqualified.
+Revert before deployment to remove these commands; never bypass a pending record
+or discard its evidence merely to allow a new installation.
+
+Review refinement: the sealed manifest includes the ordered absolute target mapping;
+recovery rejects even a same-sized reordered/replaced target contract. Apply the
+reader's byte bound to serialized metadata before publication, so an oversized
+snapshot cannot become an unresolved transaction that the reader can never admit.

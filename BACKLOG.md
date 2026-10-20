@@ -306,3 +306,12 @@ root-private failure snapshots. Hosted acceptance covers partial pip failure,
 TERM and late managed-file failure, plus active/concurrent refusal. SIGKILL still
 requires explicit snapshot recovery; preserve that separate qualification. This
 is not atomic commit, power-loss recovery or live-host recovery evidence.
+
+
+### Interrupted installer custody (2026-10-21)
+
+Implement a root-private pending transaction and explicit verified recovery.
+Qualification covers actual SIGKILL, blocked retry, corrupt/escaped evidence
+refusal without managed-state mutation, exact restoration and subsequent install.
+The service must remain stopped; mutable auth/SSH/audit state is not rolled back.
+Real power-loss and live-host recovery remain separate qualification gaps.

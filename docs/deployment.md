@@ -861,3 +861,28 @@ snapshot recovery procedure above. Do not restart the installer blindly. The
 private transaction `targets.txt` records the ordered target mapping; a missing
 numbered entry means that target was absent before installation. External service
 starts, unrelated processes and storage corruption remain outside this guarantee.
+
+
+### 11d. Recovery after an interrupted installer
+
+A pending record under `/var/backups/relay-shell-installer/` blocks a new install
+before it probes the service Python or mutates installation state. Keep the service
+stopped. Inspect the reported interruption and the private snapshot; do not delete
+or edit `pending.json` to bypass the guard. If the service has run since the
+interruption, review auth/state compatibility and use full-state recovery instead.
+
+With the service continuously stopped, run `sudo bash deploy/install.sh --recover`
+from trusted source supporting this transaction format. The command validates the
+root-private record and every sealed snapshot entry before touching managed paths,
+restores the fixed runtime/configuration set, verifies exact content/mode/owner/link
+identity, reloads systemd, synchronizes state, and clears the pending record. It
+retains the snapshot and leaves the service stopped. Verify runtime, auth and audit
+postconditions before restarting or attempting another installation. A failure
+retains the pending record; investigate and retry recovery against the same intact
+evidence. Do not retry normal installation until recovery is complete.
+
+Malformed, missing, corrupt or escaped snapshot metadata refuses recovery. Restore
+from independently retained full backups if the transaction evidence is damaged.
+Neither root-private hashes nor filesystem synchronization prove protection from
+malicious root, real power failure, disk/controller failure or host loss. Those
+require separately qualified storage, backups and operational recovery exercises.

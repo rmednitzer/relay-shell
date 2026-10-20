@@ -405,6 +405,47 @@ exec /usr/bin/sudo "$@"
                 raise RuntimeError("intended installer interruption was not reached")
             if run(["sudo", "-u", "relay-shell", PYTHON, "-m", "pip", "check"]).returncode == 0:
                 raise RuntimeError("partial-runtime fault was not detected")
+            pending_path = Path("/var/backups/relay-shell-installer/pending.json")
+            if not pending_path.exists():
+                raise RuntimeError("SIGKILL did not retain a pending transaction")
+            broken = {str(path): inventory(path) for path in automatic_targets}
+            blocked = run(installer)
+            if blocked.returncode == 0 or "unfinished installation" not in blocked.stderr:
+                raise RuntimeError("new installation overwrote unresolved interruption")
+            if any(inventory(path) != broken[str(path)] for path in automatic_targets):
+                raise RuntimeError("blocked rerun changed managed state")
+            record_bytes = pending_path.read_bytes()
+            record = json.loads(record_bytes)
+            backup = pending_path.parent / record["transaction"]
+            damaged = next((backup / "0").rglob("*.py"))
+            original_bytes = damaged.read_bytes()
+            damaged.write_bytes(original_bytes + b"# synthetic snapshot corruption\n")
+            corrupt_refusal = run([*installer, "--recover"])
+            if corrupt_refusal.returncode == 0:
+                raise RuntimeError("corrupt snapshot was admitted for restoration")
+            if any(inventory(path) != broken[str(path)] for path in automatic_targets):
+                raise RuntimeError("corrupt snapshot refusal changed managed state")
+            damaged.write_bytes(original_bytes)
+            pending_path.write_text(json.dumps(dict(record, transaction="../escaped")))
+            escaped_refusal = run([*installer, "--recover"])
+            if escaped_refusal.returncode == 0:
+                raise RuntimeError("escaped recovery identity was admitted")
+            if any(inventory(path) != broken[str(path)] for path in automatic_targets):
+                raise RuntimeError("escaped recovery refusal changed managed state")
+            pending_path.write_bytes(record_bytes)
+            checked([*installer, "--recover"])
+            if pending_path.exists() or not backup.exists():
+                raise RuntimeError("recovery did not clear pending state and retain its snapshot")
+            if any(inventory(path) != automatic_before[str(path)] for path in automatic_targets):
+                raise RuntimeError("explicit interrupted recovery changed retained identity")
+            checked(["sudo", "-u", "relay-shell", PYTHON, "-m", "pip", "check"])
+            oauth_proof()
+            repeat_recovery = run([*installer, "--recover"])
+            if repeat_recovery.returncode == 0:
+                raise RuntimeError("recovery without a pending transaction was accepted")
+            checked(installer)
+            if pending_path.exists():
+                raise RuntimeError("successful retry retained an unfinished transaction")
             service(False)
             run(["chattr", "-a", str(LOG / "audit.jsonl")])
             for index, path in enumerate(TARGETS):
@@ -454,6 +495,10 @@ exec /usr/bin/sudo "$@"
                 "active_service_and_concurrent_installer_refused": "passed",
                 "automatic_pip_error_term_managed_file_recovery": "passed",
                 "sigkill_explicit_snapshot_recovery": "passed",
+                "unfinished_install_retry_refused": "passed",
+                "corrupt_and_escaped_snapshot_refused_without_mutation": "passed",
+                "explicit_interrupted_transaction_restoration": "passed",
+                "post_recovery_reinstallation": "passed",
                 "same_version_package_replacement": "passed",
                 "upgrade_scope": "repeat same-revision installer; no cross-version state migration",
                 "repeat_upgrade_state_preservation": "passed",
