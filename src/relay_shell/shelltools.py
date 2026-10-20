@@ -187,16 +187,25 @@ async def run_command(
     extras = monitor.arm() if monitor is not None else {}
     try:
         try:
-            if use_shell:
+            if extras and monitor is not None:
+                target = ["/bin/sh", "-c", command] if use_shell else argv
+                proc = await asyncio.create_subprocess_exec(
+                    *monitor.wrap_argv(target),
+                    **common,  # type: ignore[arg-type]
+                    **extras,  # type: ignore[arg-type, misc]
+                )
+            elif use_shell:
                 proc = await asyncio.create_subprocess_shell(command, **common, **extras)  # type: ignore[arg-type]
             else:
                 proc = await asyncio.create_subprocess_exec(*argv, **common, **extras)  # type: ignore[arg-type, misc]
+            if extras and monitor is not None:
+                await monitor.wait_exec(proc)
         except (OSError, ValueError) as exc:
             return (fmt_exc(exc), None)
         return await _drive(proc, stdin_data, timeout, merge_stderr, output_cap)
     finally:
         if monitor is not None:
-            monitor.stop()
+            await monitor.astop()
 
 
 async def run_script(
@@ -230,6 +239,8 @@ async def run_script(
     env = build_env(env_json)
     monitor = seccomp.get_active()
     extras = monitor.arm() if monitor is not None else {}
+    if extras and monitor is not None:
+        argv = monitor.wrap_argv(argv)
     try:
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -242,6 +253,8 @@ async def run_script(
                 start_new_session=True,
                 **extras,  # type: ignore[arg-type]
             )
+            if extras and monitor is not None:
+                await monitor.wait_exec(proc)
         except (OSError, ValueError) as exc:
             return (fmt_exc(exc), None)
         return await _drive(
@@ -249,7 +262,7 @@ async def run_script(
         )
     finally:
         if monitor is not None:
-            monitor.stop()
+            await monitor.astop()
 
 
 def spawn_argv(command: str) -> list[str]:

@@ -390,7 +390,7 @@ locally-spawned children (one-shot: `shell_exec` / `shell_script` /
 `ssh_keyscan`; and local PTY sessions: `shell_spawn`) get a BPF filter that
 traps a small, high-signal syscall set (`execve`, the `set[re|res]?[ug]id`
 family, `mount`/`umount2`, `unshare`/`setns`, `chroot`/`pivot_root`,
-`ptrace`, write-`open`/`openat`, and `prctl` for privilege-relevant options
+`ptrace`, write-`open`/`openat`, `creat`, every `openat2`, and `prctl` for privilege-relevant options
 such as `PR_SET_SECUREBITS` / `PR_CAP_AMBIENT` / `PR_SET_NO_NEW_PRIVS`), and
 a supervisor appends one `syscall_notify` line per observed call to the same
 JSONL stream (it extends the §6a hash chain when that is on). It **never
@@ -400,6 +400,12 @@ session child (and everything it forks) for the session's whole life, and
 events carry the spawning call's `request_id`. SSH sessions have no local
 child (`asyncssh` runs in-process), so nothing is observed (or missed)
 on that path.
+
+The opt-in path uses a fresh isolated Python launcher (`-I -S`) before target
+exec, rather than a threaded-parent Python `preexec_fn`. Monitor shutdown runs
+off the event loop. Filter version 3 records all `openat2` calls because its
+flags are behind a user pointer; these events do not establish write intent.
+See [ADR 0014](adr/0014-seccomp-launch-and-install-recovery.md).
 
 **Activation is gated, by design.** A seccomp filter installs with
 `CAP_SYS_ADMIN` *or* by latching `no_new_privs`; the latter would silently
@@ -748,13 +754,18 @@ race with a write into the unmoved file. The drift-detection CLI
 
 What is **not** in scope for backup:
 
-- The Python venv under `/var/lib/relay-shell/venv/`: recreate with
-  `pip install relay-shell` (§2).
+- A venv may be rebuilt for disaster recovery from a retained source revision,
+  qualified interpreter and matching hashed runtime/build profiles. An unpinned
+  `pip install relay-shell` does not reproduce the previous environment. For
+  upgrade rollback, retain the complete stopped venv and restore at the same
+  absolute path; venvs are not relocatable.
 - The Caddy data directory (`/var/lib/caddy/`): Caddy will re-issue
   the certificate from ACME on first start. Backing it up is only
   worth doing if you are rate-limited on the ACME directory.
-- The SSH known_hosts file under the service account's `~/.ssh/`:
-  reseed with `ssh_keyscan` (§7) rather than restoring stale entries.
+- SSH host trust is state: retain the service account's `~/.ssh/known_hosts`,
+  SSH configuration and external inventory with the recovery set. Revalidate
+  changed host keys through an independent trusted channel. `ssh_keyscan` alone
+  discovers keys; it does not authenticate them.
 
 ## Emergency
 
@@ -762,3 +773,29 @@ What is **not** in scope for backup:
   clearing `tokens.json`, or rotate the proxy CIDR allowlist to none).
 - Revoke SSH reach: remove/disable the service account's keys on targets.
 - The audit log (off-host copy) is the post-incident record.
+
+### 11a. Upgrade recovery qualification
+
+Stop the service before taking or restoring a consistent upgrade snapshot. Retain
+the complete original-path venv, OAuth state, EnvironmentFiles, systemd unit and
+drop-ins, logrotate configuration, SSH trust/configuration and audit segments.
+Preserve ownership, restrictive modes and symlinks. Preserve separately managed
+credentials/inventories in their existing protected store. Verify the backup
+before starting an in-place upgrade; the installer provides no atomic swap or
+automatic rollback. It preserves EnvironmentFiles and backs up replaced managed
+templates, but those copies alone are not a complete recovery set.
+
+The required release rehearsal runs the actual installer on an empty disposable
+hosted VM. It checks fresh/repeat installation, injected partial dependency
+replacement, complete original-path snapshot restoration, dependency consistency,
+synthetic OAuth token loading, MCP shell execution and continued audit chaining.
+`scripts/rehearse_install.py` refuses existing relay-shell paths/accounts and is
+not an operator-host recovery tool. Only its source-bound receipt is uploaded.
+
+Before restarting after a real restore, compare state/environment identities,
+run `pip check`, verify audit segments against retained off-host anchors, restore
+filesystem append-only flags where supported, and review unit/template drift.
+Then test authentication and representative tool execution under the restored
+identity. A valid local audit prefix alone does not establish that no tail was
+lost. Live-host recovery, real OAuth issuance/refresh, edge TLS, off-host custody
+and full-host disaster recovery remain separately qualified.

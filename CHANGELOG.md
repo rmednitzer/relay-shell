@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Replace optional seccomp Python preexec callbacks with an isolated fresh-process launcher; preserve exec errors and move monitor cleanup off the event loop.
+- Add creat and all openat2 notifications (filter v3), without decoding pointer arguments; require actual privileged coverage.
+- Qualify the actual installer and complete service-state restoration after an injected partial-runtime interruption on a guarded disposable hosted VM; retain source-bound receipts.
+
 - Refresh certifi to 2026.10.19 in build and development closures after GHSA-6q48-6c7w-9gw2; retain hashed installation and advisory enforcement.
 
 - Reconcile the public environment template with every server setting and its defaults; document SSH override control and actual audit-verification flags, with CI drift coverage.

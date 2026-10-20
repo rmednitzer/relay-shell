@@ -35,6 +35,15 @@ jobs:
           python -m pip install --only-binary=:all: --require-hashes -r requirements/development-py3.14.txt
       - name: Rehearse package preparation and complete runtime restoration
         run: python scripts/rehearse_release.py --output "$RUNNER_TEMP/release-rehearsal"
+      - name: Qualify actual installation and service-state recovery on the disposable VM
+        run: sudo -E /usr/bin/python3 scripts/rehearse_install.py --output "$RUNNER_TEMP/install-rehearsal"
+      - name: Retain installer recovery receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: install-rehearsal-${{ github.sha }}
+          path: ${{ runner.temp }}/install-rehearsal/receipt.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Retain source-bound rehearsal evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

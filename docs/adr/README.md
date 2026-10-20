@@ -34,6 +34,8 @@ top. Status values:
 | [0012](0012-cancel-safe-session-teardown.md) | Cancel-safe session teardown | Accepted | 2026-10-14 | Sessions removed from the registry (`close`, idle sweep, `shutdown`) are torn down by their own shielded, concurrent task, and `LocalPtyTransport.aclose` SIGKILLs on cancel, so a cancelled caller can no longer strand a live child, PTY fd or monitor thread. Since 0.4.0 a close sends SIGTERM, SIGHUP after 0.5 s (interactive shells ignore SIGTERM; closing one went from 5.01 s to 0.50 s) and SIGKILL at 5 s, and also kills what is left of the session's process group once the leader has exited. Carries the STPA trace (losses, hazards, constraints, UCAs, causal scenarios, tests). Residuals: a child that leaves the process group, loop shutdown mid-teardown, no SIGKILL equivalent for SSH channels. Tracked as A14-R10. |
 | [0013](0013-open-by-default-with-unsafe-notices.md) | Open by default, with notices about what is unsafe | Accepted | 2026-10-14 | The default policy admits every command (pinned by tests); the caller is told, in a trailing `[NOTICE ...]` line, when an admitted call ran as Tier 2/3 or with host-key verification off, and `server_info` reports the permissive settings. Audit records are unchanged. Carries the STPA trace. Residual: the classifier is a heuristic, and a command without a notice is not thereby safe. |
 
+| [0014](0014-seccomp-launch-and-install-recovery.md) | Fresh-process syscall auditing and installer recovery qualification | Accepted | 2026-10-20 | No threaded-parent Python preexec callback; async monitor cleanup; filter v3; actual disposable installer interruption and full service-state restoration. |
+
 ## When to write an ADR
 
 Any of the following needs an ADR before code lands:
@@ -50,7 +52,7 @@ recipes per case.
 
 ## How to write one
 
-1. Number sequentially. Next free number is **0014**.
+1. Number sequentially. Next free number is **0015**.
 2. Filename pattern: `NNNN-short-slug.md`.
 3. Required header:
 

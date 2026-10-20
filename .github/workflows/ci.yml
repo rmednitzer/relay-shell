@@ -98,4 +98,5 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
+          sudo -E "$(command -v python)" -c 'from relay_shell.seccomp import platform_support; s=platform_support(); print(s); s.ok or exit("privileged seccomp coverage unavailable")'
           sudo -E "$(command -v python)" -m pytest -m seccomp -q -rs -p no:cacheprovider tests/test_seccomp.py

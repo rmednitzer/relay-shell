@@ -153,6 +153,8 @@ class LocalPtyTransport:
         # transport adopts the monitor and stop() happens in aclose().
         monitor = seccomp.get_active()
         extras = monitor.arm() if monitor is not None else {}
+        if extras and monitor is not None:
+            argv = monitor.wrap_argv(argv)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
@@ -164,11 +166,13 @@ class LocalPtyTransport:
                 start_new_session=True,
                 **extras,  # type: ignore[arg-type]
             )
+            if extras and monitor is not None:
+                await monitor.wait_exec(proc)
         except BaseException:
             # No child: release the supervisor and the master end (the slave
             # end closes in the finally below either way).
             if monitor is not None:
-                monitor.stop()
+                await monitor.astop()
             with contextlib.suppress(OSError):
                 os.close(master_fd)
             raise
@@ -305,7 +309,7 @@ class LocalPtyTransport:
                 # The supervisor has already drained (the notify fd hangs up when
                 # the filtered task tree dies); this joins its thread and releases
                 # its fds. Idempotent.
-                self._monitor.stop()
+                await self._monitor.astop()
 
 
 @dataclass
