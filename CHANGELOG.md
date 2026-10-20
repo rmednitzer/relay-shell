@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Add complete hashed runtime/development profiles for Python 3.12–3.14 and use
+  them in CI, Copilot, installer and current release/SBOM preparation.
+- Isolate and hash-lock the audit tool environment; retain fresh advisory queries.
+
+- Make Renovate policy self-contained in this repository, preserving local update rules and removing cross-repository policy inheritance.
+
 ### Fixed
 
 - Prepare Copilot with constrained dependencies and verified test discovery.

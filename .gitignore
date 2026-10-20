@@ -34,3 +34,11 @@ known_hosts
 .idea/
 .vscode/
 .DS_Store
+
+# Disposable locked audit and SBOM environments
+.audit-runtime/
+.audit-tool/
+.sbom-builder/
+.sbom-dist/
+.sbom-venv/
+.sbom-tool/

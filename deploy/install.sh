@@ -32,6 +32,20 @@ install_managed() {
     install -m "$mode" "$src" "$dst"
 }
 
+# Refuse an unsupported/missing profile before changing accounts or installation state.
+INSTALL_PYTHON=python3
+if [ -x "$PREFIX/venv/bin/python" ]; then
+    INSTALL_PYTHON="$PREFIX/venv/bin/python"
+fi
+PYTHON_PROFILE=$("$INSTALL_PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+case "$PYTHON_PROFILE" in
+    3.12|3.13|3.14) ;;
+    *) die "no qualified dependency lock for Python $PYTHON_PROFILE" ;;
+esac
+RUNTIME_LOCK="$SRC_DIR/requirements/runtime-py$PYTHON_PROFILE.txt"
+[ -r "$RUNTIME_LOCK" ] || die "runtime dependency lock missing"
+[ -r "$SRC_DIR/requirements-build.txt" ] || die "build tooling lock missing"
+
 log "Ensuring service account 'relay-shell'"
 if ! id relay-shell >/dev/null 2>&1; then
     useradd --system --create-home --home-dir "$PREFIX" \
@@ -42,13 +56,22 @@ log "Creating venv at $PREFIX/venv"
 if [ ! -x "$PREFIX/venv/bin/python" ]; then
     sudo -u relay-shell python3 -m venv "$PREFIX/venv"
 fi
-sudo -u relay-shell "$PREFIX/venv/bin/pip" install --quiet --upgrade pip
-# Install against the tested direct pins when the checkout carries them (A14-D14).
-if [ -r "$SRC_DIR/requirements.txt" ]; then
-    sudo -u relay-shell "$PREFIX/venv/bin/pip" install --quiet -c "$SRC_DIR/requirements.txt" "$SRC_DIR"
-else
-    sudo -u relay-shell "$PREFIX/venv/bin/pip" install --quiet "$SRC_DIR"
-fi
+# Build with locked tooling in an owned disposable environment, not in the runtime.
+BUILD_DIR=$(sudo -u relay-shell mktemp -d "$PREFIX/.build-XXXXXXXX")
+trap 'sudo -u relay-shell rm -rf -- "$BUILD_DIR"' EXIT
+sudo -u relay-shell "$INSTALL_PYTHON" -m venv "$BUILD_DIR/venv"
+sudo -u relay-shell "$BUILD_DIR/venv/bin/python" -m pip install --quiet \
+    --only-binary=:all: --require-hashes -r "$SRC_DIR/requirements-build.txt"
+sudo -u relay-shell "$BUILD_DIR/venv/bin/python" -m build --wheel --no-isolation \
+    --outdir "$BUILD_DIR/dist" "$SRC_DIR"
+shopt -s nullglob
+wheels=("$BUILD_DIR"/dist/*.whl)
+[ "${#wheels[@]}" -eq 1 ] || die "expected one locally built wheel"
+sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip install --quiet \
+    --only-binary=:all: --require-hashes -r "$RUNTIME_LOCK"
+sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip install --quiet \
+    --no-index --no-deps "${wheels[0]}"
+sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip check
 
 log "Audit log directory"
 mkdir -p /var/log/relay-shell

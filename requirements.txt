@@ -1,9 +1,9 @@
-# Direct dependency snapshot for deployment and the CI/security test matrix.
-# Install the tested development set with:
-#   pip install -c requirements.txt -e ".[dev,http]"
+# Direct dependency constraints used when regenerating the complete profile locks.
+# Install a complete tested environment from requirements/development-py3.X.txt
+# with --require-hashes, then install the project with --no-deps.
 # pyproject.toml remains the library compatibility contract. These direct
 # pins do not constitute a complete transitive lockfile. Renovate proposes
-# updates under the shared release-age and required-check policy.
+# updates under this repository's release-age and required-check policy.
 mcp==2.3.0
 pydantic==2.14.1
 pydantic-settings==2.16.0

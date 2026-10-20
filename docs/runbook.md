@@ -407,7 +407,9 @@ Check these explicitly:
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -c requirements.txt -e ".[dev]"   # the same constraints CI uses
+python -m pip install --only-binary=:all: --require-hashes -r requirements/development-py3.12.txt
+python -m pip install --no-deps --no-build-isolation -e ".[dev]"
+python -m pip check
 
 ruff check .
 ruff format --check .
@@ -423,14 +425,18 @@ CI-config bug; fix that, not the test.
 The Copilot setup workflow installs hash-locked build tooling, then the editable
 project using the same direct constraints as CI. It checks dependency consistency,
 linters and representative stdio/SSH test discovery without contacting a fleet.
-The direct snapshot is not a complete transitive runtime lock. Copilot can continue
+Runtime/development profiles lock the full dependency closure separately for
+Python 3.12, 3.13 and 3.14; the direct constraints remain regeneration inputs.
+Copilot can continue
 when setup fails; report that failure and do not claim validation from setup alone.
 Privileged seccomp and Caddy routing acceptance remain in the existing CI matrix.
 
-Renovate owns dependency PRs. GitHub vulnerability alerts remain enabled as
+Renovate policy is self-contained in renovate.json5; no other project supplies
+its policy. Renovate owns dependency PRs. GitHub vulnerability alerts remain enabled as
 remediation input; Dependabot security-update PRs are disabled to avoid competing
 branches. The pip-compile manager owns requirements-build.txt and
-requirements-sbom.txt, including their recorded uv regeneration commands. Direct
+requirements-sbom.txt, requirements-audit.txt and the runtime/development
+profiles, including their recorded uv regeneration commands. Direct
 pip_requirements edits to those generated outputs are disabled, and complete
 tooling refreshes require review rather than automerge. A custom manager also
 tracks the embedded Caddy release pin used by the real edge-routing tests; the
@@ -877,7 +883,7 @@ code. The 2026-10-14 pass is recorded in `BACKLOG.md` and `audit/2026-10-14-enga
 | M8 | OAuth tokens stored raw, files unbounded, per-request read on the event loop | **Closed** (#193): hashed at rest, purged on write, read off the loop. No in-memory cache (it would need cross-process invalidation) |
 | L1, L2, L3, L5, L6, L7, L9 | Unretrieved future, lingering channel reported as timeout, raw traceback on a bad deny regex, audit docstring, UTF-8 split in `session_recv`, `.env` from the working directory, `ProxyJump none` | **Closed** (#196) |
 | L4 | Seccomp (opt-in): `preexec_fn` in a multithreaded process, `openat2` / `creat` not notified, `monitor.stop()` joins on the event loop | **Deferred**: needs `CAP_SYS_ADMIN` to verify. CI now runs the seccomp end-to-end tests under `sudo` (py3.13 leg, A14-T1), so a privileged environment exists; the fixes still need their own PR |
-| L8 | No transitive dependency lock with hashes; Renovate extends an external preset | **Partly addressed** in 0.4.0: release and SBOM tooling are hash-locked (`requirements-build.txt`, `requirements-sbom.txt`; A14-D7/D8). Open: the package's transitive runtime dependencies are still resolved at build time, and the external Renovate preset is unreviewed (A14-D14) |
+| L8 | No transitive dependency lock with hashes; Renovate extends an external preset | **Partly addressed** in 0.4.0: release and SBOM tooling are hash-locked (`requirements-build.txt`, `requirements-sbom.txt`; A14-D7/D8). Closed in the current source: runtime/development closures are hash-locked for all three tested Python profiles, audit tools are isolated and locked, and Renovate policy is repository-owned. Historical signed tags without profile files retain the explicit legacy recovery branch |
 
 Residual by design: classification and redaction stay heuristic (ADR 0003); the
 OAuth CLI and the server share no lock (a lost update is fail-safe); a secret typed
@@ -889,7 +895,7 @@ mode is on.
 Open (owner or repository-settings actions, tracked in `BACKLOG.md`):
 
 - **A14-D12**: add `Analyze (actions)` to the ruleset's required checks.
-- **A14-D14**: review the external Renovate preset.
+- **A14-D14**: superseded by repository-owned Renovate policy and complete dependency profiles; no external project preset remains.
 - **A14-X1**: the owner checks `.env.example` against `Settings` (drop the mention of a
   nonexistent `--require-genesis` flag, confirm `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS`,
   reword `RELAY_SHELL_DEFAULT_TIMEOUT`); agent sessions may not read the file.
@@ -1057,3 +1063,40 @@ Bearer/resource validation is enabled explicitly. New authorization codes, acces
 Existing local opaque grants are reauthorized: a grant without a stored resource binding fails closed, and a client signs in again. The offline rebind script (`scripts/bind-legacy-oauth.py`) was removed on 2026-10-14 (A14-A5): it could not bind records once the current version had started, because tokens are hashed and the `token` field is dropped, and the migration window it served is over. The last version that shipped it is in the git history. Never upload token stores or backups to source control.
 
 Deploy from an independently supervised transaction with the previous complete runtime retained and an automatic rollback deadline. Synthetic registration/PKCE/refresh/wrong-resource tests precede cutover; verify an actual existing connector afterwards before cancelling rollback. A rollback selects the prior runtime but must not restore token-store snapshots over newer grants or audit records. Additive resource fields are ignored by the previous runtime. Do not change issuer/resource identifiers at the same time as this migration.
+
+
+## Locked installation and recovery (2026-10-20)
+
+The installer selects the existing venv interpreter, or system Python for a new
+installation, and requires its qualified runtime lock before account/environment
+changes. It builds the wheel as the service account in a disposable venv using
+hash-locked build tools. Only the matching runtime closure and built wheel enter
+the service venv; no pip upgrade, dependency resolution or source-build fallback
+is implicit. The owned temporary builder is removed on exit. The service is not
+started by installation. Interpreter/profile mismatch or absent wheels fail.
+
+The installation remains an in-place operator procedure, not an atomic deployment
+transaction. Preserve the previous complete runtime and service configuration
+before an authorized upgrade. Dependency installation can partially modify a venv
+before a failure; restore that complete runtime before restarting, rather than
+copying individual packages. These repository changes do not execute deployment.
+Existing package compatibility ranges remain available to library consumers;
+this installer claims only the explicitly qualified locked profiles.
+
+Current release builds use the tagged complete development profile, constrained
+against the independently selected workflow build-tool lock. Disagreement fails
+rather than silently replacing hashed build tools. SBOM creation builds in a
+separate locked builder and inventories only the complete runtime environment.
+Historical signed tags predating profiles retain their documented direct-constraint
+fallback; their old evidence is not relabeled as fully locked. A future backfill
+with incompatible historical/current tooling requires explicit review.
+
+Losses at this boundary include executing unreviewed dependency bytes and losing
+a usable runtime during replacement. Unsafe actions are selecting the wrong
+interpreter closure, bypassing hash/wheel checks, mixing build tools into runtime,
+or restarting after partial installation. Constraints are explicit profile
+selection before mutations, hashed binary-only dependency installation, separate
+builder/tool environments and operator-controlled recovery before activation.
+The scope remains package preparation; transport authority, audit and no-sandbox
+runtime posture are unchanged. CI covers profile installation, packaging and
+preflight refusal; operational restore acceptance remains deployment-specific.

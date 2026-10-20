@@ -12,8 +12,9 @@ name: sbom
 #              attests it and creates the immutable release.
 #
 # The SBOM lists name, version and PURL per component. Transitive dependencies are
-# resolved at build time (requirements.txt pins only direct dependencies), so the SBOM
-# records what was resolved, not a pre-reviewed lock.
+# installed from a complete runtime profile for new tags. Historical signed tags
+# without profile files retain their direct-constraint recovery path; the SBOM
+# records actual installed distributions in either case.
 
 on:
   push:
@@ -106,7 +107,11 @@ jobs:
           gh api -H "Accept: application/vnd.github.raw" \
             "repos/${REPO}/contents/requirements-sbom.txt?ref=${WORKFLOW_SHA}" \
             > "$RUNNER_TEMP/requirements-sbom.txt"
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/${REPO}/contents/requirements-build.txt?ref=${WORKFLOW_SHA}" \
+            > "$RUNNER_TEMP/requirements-build.txt"
           test -s "$RUNNER_TEMP/requirements-sbom.txt"
+          test -s "$RUNNER_TEMP/requirements-build.txt"
 
       - name: Install runtime dependencies and the hash-locked SBOM tool
         run: |
@@ -114,7 +119,17 @@ jobs:
           # direct pins in requirements.txt are constraints (not requirements), so
           # the dev/CI tools listed there are NOT installed and do not reach the SBOM.
           python -m venv .sbom-venv
-          .sbom-venv/bin/python -m pip install -c requirements.txt .
+          if [ -r requirements/runtime-py3.14.txt ]; then
+            python -m venv .sbom-builder
+            .sbom-builder/bin/python -m pip install --only-binary=:all: --require-hashes -r "$RUNNER_TEMP/requirements-build.txt"
+            .sbom-builder/bin/python -m build --wheel --no-isolation --outdir .sbom-dist
+            .sbom-venv/bin/python -m pip install --only-binary=:all: --require-hashes -r requirements/runtime-py3.14.txt
+            .sbom-venv/bin/python -m pip install --no-index --no-deps .sbom-dist/*.whl
+          else
+            # Explicit historical-tag compatibility; not a fully locked runtime profile.
+            .sbom-venv/bin/python -m pip install -c requirements.txt .
+          fi
+          .sbom-venv/bin/python -m pip check
           # The SBOM tool lives in its own venv, from the hash-locked file, so it
           # is not itself listed as a component of the environment it describes.
           python -m venv .sbom-tool

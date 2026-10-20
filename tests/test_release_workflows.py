@@ -45,7 +45,11 @@ def test_every_pip_install_is_hash_locked_or_constrained(workflow: dict[str, Any
         for line in _pip_lines(job):
             found += 1
             assert "--upgrade pip" not in line, f"{name}: unpinned pip upgrade: {line}"
-            assert "--require-hashes" in line or "-c requirements.txt" in line, (
+            local_project = "--no-deps" in line and (
+                ('--no-build-isolation -e ".[dev]"' in line)
+                or ("--no-index" in line and ".sbom-dist/*.whl" in line)
+            )
+            assert "--require-hashes" in line or "-c requirements.txt" in line or local_project, (
                 f"{name}: pip install without hashes or constraints: {line}"
             )
     assert found, "expected pip installs in the release/SBOM workflows"
@@ -106,6 +110,8 @@ def test_sbom_runtime_environment_excludes_dev_tools_and_the_sbom_tool() -> None
     assert "-r requirements.txt" not in text
     assert ".sbom-tool/bin/cyclonedx-py environment" in text  # separate venv for the tool
     assert "requirements-sbom.txt" in text
+    assert "requirements/runtime-py3.14.txt" in text
+    assert "--no-index --no-deps .sbom-dist/*.whl" in text
 
 
 def _lock(path: str) -> dict[str, str]:
@@ -165,3 +171,29 @@ def test_sbom_pins_the_cyclonedx_spec_version() -> None:
         block = text.split(f"--of {fmt}", 1)[1].split("--output-reproducible", 1)[0]
         assert "--sv 1.5" in block, f"{fmt} SBOM does not pin spec 1.5"
     assert 'data.get("specVersion") == "1.5"' in text
+
+
+@pytest.mark.parametrize("minor", ["3.12", "3.13", "3.14"])
+def test_complete_profiles_preserve_runtime_scope_and_direct_constraints(minor: str) -> None:
+    runtime = _lock(f"requirements/runtime-py{minor}.txt")
+    development = _lock(f"requirements/development-py{minor}.txt")
+    assert {"mcp", "asyncssh", "pydantic", "uvicorn"} <= set(runtime)
+    assert not {"pytest", "twine", "hatchling", "mypy", "pip-audit"} & set(runtime)
+    assert {"pytest", "ruff", "mypy", "hatchling", "editables"} <= set(development)
+    assert all(development[name] == version for name, version in runtime.items())
+    constraints = dict(
+        re.findall(r"^([A-Za-z0-9_.-]+)==([^\s]+)$", (ROOT / "requirements.txt").read_text(), re.M)
+    )
+    for name, version in constraints.items():
+        normalized = name.lower().replace("_", "-")
+        for profile in (runtime, development):
+            if normalized in profile:
+                assert profile[normalized] == version
+
+
+def test_audit_tool_has_its_own_hashed_environment() -> None:
+    assert {"pip", "pip-audit"} <= set(_lock("requirements-audit.txt"))
+    text = (WORKFLOWS / "pip-audit.yml").read_text()
+    assert ".audit-tool/bin/python -m pip install --only-binary=:all: --require-hashes" in text
+    assert '.audit-tool/bin/pip-audit --path "$AUDIT_SITE_PACKAGES"' in text
+    assert "--upgrade pip" not in text

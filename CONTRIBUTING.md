@@ -50,7 +50,9 @@ The canonical sequence runs in seconds (matches `docs/runbook.md` §4.1):
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
+python -m pip install --only-binary=:all: --require-hashes -r requirements/development-py3.12.txt
+python -m pip install --no-deps --no-build-isolation -e ".[dev]"
+python -m pip check
 
 ruff check .
 ruff format --check .
@@ -172,3 +174,12 @@ These recur in the runbook §3.4 "common review failures" list.
 By contributing you agree your contribution is licensed under
 Apache-2.0, matching the rest of the project. See
 [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+
+
+## Dependency automation
+
+Renovate policy is owned by this repository in `renovate.json5`. It does not
+inherit another project’s policy. Keep update grouping, release-age delays,
+major-version review and lock-maintenance behavior explicit here. Built-in
+Renovate presets supply standard defaults; repository-specific decisions remain
+local. Review policy changes and actual dependency extraction before merging.
