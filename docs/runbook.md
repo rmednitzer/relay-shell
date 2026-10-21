@@ -700,7 +700,8 @@ Anything you add to `TIER2_PATTERN` / `TIER3_PATTERN` / `PRIV_ESC_PATTERN`:
    heuristic represents a new category (not just another verb).
 4. A heuristic never replaces the deny list as a security control. The heuristics
    are advisory in `open` mode (they drive the audit tier and the `[NOTICE]` text, ADR 0013);
-   the deny list is the only guarantee. A new pattern must not make `open` refuse anything.
+   deny patterns match text, not shell semantics, and provide no containment guarantee.
+   A new classification pattern must not make `open` refuse anything.
 5. Keep the pattern linear. The classifier runs synchronously on the event loop before
    the deny list, so bound every repetition (`{0,N}` rather than `*`/`+` on a class that can
    match whitespace or the pattern's own separator) and never put two adjacent quantifiers

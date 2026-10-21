@@ -8,7 +8,7 @@ name: release
 #                   declared in pyproject.toml
 #   2. build      - complete hashed development profile (historical tags retain
 #                   direct constraints), full test suite on Python 3.14 (per-PR CI
-#                   exercises the 3.12-3.14 matrix), then `python -m build`
+#                   qualifies Ubuntu 24.04/3.12 and Ubuntu 26.04/3.14), then `python -m build`
 #                   to produce wheel + sdist. Build tooling comes from the
 #                   hash-locked requirements-build.txt and the build runs with
 #                   --no-isolation so no unpinned backend is fetched. This job

@@ -76,9 +76,14 @@ pre-commit run --all-files    # one-time sweep
 ```
 
 The hooks are advisory locally; CI runs the same ruff and mypy gates directly.
+Documentation validation runs on every PR and is required by the CI aggregate.
+To reproduce it locally, install `requirements-docs.txt` in a separate venv and run
+`mkdocs build --strict`. PR runs cannot upload or deploy Pages artifacts.
 
-A green local loop is the bar before pushing. If something fails in CI
-but not locally, that is a CI-config bug; fix that, not the test. The
+A green local loop is the bar before pushing. If a check fails only in CI,
+compare the revision, locked dependencies, OS,
+interpreter, privileges and test isolation before assigning the cause. Fix the
+reproduced defect; do not weaken a check to obtain a green result. The
 full validation phase (targeted runs, coverage, manual smokes) is in
 [`docs/runbook.md`](docs/runbook.md) §4.
 
@@ -112,8 +117,9 @@ worth calling out explicitly:
   test. The `test_redact_cli_flag_does_not_eat_next_flag` family is
   the model. Past PRs have repeatedly broken adjacent argv tokens.
 - **Policy regexes** require a positive **and** a near-miss negative
-  test. The deny list, not the heuristics, is the security guarantee;
-  heuristics are advisory in `open` mode.
+  test. Deny patterns are enforced before mode admission, but match text rather
+  than shell semantics and do not provide containment. Classification heuristics
+  drive notices and audit tiers in `open` mode.
 
 `pytest-asyncio` mode is `auto`; coroutines do not need a marker.
 

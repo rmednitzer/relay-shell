@@ -5,9 +5,9 @@ name: sbom
 # privileges away from the package installs (A14-D7):
 #
 #   sbom     - read-only token. Verifies the signed tag, builds a clean venv with
-#              only the runtime dependencies (direct pins from requirements.txt as
-#              constraints; no dev tools), runs the hash-locked cyclonedx-bom from a
-#              separate venv against it, and uploads the files as an artifact.
+#              only the runtime dependencies (complete hashed profile for current
+#              tags, legacy direct constraints for historical tags), runs hash-locked
+#              cyclonedx-bom from a separate venv against it, and uploads the files as an artifact.
 #   publish  - contents: write + OIDC. Installs nothing: downloads the artifact,
 #              attests it and creates the immutable release.
 #
@@ -27,8 +27,8 @@ on:
         required: true
         type: string
 
-# Default the workflow token to read-only; the sbom job escalates to
-# contents: write only for the release-asset upload, per the GitHub Actions
+# Default the workflow token to read-only; only the publish job escalates to
+# contents: write for release publication, per the GitHub Actions
 # hardening guide (least privilege). (CI-2)
 permissions:
   contents: read

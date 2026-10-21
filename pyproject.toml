@@ -42,7 +42,7 @@ dev = [
   "hypothesis>=6.0,<7",
   # tests/test_metrics.py imports httpx directly. It used to arrive as an mcp
   # v1 transitive; mcp v2 depends on httpx2 instead, so a clean `pip install
-  # -e ".[dev]"` (what CI does) no longer provides it. Declared explicitly
+  # -e ".[dev]"` without the development lock no longer provides it. Declared explicitly
   # because a package the suite imports should never be a transitive.
   "httpx>=0.28,<1",
   "ruff==0.17.1",

@@ -25,6 +25,7 @@ jobs:
     env:
       TARGET_SHA: ${{ github.event.pull_request.head.sha }}
       REQUIRED_CHECKS: |-
+        Build (MkDocs Material)
         check (py3.12)
         check (py3.14)
         gitleaks (secret scan)

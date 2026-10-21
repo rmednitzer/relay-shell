@@ -50,7 +50,8 @@ the no-sandbox full-access posture (0002), tiered authority (0003), edge-TLS
 automation (0004), the seccomp-notify audit channel (0006), the audit hash
 chain (0007), the Tier-3 confirmation broker (0009), Windows targets over
 OpenSSH + PowerShell (0011), cancel-safe session teardown (0012) and the open-by-default
-posture with unsafe-operation notices (0013).
+posture with unsafe-operation notices (0013), and
+[fresh-process syscall auditing and installer recovery qualification](adr/0014-seccomp-launch-and-install-recovery.md) (0014).
 
 ---
 
