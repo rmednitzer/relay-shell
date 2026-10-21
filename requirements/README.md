@@ -22,6 +22,9 @@ changes before acceptance. requirements.txt is the direct constraint input;
 requirements-build.txt pins the build closure. Update all affected profiles
 when either input changes. Renovate's pip-compile manager owns generated outputs.
 The independent repository policy requires review of complete lock refreshes.
+Renovate keeps each selected GitHub Actions Python minor on its existing 3.12 or
+3.14 line. Changing a native or legacy-fixture minor requires explicit OS/profile,
+lock and CI review; a dependency update must not collapse the qualification matrix.
 
 requirements-audit.txt is a separate complete audit-tool environment, generated
 from requirements-audit.in. Do not install it into the subject environment and
