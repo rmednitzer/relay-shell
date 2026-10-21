@@ -66,8 +66,6 @@ recipes per case.
    alternatives` (when applicable).
 5. Reference the ADR by number in code or other docs, not by file path; the
    number is the canonical handle.
-| [0014](0014-seccomp-launch-and-install-recovery.md) | Fresh-process syscall auditing and installer recovery qualification | Accepted | 2026-10-20 | Removes threaded-parent pre-exec filter installation; qualifies installer recovery and documents its limits. |
-
 ## Cross-references
 
 - `docs/architecture.md` - request lifecycle, module table, and how
