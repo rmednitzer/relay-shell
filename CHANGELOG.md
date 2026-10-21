@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Qualify Ubuntu 24.04/Python 3.12 and Ubuntu 26.04/Python 3.14 with full CI and
+  installer/recovery rehearsals. Retire Python 3.13 locks and installer admission;
+  keep Caddy routing and privileged seccomp coverage on the Python 3.14 leg.
+
 - Block installation retries after unresolved interruption and add explicit
   `install.sh --recover` with sealed snapshot verification and retained evidence.
 

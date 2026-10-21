@@ -4,6 +4,13 @@
 **where and as whom it runs**. This guide describes a production-grade
 deployment modeled on a mature MCP gateway.
 
+Qualified host profiles are Ubuntu 24.04 LTS / Python 3.12 and Ubuntu 26.04 LTS /
+Python 3.14. CI tests both OS/interpreter pairs and rehearses the actual installer
+and recovery on each. Python 3.13 has no maintained installer lock. Preserve an
+existing installation for rollback and rebuild its venv with a qualified interpreter;
+do not replace the interpreter in place. Package metadata's `>=3.12` floor does not
+qualify other host profiles.
+
 ## 0. Pre-flight checklist
 
 Complete this list before §1 (service account creation). Each item is a
@@ -806,7 +813,8 @@ and full-host disaster recovery remain separately qualified.
 ### 11b. Cross-version migration and rollback limits
 
 The required release rehearsal also qualifies one signed v0.3.0 fixture with its
-frozen SDK 1.x closure to current source on Ubuntu 24.04/Python 3.12. Its receipt
+frozen SDK 1.x closure to current source on Ubuntu 26.04, with an explicit
+legacy Python 3.12 interpreter. This fixture is separate from the two native host profiles. Its receipt
 records tag/source, wheel and lock identities. This is a newly qualified fixture,
 not evidence of the dependencies on any historical operational installation.
 

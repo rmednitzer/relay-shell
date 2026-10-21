@@ -2,7 +2,11 @@
 
 `runtime-py3.X.txt` contains only the complete application dependency closure.
 `development-py3.X.txt` contains that same closure plus development and build tools.
-The maintained profiles are CPython 3.12, 3.13 and 3.14 on the tested Linux runners.
+The maintained profiles are CPython 3.12 on Ubuntu 24.04 LTS and CPython 3.14 on
+Ubuntu 26.04 LTS. Python 3.13 has no maintained lock or installer admission.
+An existing Python 3.13 installation must be migrated to a qualified interpreter
+using the retained-source rebuild and full-state recovery procedure; do not rename
+a lock or replace the interpreter underneath an existing venv.
 Package compatibility ranges in pyproject.toml remain a separate library contract.
 
 Install the selected profile with `python -m pip install --only-binary=:all:

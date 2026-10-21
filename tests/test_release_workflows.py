@@ -173,7 +173,7 @@ def test_sbom_pins_the_cyclonedx_spec_version() -> None:
     assert 'data.get("specVersion") != "1.5"' in text
 
 
-@pytest.mark.parametrize("minor", ["3.12", "3.13", "3.14"])
+@pytest.mark.parametrize("minor", ["3.12", "3.14"])
 def test_complete_profiles_preserve_runtime_scope_and_direct_constraints(minor: str) -> None:
     runtime = _lock(f"requirements/runtime-py{minor}.txt")
     development = _lock(f"requirements/development-py{minor}.txt")

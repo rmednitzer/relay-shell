@@ -426,7 +426,7 @@ The Copilot setup workflow installs the complete hash-locked development profile
 then the editable project without resolving dependencies. It checks dependency consistency,
 linters and representative stdio/SSH test discovery without contacting a fleet.
 Runtime/development profiles lock the full dependency closure separately for
-Python 3.12, 3.13 and 3.14; the direct constraints remain regeneration inputs.
+Python 3.12 (Ubuntu 24.04 LTS) and 3.14 (Ubuntu 26.04 LTS); the direct constraints remain regeneration inputs.
 Copilot can continue
 when setup fails; report that failure and do not claim validation from setup alone.
 Privileged seccomp and Caddy routing acceptance remain in the existing CI matrix.
@@ -883,7 +883,7 @@ code. The 2026-10-14 pass is recorded in `BACKLOG.md` and `audit/2026-10-14-enga
 | M8 | OAuth tokens stored raw, files unbounded, per-request read on the event loop | **Closed** (#193): hashed at rest, purged on write, read off the loop. No in-memory cache (it would need cross-process invalidation) |
 | L1, L2, L3, L5, L6, L7, L9 | Unretrieved future, lingering channel reported as timeout, raw traceback on a bad deny regex, audit docstring, UTF-8 split in `session_recv`, `.env` from the working directory, `ProxyJump none` | **Closed** (#196) |
 | L4 | Seccomp launch, syscall coverage and async cleanup | **Closed in current source**: fresh-process launcher, filter v3 creat/openat2 coverage and off-loop cleanup; ADR 0014 records tests and residual listener availability limits |
-| L8 | No transitive dependency lock with hashes; Renovate extends an external preset | **Partly addressed** in 0.4.0: release and SBOM tooling are hash-locked (`requirements-build.txt`, `requirements-sbom.txt`; A14-D7/D8). Closed in the current source: runtime/development closures are hash-locked for all three tested Python profiles, audit tools are isolated and locked, and Renovate policy is repository-owned. Historical signed tags without profile files retain the explicit legacy recovery branch |
+| L8 | No transitive dependency lock with hashes; Renovate extends an external preset | **Partly addressed** in 0.4.0: release and SBOM tooling are hash-locked (`requirements-build.txt`, `requirements-sbom.txt`; A14-D7/D8). Closed in the current source: runtime/development closures are hash-locked for both qualified Ubuntu/Python profiles, audit tools are isolated and locked, and Renovate policy is repository-owned. Historical signed tags without profile files retain the explicit legacy recovery branch |
 
 Residual by design: classification and redaction stay heuristic (ADR 0003); the
 OAuth CLI and the server share no lock (a lost update is fail-safe); a secret typed
@@ -1105,8 +1105,9 @@ caches, signing or publishing rights. `scripts/rehearse_release.py` archives the
 committed source into a disposable directory and executes the named release
 install/build/distribution-check and SBOM preparation/generation shell steps
 verbatim. It uses Python 3.14 and the same workflow-revision tooling locks.
-The normal three-version CI matrix runs the full test suite; the rehearsal does
-not run it again. Its receipt binds source, interpreter, distribution/SBOM hashes
+The normal two-profile Ubuntu/Python CI matrix runs the full test suite; the rehearsal does
+not run it again. Package and actual installer/recovery rehearsals run on both
+Ubuntu 24.04 and 26.04, using each host's native Python for the installed runtime. Its receipt binds source, interpreter, distribution/SBOM hashes
 and the restoration results. Workflow artifacts retain the receipt and outputs.
 
 To repeat without publishing, from a committed checkout with the hashed development
@@ -1173,7 +1174,7 @@ protected-main signer custody, owner-only tag creation, tag integrity, dispatch
 guards or checkout identity changes. This is a dated settings observation, not
 a claim that workflow tests enforce those external rules.
 
-The main ruleset directly requires the three Python checks, gitleaks, pip-audit,
+The main ruleset directly requires the two qualified Python checks, gitleaks, pip-audit,
 dependency review, both CodeQL jobs and release-rehearsal alongside ci-success. Checks are bound to
 the GitHub Actions app with strict freshness; no bypass actor is configured.
 The aggregate remains a convenience, not the authority for which dependencies are

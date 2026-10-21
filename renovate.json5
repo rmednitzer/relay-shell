@@ -33,7 +33,7 @@
   "osvVulnerabilityAlerts": true,
   "packageRules": [
     {
-      "description": "Permit non-major automerge only after required checks and a three-day release-age delay. The delay is not proof of compatibility or supply-chain integrity.",
+      "description": "Allow Renovate itself to merge only after all checks, including its minimum-release-age status, pass; GitHub platform auto-merge does not reliably gate on this non-required status.",
       "matchUpdateTypes": [
         "minor",
         "patch",
@@ -42,7 +42,7 @@
         "pinDigest"
       ],
       "automerge": true,
-      "platformAutomerge": true,
+      "platformAutomerge": false,
       "minimumReleaseAge": "3 days"
     },
     {
