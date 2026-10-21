@@ -123,7 +123,7 @@ if [ -x "$PREFIX/venv/bin/python" ]; then
 fi
 PYTHON_PROFILE=$("${PROBE_PYTHON[@]}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 case "$PYTHON_PROFILE" in
-    3.12|3.13|3.14) ;;
+    3.12|3.14) ;;
     *) die "no qualified dependency lock for Python $PYTHON_PROFILE" ;;
 esac
 RUNTIME_LOCK="$SRC_DIR/requirements/runtime-py$PYTHON_PROFILE.txt"

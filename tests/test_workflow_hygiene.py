@@ -62,3 +62,41 @@ def test_gitleaks_allowlist_is_scoped_per_rule() -> None:
     for entry in config["allowlists"]:
         assert entry.get("targetRules"), "each allowlist names the rules it applies to"
         assert entry.get("paths")
+
+
+def test_qualified_profiles_keep_special_coverage_and_aggregate_checks_reachable() -> None:
+    ci = yaml.safe_load((WORKFLOWS / "ci.yml").read_text())["jobs"]["check"]
+    profiles = ci["strategy"]["matrix"]["include"]
+    assert {(p["os"], p["python-version"]) for p in profiles} == {
+        ("ubuntu-24.04", "3.12"),
+        ("ubuntu-26.04", "3.14"),
+    }
+    assert ci["runs-on"] == "${{ matrix.os }}"
+    minors = {p["python-version"] for p in profiles}
+    for step in ci["steps"]:
+        if step.get("name") in {
+            "Install Caddy (edge routing tests)",
+            "Test (seccomp-notify end to end, privileged)",
+        }:
+            assert any(step["if"] == f"matrix.python-version == '{minor}'" for minor in minors)
+    gate = yaml.safe_load((WORKFLOWS / "ci-gate.yml").read_text())
+    checks = gate["jobs"]["ci-success"]["env"]["REQUIRED_CHECKS"].splitlines()
+    assert {c for c in checks if c.startswith("check (py")} == {
+        f"check (py{minor})" for minor in minors
+    }
+    root = WORKFLOWS.parent.parent
+    for kind in ("runtime", "development"):
+        assert {p.name for p in (root / "requirements").glob(f"{kind}-py*.txt")} == {
+            f"{kind}-py{minor}.txt" for minor in minors
+        }
+
+
+def test_installer_rehearsal_covers_both_hosts_with_distinct_artifacts() -> None:
+    jobs = yaml.safe_load((WORKFLOWS / "release-rehearsal.yml").read_text())["jobs"]
+    rehearse = jobs["rehearse"]
+    assert set(rehearse["strategy"]["matrix"]["os"]) == {"ubuntu-24.04", "ubuntu-26.04"}
+    assert rehearse["runs-on"] == "${{ matrix.os }}"
+    for step in rehearse["steps"]:
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@"):
+            assert "${{ matrix.os }}" in step["with"]["name"]
+    assert set(jobs["release-rehearsal"]["needs"]) == {"rehearse", "cross-version"}

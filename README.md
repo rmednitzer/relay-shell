@@ -1,6 +1,6 @@
 # Relay Shell
 
-v0.4.0 · Python 3.12 / 3.13 / 3.14 · transports `stdio` and `streamable-http` · MCP SDK
+v0.4.0 · Python 3.12 / 3.14 · transports `stdio` and `streamable-http` · MCP SDK
 `mcp>=2,<3` · Apache-2.0
 
 `relay-shell` is a [Model Context Protocol](https://modelcontextprotocol.io) server that gives
@@ -61,7 +61,9 @@ serves Prometheus counters and gauges ([`docs/deployment.md`](docs/deployment.md
 
 ## Quickstart
 
-Requires CPython 3.12 or later; tested on Ubuntu 24.04.
+Qualified host profiles are Ubuntu 24.04 LTS with CPython 3.12 and Ubuntu 26.04 LTS
+with CPython 3.14. Use the matching hashed dependency profile. The package minimum
+is CPython 3.12; other interpreter/OS combinations are not qualified.
 
 ```bash
 git clone https://github.com/rmednitzer/relay-shell.git && cd relay-shell
@@ -159,8 +161,8 @@ Besides the audit record, notices and bounds above:
 
 | Surface | Supported | Notes |
 |---------|-----------|-------|
-| Python | 3.12 / 3.13 / 3.14 | CI runs the full matrix. |
-| Host OS | Ubuntu 24.04 LTS | Tested; the systemd and Caddy installers assume it. macOS works for development only. |
+| Python | 3.12 / 3.14 | Full CI on the corresponding Ubuntu LTS; 3.13 is not a maintained profile. |
+| Host OS | Ubuntu 24.04 / 26.04 LTS | 24.04 uses Python 3.12; 26.04 uses Python 3.14. Both run full tests and installer/recovery rehearsals. macOS is development-only. |
 | Windows | SSH target only | Over OpenSSH with PowerShell 7; not supported as a host (no PTY contract, no systemd). |
 | Transports | `stdio`, `streamable-http` | stdio is the default; HTTP binds loopback and needs a TLS edge. |
 | MCP SDK | `mcp>=2,<3` | Pinned in `requirements.txt`; a bump triggers a fresh validation pass. |
