@@ -60,7 +60,8 @@ mypy
 pytest -q
 ```
 
-Requires CPython 3.12+.
+Use CPython 3.12 on Ubuntu 24.04 LTS or CPython 3.14 on Ubuntu 26.04 LTS,
+with the matching development lock. Other profiles are not qualified.
 
 ### Pre-commit
 

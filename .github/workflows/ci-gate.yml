@@ -26,7 +26,6 @@ jobs:
       TARGET_SHA: ${{ github.event.pull_request.head.sha }}
       REQUIRED_CHECKS: |-
         check (py3.12)
-        check (py3.13)
         check (py3.14)
         gitleaks (secret scan)
         pip-audit (CVE scan)
