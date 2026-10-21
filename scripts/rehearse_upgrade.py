@@ -716,7 +716,7 @@ def rehearse(output: Path, build_python: str, audit_report: Path) -> None:
                 "audit_history_continued_across_both_versions": "passed",
                 "retained_upgrade_audit_sha256": tail_hash,
                 "scope": (
-                    "one admitted v0.3.0 fixture to current source on Ubuntu 24.04/Python 3.12; "
+                    "one admitted v0.3.0 fixture to current source on Ubuntu 26.04/Python 3.12; "
                     "loopback HTTP; snapshot rollback with grant reset and retained audit; "
                     "no live host, TLS, arbitrary versions, binary-only downgrade "
                     "or automatic rollback"
