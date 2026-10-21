@@ -40,7 +40,7 @@ def test_ci_runs_the_caddy_routing_tests_and_the_privileged_seccomp_tests() -> N
     """A14-D10 / A14-T1: tests that auto-skip locally must actually run somewhere."""
     text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
     assert "CADDY_BINARY=" in text and "caddy/v2/cmd/caddy@v" in text
-    assert "-m seccomp" in text and "sudo -E" in text
+    assert "-m seccomp" in text and "--preserve-env=PYTHONDONTWRITEBYTECODE" in text
 
 
 def test_codeql_also_scans_the_workflows_without_renaming_the_python_check() -> None:
@@ -100,3 +100,7 @@ def test_installer_rehearsal_covers_both_hosts_with_distinct_artifacts() -> None
         if str(step.get("uses", "")).startswith("actions/upload-artifact@"):
             assert "${{ matrix.os }}" in step["with"]["name"]
     assert set(jobs["release-rehearsal"]["needs"]) == {"rehearse", "cross-version"}
+    for job in (rehearse, jobs["cross-version"]):
+        command = next(s["run"] for s in job["steps"] if "sudo " in s.get("run", ""))
+        assert "--preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT" in command
+        assert "sudo -E" not in command
