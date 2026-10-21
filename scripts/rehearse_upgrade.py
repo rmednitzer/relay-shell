@@ -343,7 +343,7 @@ def identity() -> dict[str, str]:
     return json.loads(fixture.checked(["sudo", "-u", "relay-shell", fixture.PYTHON, "-c", code]))
 
 
-def rehearse(output: Path, build_python: str, audit_report: Path) -> None:
+def rehearse(output: Path, build_python: str, legacy_python: str, audit_report: Path) -> None:
     fixture.guard()
     if output.exists():
         raise ValueError("receipt output must be new")
@@ -402,12 +402,21 @@ def rehearse(output: Path, build_python: str, audit_report: Path) -> None:
             if len(wheels) != 1:
                 raise RuntimeError("expected one baseline wheel")
             legacy_wheel_hash = digest(wheels[0])
+            legacy_minor = fixture.checked(
+                [
+                    legacy_python,
+                    "-c",
+                    "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+                ]
+            ).strip()
+            if legacy_minor != data["python_minor"]:
+                raise RuntimeError("legacy runtime interpreter profile changed")
             fixture.checked(
                 [
                     "sudo",
                     "-u",
                     "relay-shell",
-                    "/usr/bin/python3",
+                    legacy_python,
                     "-m",
                     "venv",
                     str(fixture.PREFIX / "venv"),
@@ -736,6 +745,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--build-python", required=True)
+    parser.add_argument("--legacy-python", required=True)
     parser.add_argument("--audit-report", type=Path, required=True)
     arguments = parser.parse_args()
-    rehearse(arguments.output.resolve(), arguments.build_python, arguments.audit_report.resolve())
+    rehearse(
+        arguments.output.resolve(),
+        arguments.build_python,
+        arguments.legacy_python,
+        arguments.audit_report.resolve(),
+    )
