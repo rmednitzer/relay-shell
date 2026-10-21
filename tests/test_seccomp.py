@@ -811,7 +811,11 @@ async def test_background_process_keeps_working_after_the_call_ends(tmp_path: Pa
         seccomp.clear_active(token)
     assert code == 0, out
     assert monitor._stopped  # the call is over and the monitor was stopped
-    assert await asyncio.to_thread(_poll_until, target.exists, 8)
+    # Creation/truncation precedes the write; wait for completed output rather
+    # than racing the background process as soon as its directory entry exists.
+    assert await asyncio.to_thread(
+        _poll_until, lambda: target.exists() and target.read_text() == "ok\n", 8
+    )
     assert target.read_text() == "ok\n"
     # Once the last process carrying the filter has exited the kernel reports hang-up
     # and the detached server releases the listener (no fd/entry is kept for ever).

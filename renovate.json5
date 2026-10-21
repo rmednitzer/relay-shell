@@ -105,6 +105,30 @@
       "allowedVersions": "<3.15"
     },
     {
+      "description": "Keep the qualified Python 3.12 minor (including legacy fixture admission) stable; changing a minor requires explicit OS/profile, lock and CI review.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "python",
+        "actions/python-versions"
+      ],
+      "matchCurrentValue": "/^3\\.12(?:\\.|$)/",
+      "allowedVersions": "/^3\\.12(?:\\.|$)/"
+    },
+    {
+      "description": "Keep the qualified Python 3.14 minor (including legacy fixture admission) stable; changing a minor requires explicit OS/profile, lock and CI review.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "python",
+        "actions/python-versions"
+      ],
+      "matchCurrentValue": "/^3\\.14(?:\\.|$)/",
+      "allowedVersions": "/^3\\.14(?:\\.|$)/"
+    },
+    {
       "description": "Generated tooling outputs belong to pip-compile so version and hash regeneration stay coupled.",
       "matchManagers": [
         "pip_requirements"
@@ -173,7 +197,7 @@
   "pip-compile": {
     "managerFilePatterns": [
       "/^requirements-(?:build|sbom|audit)\\.txt$/",
-      "/^requirements/(?:runtime|development)-py3\\.(?:12|13|14)\\.txt$/"
+      "/^requirements/(?:runtime|development)-py3\\.(?:12|14)\\.txt$/"
     ]
   }
 }
