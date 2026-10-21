@@ -54,7 +54,7 @@ jobs:
 
   cross-version:
     name: cross-version-recovery
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -83,8 +83,12 @@ jobs:
           set -e
           test "$audit_result" -eq 0 || test "$audit_result" -eq 1
           test -s "$RUNNER_TEMP/legacy-audit.json"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        id: legacy-python
+        with:
+          python-version: "3.12"
       - name: Qualify admitted release upgrade and explicit rollback
-        run: sudo -E /usr/bin/python3 scripts/rehearse_upgrade.py --build-python "${{ steps.build-python.outputs.python-path }}" --audit-report "$RUNNER_TEMP/legacy-audit.json" --output "$RUNNER_TEMP/upgrade-rehearsal"
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT /usr/bin/python3 scripts/rehearse_upgrade.py --build-python "${{ steps.build-python.outputs.python-path }}" --legacy-python "${{ steps.legacy-python.outputs.python-path }}" --audit-report "$RUNNER_TEMP/legacy-audit.json" --output "$RUNNER_TEMP/upgrade-rehearsal"
       - name: Retain cross-version source-bound receipt
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -97,7 +101,7 @@ jobs:
     name: release-rehearsal
     if: ${{ always() }}
     needs: [rehearse, cross-version]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 2
     steps:
       - name: Require package, installer and cross-version recovery
