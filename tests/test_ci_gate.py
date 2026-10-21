@@ -12,6 +12,7 @@ def test_security_checks_are_required_by_the_aggregate() -> None:
     assert block is not None
     required = {line.strip() for line in block[1].splitlines()}
     assert {
+        "Build (MkDocs Material)",
         "gitleaks (secret scan)",
         "pip-audit (CVE scan)",
         "dependency-review",

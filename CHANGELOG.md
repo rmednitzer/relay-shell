@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Validate the documentation site before merge, include it in the CI aggregate,
+  and restrict Pages artifact publication/deployment to main. Index ADR 0014 and
+  correct contributor guidance about policy limits and CI-only failures.
+
 - Qualify Ubuntu 24.04/Python 3.12 and Ubuntu 26.04/Python 3.14 with full CI and
   installer/recovery rehearsals. Retire Python 3.13 locks and installer admission;
   keep Caddy routing and privileged seccomp coverage on the Python 3.14 leg.
