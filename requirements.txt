@@ -6,7 +6,7 @@
 # updates under this repository's release-age and required-check policy.
 mcp==2.3.0
 pydantic==2.14.1
-pydantic-settings==2.16.0
+pydantic-settings==2.16.1
 asyncssh==2.24.1
 uvicorn==0.54.0
 starlette==1.9.0
