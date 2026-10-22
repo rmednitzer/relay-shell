@@ -201,6 +201,9 @@ jobs:
           python -m pip check
 
       - name: Run full test suite
+        env:
+          # Keep generated test data outside the source distribution input tree.
+          HYPOTHESIS_STORAGE_DIRECTORY: ${{ runner.temp }}/release-hypothesis
         run: pytest -q
 
       - name: Build wheel + sdist

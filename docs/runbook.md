@@ -1106,6 +1106,8 @@ caches, signing or publishing rights. `scripts/rehearse_release.py` archives the
 committed source into a disposable directory and executes the named release
 install/build/distribution-check and SBOM preparation/generation shell steps
 verbatim. It uses Python 3.14 and the same workflow-revision tooling locks.
+The release workflow keeps Hypothesis storage under the runner temporary directory
+so its pre-build test run cannot add generated caches to the source distribution.
 The normal two-profile Ubuntu/Python CI matrix runs the full test suite; the rehearsal does
 not run it again. Package and actual installer/recovery rehearsals run on both
 Ubuntu 24.04 and 26.04, using each host's native Python for the installed runtime. Its receipt binds source, interpreter, distribution/SBOM hashes
