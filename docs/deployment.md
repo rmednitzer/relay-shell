@@ -203,6 +203,18 @@ drift for such a deployment. Treat the deviation as an explicitly owned,
 reviewed site override, not as a reason to disable drift checks or copy the
 exception into all installations.
 
+**Never use this exception with the built-in public-client flow**
+(`token_endpoint_auth_method=none`): client approval is not user authentication,
+and the built-in `/authorize` flow has no login/consent step (see `docs/auth.md`).
+Require an independently authenticating identity-aware proxy/IdP, or verified
+confidential-client authentication with protected client secrets, before
+allowing Internet reachability of `/mcp`. Treat approval of a public client
+or loss of the stronger authentication boundary as an immediate revocation or
+route-closure trigger. Reapprove the exception at least every 90 days and
+whenever the OAuth configuration, approved clients, reverse proxy, or threat
+model changes. Identify an owner and record an expiry date in the operational
+change record; do not assume this documentation grants blanket approval.
+
 Before retaining or reapplying this override, independently verify that OAuth
 is enabled at the *actual upstream*, that unauthenticated and malformed bearer
 requests to the public `/mcp` route receive HTTP 401, that a valid client
@@ -220,6 +232,21 @@ then reload Caddy and retest the negative and positive authentication paths.
 Restoring the previous files and reloading Caddy is the configuration rollback.
 Do not run the edge installer over an approved site override without first
 reconciling the intended route: its managed template is CIDR-restricted.
+
+After approval, establish a separately protected checksum/config-management
+baseline of the **effective** Caddyfile, including the route exception, and
+alert on any deviation from that approved baseline. The stock
+`--verify-deploy` will continue to report `DRIFT` against the canonical
+CIDR-restricted template; do not suppress that check without substituting a
+site-specific check that detects *subsequent* unauthorized changes. Keep the
+stock drift report as a documented exception until equivalent verification is
+operational. Preserve the previous config and test rollback on a candidate:
+restore the CIDR-restricted route, validate under the actual Caddy service
+environment, and verify a source outside the allowlist receives HTTP 403
+(or another explicit edge denial) for `/mcp`, not merely HTTP 401 from the
+upstream authentication handler. Then restore the intended approved candidate
+without disturbing the live service during rehearsal. An inability to prove
+route closure blocks approval of the exception.
 
 ### 4a. Automated TLS (Caddy + Let's Encrypt)
 
