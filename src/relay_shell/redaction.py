@@ -56,6 +56,8 @@ __all__ = ["redact", "redact_args"]
 # substring gate skips the provider-token regexes on inputs that cannot match.
 # Keep it conservative: a false positive costs a regex pass, a missing anchor
 # could leak a secret.
+_ORIGINAL_PREFIX_PATTERNS = patterns.REDACTION_PREFIX_PATTERNS
+
 _WHOLE_MATCH_HINTS = (
     "-----BEGIN ",
     "gith_pat_",
@@ -86,8 +88,38 @@ def redact(text: str) -> str:
     placeholder = patterns.REDACTION_PLACEHOLDER
     out = patterns.URL_CREDS_PATTERN.sub(f"://{placeholder}@", text)
     out = patterns.URL_TOKEN_USERINFO_PATTERN.sub(lambda m: f"{m.group(1)}://{placeholder}@", out)
-    for pat, repl in patterns.REDACTION_PREFIX_PATTERNS:
+    # These prefix rules have mandatory literal anchors. An inexpensive
+    # substring gate avoids repeated full-buffer regex scans when no matching
+    # credential syntax can occur (notably large PowerShell command lines).
+    # Keep the hints in the same order as REDACTION_PREFIX_PATTERNS and fail
+    # closed on table growth: an unlisted pattern is always evaluated.
+    prefix_hints = (
+        ("authorization",),
+        ("bearer",),
+        ("key", "secret", "token", "password", "passwd", "pwd", "credential"),
+        ("key", "secret", "token", "password", "passwd", "pwd", "credential"),
+        ("secret",),
+        ("key",),
+        ("sig=",),
+        ("password", "passwd", "pwd", "passphrase", "secret", "token", "key", "credential"),
+        ("convertto-securestring",),
+    )
+    lowered = out.lower()
+    for index, (pat, repl) in enumerate(patterns.REDACTION_PREFIX_PATTERNS):
+        # Only skip a known built-in regex, never a patched or new rule.
+        is_builtin = (
+            index < len(_ORIGINAL_PREFIX_PATTERNS) and pat is _ORIGINAL_PREFIX_PATTERNS[index][0]
+        )
+        if (
+            is_builtin
+            and out.isascii()
+            and not any(hint in lowered for hint in prefix_hints[index])
+        ):
+            continue
         out = pat.sub(repl, out)
+        # A substitution may introduce a marker but does not introduce a new
+        # credential prefix absent from the input; reevaluate for safety.
+        lowered = out.lower()
     for pat, repl in patterns.COMMAND_SCOPED_PREFIX_PATTERNS:
         out = pat.sub(repl, out)
     if any(hint in out for hint in _WHOLE_MATCH_HINTS):
