@@ -458,3 +458,9 @@ def test_v12_new_rules_are_linear_on_adversarial_input() -> None:
 def test_v12_patterns_version_bumped() -> None:
     # Redaction moved the table to v12; later pattern work only moves it forward.
     assert int(patterns.PATTERNS_VERSION) >= 12
+
+
+def test_unicode_ignorecase_password_is_not_skipped_by_prefix_gate() -> None:
+    # Python re.IGNORECASE equates long-s with ASCII s; lower() does not.
+    assert "hunter2" not in redact("pa\u017f\u017fword=hunter2")
+    assert "[REDACTED]" in redact("pa\u017f\u017fword=hunter2")

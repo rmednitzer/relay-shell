@@ -110,7 +110,11 @@ def redact(text: str) -> str:
         is_builtin = (
             index < len(_ORIGINAL_PREFIX_PATTERNS) and pat is _ORIGINAL_PREFIX_PATTERNS[index][0]
         )
-        if is_builtin and not any(hint in lowered for hint in prefix_hints[index]):
+        if (
+            is_builtin
+            and out.isascii()
+            and not any(hint in lowered for hint in prefix_hints[index])
+        ):
             continue
         out = pat.sub(repl, out)
         # A substitution may introduce a marker but does not introduce a new
