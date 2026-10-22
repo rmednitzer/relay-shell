@@ -252,9 +252,8 @@ def test_store_rejects_symlink_state_file(tmp_path: Path) -> None:
     state.mkdir(mode=0o700)
     (state / "clients.json").symlink_to(outside)
     store = _Store(state / "clients.json")
-    with pytest.raises(StoreUnreadableError, match="symlink"):
-        store.load()
-    with pytest.raises(StoreUnreadableError, match="symlink"):
+    assert store.load() == {}  # tolerant requests fail closed without a transport exception
+    with pytest.raises(StoreUnreadableError, match="unreadable"):
         store.load(strict=True)
     with pytest.raises(StoreUnreadableError, match="symlink"):
         store.save({"changed": True})

@@ -166,9 +166,19 @@ class _Store:
         :class:`StoreUnreadableError` instead of masquerading as an empty store,
         which matters wherever "empty" would *open* something (client registration).
         """
-        self._reject_symlink()
         try:
-            data: Any = json.loads(self._path.read_text(encoding="utf-8"))
+            # Resolve the leaf only once and refuse symlinks at open time.
+            # A directory descriptor also prevents a concurrent parent rename
+            # from redirecting the opened file to an unrelated directory.
+            directory = os.open(self._path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                fd = os.open(self._path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+            finally:
+                os.close(directory)
+            with os.fdopen(fd, "r", encoding="utf-8") as fh:
+                if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                    raise OSError("state entry is not a regular file")
+                data: Any = json.load(fh)
         except FileNotFoundError:
             return {}
         except (OSError, json.JSONDecodeError) as exc:
