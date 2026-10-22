@@ -192,6 +192,76 @@ upstream authentication is disabled.
 Defense in depth: a host firewall (only 80/443 inbound), the proxy CIDR
 matcher, OAuth 2.1, then the policy/audit layer.
 
+#### Site-specific public `/mcp` exception (not the default template)
+
+A deployment may deliberately place `handle /mcp` **before** the `@blocked`
+CIDR matcher to support OAuth-authenticated clients without fixed source IPs.
+This is a material exposure change: any Internet source can reach the relay's
+MCP authentication boundary. It is **not** implemented by the shipped template
+or `install-edge.sh`, and `relay-shell --verify-deploy` must report Caddyfile
+drift for such a deployment. Treat the deviation as an explicitly owned,
+reviewed site override, not as a reason to disable drift checks or copy the
+exception into all installations.
+
+**Never use this exception with the built-in public-client flow**
+(`token_endpoint_auth_method=none`): client approval is not user authentication,
+and the built-in `/authorize` flow has no login/consent step (see `docs/auth.md`).
+Require an independently authenticating identity-aware proxy/IdP, or verified
+confidential-client authentication with protected client secrets, before
+allowing Internet reachability of `/mcp`. Treat approval of a public client
+or loss of the stronger authentication boundary as an immediate revocation or
+route-closure trigger. Reapprove the exception at least every 90 days and
+whenever the OAuth configuration, approved clients, reverse proxy, or threat
+model changes. Identify an owner and record an expiry date in the operational
+change record; do not assume this documentation grants blanket approval.
+
+Before retaining or reapplying this override, independently verify that OAuth
+is enabled at the *actual upstream*, that unauthenticated and malformed bearer
+requests to the public `/mcp` route receive HTTP 401, that a valid client
+credential is accepted only with the intended audience/scopes, and that
+revoked/expired/wrong-audience tokens fail. Check both IPv4 and IPv6 entry
+paths and confirm the public discovery endpoints remain reachable. HTTP 401
+alone proves only rejection; it does **not** establish authenticated tool
+authorization. Do not put bearer tokens in terminal history, proxy access
+logs, CI artifacts, or issue reports. Use short-lived credentials from a
+protected test client for positive-path checks.
+
+Back up the live Caddyfile and the associated EnvironmentFile before changing
+this exception. Validate a candidate with the same environment as the service,
+then reload Caddy and retest the negative and positive authentication paths.
+Restoring the previous files and reloading Caddy is the configuration rollback.
+A non-disruptive rollback-path rehearsal on 2026-10-22 used an isolated Caddy
+instance derived from the shipped restricted template. With a loopback-only
+test listener, temporary log path, disabled ACME/admin endpoints, and a test
+allowlist excluding the request source, `/mcp` returned HTTP 403 before any
+upstream authentication. This verifies the restricted template's denial
+mechanism, **not** a live reload/rollback or public-origin network path.
+Do not run the edge installer over an approved site override without first
+reconciling the intended route: its managed template is CIDR-restricted.
+
+After approval, establish a separately protected checksum/config-management
+baseline of the **effective** Caddyfile, including the route exception, and
+alert on any deviation from that approved baseline. On the currently assessed
+relay host, a root-owned checksum is stored at
+`/var/lib/relay-shell/evidence/caddy-site-baseline/Caddyfile.sha256` and
+`relay-caddy-drift-check.timer` invokes a read-only hourly systemd service.
+Check it with `systemctl status relay-caddy-drift-check.timer` and
+`systemctl start relay-caddy-drift-check.service`, then inspect its journal.
+The check detects changes but does not reload Caddy, rotate the baseline or
+provide external alert delivery; configure notification routing separately.
+The baseline is a recorded observation, not approval of the exception. The stock
+`--verify-deploy` will continue to report `DRIFT` against the canonical
+CIDR-restricted template; do not suppress that check without substituting a
+site-specific check that detects *subsequent* unauthorized changes. Keep the
+stock drift report as a documented exception until equivalent verification is
+operational. Preserve the previous config and test rollback on a candidate:
+restore the CIDR-restricted route, validate under the actual Caddy service
+environment, and verify a source outside the allowlist receives HTTP 403
+(or another explicit edge denial) for `/mcp`, not merely HTTP 401 from the
+upstream authentication handler. Then restore the intended approved candidate
+without disturbing the live service during rehearsal. An inability to prove
+route closure blocks approval of the exception.
+
 ### 4a. Automated TLS (Caddy + Let's Encrypt)
 
 `deploy/install-edge.sh` is the supported turnkey path. It installs Caddy
