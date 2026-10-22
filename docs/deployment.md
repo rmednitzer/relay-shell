@@ -235,7 +235,15 @@ reconciling the intended route: its managed template is CIDR-restricted.
 
 After approval, establish a separately protected checksum/config-management
 baseline of the **effective** Caddyfile, including the route exception, and
-alert on any deviation from that approved baseline. The stock
+alert on any deviation from that approved baseline. On the currently assessed
+relay host, a root-owned checksum is stored at
+`/var/lib/relay-shell/evidence/caddy-site-baseline/Caddyfile.sha256` and
+`relay-caddy-drift-check.timer` invokes a read-only hourly systemd service.
+Check it with `systemctl status relay-caddy-drift-check.timer` and
+`systemctl start relay-caddy-drift-check.service`, then inspect its journal.
+The check detects changes but does not reload Caddy, rotate the baseline or
+provide external alert delivery; configure notification routing separately.
+The baseline is a recorded observation, not approval of the exception. The stock
 `--verify-deploy` will continue to report `DRIFT` against the canonical
 CIDR-restricted template; do not suppress that check without substituting a
 site-specific check that detects *subsequent* unauthorized changes. Keep the
