@@ -54,7 +54,13 @@ require_var() {
 # so spaces, shell metacharacters or unbalanced quotes in values cannot crash or
 # hijack the installer. Only RELAY_SHELL_EDGE_* keys are exported.
 load_edge_env() {
-    local file="$1" line key val
+    local file="$1" line key val inherited_key
+    local -A inherited=()
+    # Snapshot caller-supplied variables before reading the file. Assignments
+    # inside the file must still obey its normal last-assignment-wins order.
+    while IFS= read -r inherited_key; do
+        case "$inherited_key" in RELAY_SHELL_EDGE_*) inherited["$inherited_key"]=1 ;; esac
+    done < <(compgen -e)
     [ -r "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
@@ -71,6 +77,10 @@ load_edge_env() {
             RELAY_SHELL_EDGE_*) ;;
             *) continue ;;
         esac
+        # Never use unvalidated file input in an indirect Bash expansion:
+        # array subscripts can evaluate command substitutions.
+        [[ "$key" =~ ^RELAY_SHELL_EDGE_[A-Za-z0-9_]+$ ]] \
+            || die "invalid edge environment variable name"
         # Strip a single pair of surrounding double or single quotes if
         # present (systemd permits, but does not require, them).
         case "$val" in
@@ -81,7 +91,7 @@ load_edge_env() {
         # This also keeps validate-only invocations independent of host defaults.
         # Check for *set*, not non-empty, so an explicitly empty value is
         # rejected by validation rather than silently replaced.
-        if [ "${!key+x}" = x ]; then
+        if [ "${inherited[$key]+x}" = x ]; then
             continue
         fi
         # Reject control characters and embedded newlines (the latter cannot
@@ -100,9 +110,9 @@ load_edge_env "$OPERATOR_ENV_FILE"
 require_var RELAY_SHELL_EDGE_DOMAIN
 require_var RELAY_SHELL_EDGE_ACME_EMAIL
 
-: "${RELAY_SHELL_EDGE_UPSTREAM:=127.0.0.1:8080}"
-: "${RELAY_SHELL_EDGE_CLIENT_CIDRS:=127.0.0.1/8 ::1}"
-: "${RELAY_SHELL_EDGE_ACME_CA:=https://acme-v02.api.letsencrypt.org/directory}"
+: "${RELAY_SHELL_EDGE_UPSTREAM=127.0.0.1:8080}"
+: "${RELAY_SHELL_EDGE_CLIENT_CIDRS=127.0.0.1/8 ::1}"
+: "${RELAY_SHELL_EDGE_ACME_CA=https://acme-v02.api.letsencrypt.org/directory}"
 
 # Every value is substituted into the Caddyfile by Caddy at start ({$VAR}) and written
 # to a systemd EnvironmentFile below, so a stray `}`, space, quote or newline would

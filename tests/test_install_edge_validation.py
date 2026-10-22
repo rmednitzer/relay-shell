@@ -105,3 +105,12 @@ def test_the_script_still_requires_root_after_validation() -> None:
     )
     assert proc.returncode != 0
     assert "must run as root" in proc.stderr
+
+
+@pytest.mark.parametrize("variable", [
+    "RELAY_SHELL_EDGE_ACME_CA", "RELAY_SHELL_EDGE_UPSTREAM",
+    "RELAY_SHELL_EDGE_CLIENT_CIDRS",
+])
+def test_explicit_empty_optional_value_is_rejected(variable: str) -> None:
+    proc = run(**{variable: ""})
+    assert proc.returncode != 0, proc.stdout + proc.stderr
