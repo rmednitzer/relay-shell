@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-22
+
+
 - Validate the documentation site before merge, include it in the CI aggregate,
   and restrict Pages artifact publication/deployment to main. Index ADR 0014 and
   correct contributor guidance about policy limits and CI-only failures.
