@@ -192,6 +192,35 @@ upstream authentication is disabled.
 Defense in depth: a host firewall (only 80/443 inbound), the proxy CIDR
 matcher, OAuth 2.1, then the policy/audit layer.
 
+#### Site-specific public `/mcp` exception (not the default template)
+
+A deployment may deliberately place `handle /mcp` **before** the `@blocked`
+CIDR matcher to support OAuth-authenticated clients without fixed source IPs.
+This is a material exposure change: any Internet source can reach the relay's
+MCP authentication boundary. It is **not** implemented by the shipped template
+or `install-edge.sh`, and `relay-shell --verify-deploy` must report Caddyfile
+drift for such a deployment. Treat the deviation as an explicitly owned,
+reviewed site override, not as a reason to disable drift checks or copy the
+exception into all installations.
+
+Before retaining or reapplying this override, independently verify that OAuth
+is enabled at the *actual upstream*, that unauthenticated and malformed bearer
+requests to the public `/mcp` route receive HTTP 401, that a valid client
+credential is accepted only with the intended audience/scopes, and that
+revoked/expired/wrong-audience tokens fail. Check both IPv4 and IPv6 entry
+paths and confirm the public discovery endpoints remain reachable. HTTP 401
+alone proves only rejection; it does **not** establish authenticated tool
+authorization. Do not put bearer tokens in terminal history, proxy access
+logs, CI artifacts, or issue reports. Use short-lived credentials from a
+protected test client for positive-path checks.
+
+Back up the live Caddyfile and the associated EnvironmentFile before changing
+this exception. Validate a candidate with the same environment as the service,
+then reload Caddy and retest the negative and positive authentication paths.
+Restoring the previous files and reloading Caddy is the configuration rollback.
+Do not run the edge installer over an approved site override without first
+reconciling the intended route: its managed template is CIDR-restricted.
+
 ### 4a. Automated TLS (Caddy + Let's Encrypt)
 
 `deploy/install-edge.sh` is the supported turnkey path. It installs Caddy
