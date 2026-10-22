@@ -107,10 +107,14 @@ def test_the_script_still_requires_root_after_validation() -> None:
     assert "must run as root" in proc.stderr
 
 
-@pytest.mark.parametrize("variable", [
-    "RELAY_SHELL_EDGE_ACME_CA", "RELAY_SHELL_EDGE_UPSTREAM",
-    "RELAY_SHELL_EDGE_CLIENT_CIDRS",
-])
+@pytest.mark.parametrize(
+    "variable",
+    [
+        "RELAY_SHELL_EDGE_ACME_CA",
+        "RELAY_SHELL_EDGE_UPSTREAM",
+        "RELAY_SHELL_EDGE_CLIENT_CIDRS",
+    ],
+)
 def test_explicit_empty_optional_value_is_rejected(variable: str) -> None:
     proc = run(**{variable: ""})
     assert proc.returncode != 0, proc.stdout + proc.stderr
@@ -126,15 +130,17 @@ def test_operator_file_rejects_array_subscript_in_key(tmp_path: Path) -> None:
     script.write_text(source)
     shutil.copyfile(SCRIPT.parent / "Caddyfile", tmp_path / "Caddyfile")
     marker = tmp_path / "executed"
-    (tmp_path / "operator.env").write_text(
-        f'RELAY_SHELL_EDGE_X[$(touch {marker})]=value\n'
+    (tmp_path / "operator.env").write_text(f"RELAY_SHELL_EDGE_X[$(touch {marker})]=value\n")
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(tmp_path),
+        "RELAY_SHELL_EDGE_DOMAIN": "relay.example.org",
+        "RELAY_SHELL_EDGE_ACME_EMAIL": "ops@example.org",
+        "RELAY_SHELL_EDGE_VALIDATE_ONLY": "1",
+    }
+    result = subprocess.run(
+        [BASH, str(script)], env=env, capture_output=True, text=True, timeout=15, check=False
     )
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path),
-           "RELAY_SHELL_EDGE_DOMAIN": "relay.example.org",
-           "RELAY_SHELL_EDGE_ACME_EMAIL": "ops@example.org",
-           "RELAY_SHELL_EDGE_VALIDATE_ONLY": "1"}
-    result = subprocess.run([BASH, str(script)], env=env, capture_output=True, text=True,
-                            timeout=15, check=False)
     assert result.returncode != 0
     assert not marker.exists()
 
@@ -152,8 +158,12 @@ def test_operator_file_last_assignment_wins(tmp_path: Path) -> None:
         "RELAY_SHELL_EDGE_DOMAIN=relay.example.org\n"
         "RELAY_SHELL_EDGE_ACME_EMAIL=ops@example.org\n"
     )
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path),
-           "RELAY_SHELL_EDGE_VALIDATE_ONLY": "1"}
-    result = subprocess.run([BASH, str(script)], env=env, capture_output=True, text=True,
-                            timeout=15, check=False)
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(tmp_path),
+        "RELAY_SHELL_EDGE_VALIDATE_ONLY": "1",
+    }
+    result = subprocess.run(
+        [BASH, str(script)], env=env, capture_output=True, text=True, timeout=15, check=False
+    )
     assert result.returncode == 0, result.stdout + result.stderr
