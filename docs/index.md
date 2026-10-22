@@ -6,7 +6,7 @@ title: Overview
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server for **complete shell and
 SSH operation**: local commands and scripts, interactive PTY sessions, fleet operation over
-SSH, SFTP transfers and port forwards. Current release: **v0.4.0** (2026-10-15).
+SSH, SFTP transfers and port forwards. Current release: **[v0.5.0](https://github.com/rmednitzer/relay-shell/releases/tag/v0.5.0)** (2026-10-22).
 
 It is operator infrastructure for hosts you own and administer. It runs with the privileges
 of its service account, with no sandbox, and it is **open by default**: with the default
