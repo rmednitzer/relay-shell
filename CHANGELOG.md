@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.5.0] - 2026-10-22
 
+- Change edge-installer precedence: explicitly exported `RELAY_SHELL_EDGE_*` values override the operator environment file; explicitly empty optional values now fail validation instead of selecting defaults. Review exported values before reinstalling the edge.
+
 
 - Validate the documentation site before merge, include it in the CI aggregate,
   and restrict Pages artifact publication/deployment to main. Index ADR 0014 and
@@ -1791,7 +1793,8 @@ All notable changes to this project are documented here. The format follows
   bundled logrotate config drops and restores the append-only attribute
   across rotation. See `docs/deployment.md` §6.
 
-[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/rmednitzer/relay-shell/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/rmednitzer/relay-shell/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/rmednitzer/relay-shell/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/rmednitzer/relay-shell/compare/v0.1.0...v0.2.0
