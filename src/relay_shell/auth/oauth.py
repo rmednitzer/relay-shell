@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import secrets
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -143,7 +144,18 @@ class _Store:
                 "token store."
             )
 
+    def _reject_symlink(self) -> None:
+        # Refuse operator-provided symlink state rather than following it.
+        # The private 0700 directory is the primary protection against races.
+        try:
+            mode = self._path.lstat().st_mode
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(mode):
+            raise StoreUnreadableError(f"{self._path.name} must not be a symlink")
+
     def exists(self) -> bool:
+        self._reject_symlink()
         return self._path.exists()
 
     def load(self, *, strict: bool = False) -> dict[str, Any]:
@@ -154,6 +166,7 @@ class _Store:
         :class:`StoreUnreadableError` instead of masquerading as an empty store,
         which matters wherever "empty" would *open* something (client registration).
         """
+        self._reject_symlink()
         try:
             data: Any = json.loads(self._path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -169,6 +182,7 @@ class _Store:
         return {}
 
     def save(self, data: dict[str, Any]) -> None:
+        self._reject_symlink()
         payload = json.dumps(data, indent=2, default=str)
         # A unique temp file in the same directory (mkstemp creates it 0o600
         # atomically): the server and the admin CLI share no lock, so a fixed
