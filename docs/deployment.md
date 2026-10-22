@@ -230,6 +230,12 @@ Back up the live Caddyfile and the associated EnvironmentFile before changing
 this exception. Validate a candidate with the same environment as the service,
 then reload Caddy and retest the negative and positive authentication paths.
 Restoring the previous files and reloading Caddy is the configuration rollback.
+A non-disruptive rollback-path rehearsal on 2026-10-22 used an isolated Caddy
+instance derived from the shipped restricted template. With a loopback-only
+test listener, temporary log path, disabled ACME/admin endpoints, and a test
+allowlist excluding the request source, `/mcp` returned HTTP 403 before any
+upstream authentication. This verifies the restricted template's denial
+mechanism, **not** a live reload/rollback or public-origin network path.
 Do not run the edge installer over an approved site override without first
 reconciling the intended route: its managed template is CIDR-restricted.
 
