@@ -239,3 +239,22 @@ async def test_access_token_lookup_does_not_block_the_event_loop(tmp_path: Path)
     assert await p.load_access_token(issued.access_token) is not None
     assert seen
     assert threading.get_ident() not in seen  # the file read ran on a worker thread
+
+
+def test_store_rejects_symlink_state_file(tmp_path: Path) -> None:
+    import pytest
+
+    from relay_shell.auth.oauth import StoreUnreadableError, _Store
+
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"sentinel": true}')
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    (state / "clients.json").symlink_to(outside)
+    store = _Store(state / "clients.json")
+    assert store.load() == {}  # tolerant requests fail closed without a transport exception
+    with pytest.raises(StoreUnreadableError, match="unreadable"):
+        store.load(strict=True)
+    with pytest.raises(StoreUnreadableError, match="symlink"):
+        store.save({"changed": True})
+    assert outside.read_text() == '{"sentinel": true}'
