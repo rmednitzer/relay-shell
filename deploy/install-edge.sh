@@ -77,6 +77,13 @@ load_edge_env() {
             \"*\") val="${val#\"}"; val="${val%\"}" ;;
             \'*\') val="${val#\'}"; val="${val%\'}" ;;
         esac
+        # Explicitly exported values take precedence over the operator file.
+        # This also keeps validate-only invocations independent of host defaults.
+        # Check for *set*, not non-empty, so an explicitly empty value is
+        # rejected by validation rather than silently replaced.
+        if [ "${!key+x}" = x ]; then
+            continue
+        fi
         # Reject control characters and embedded newlines (the latter cannot
         # appear in a single read line, but be explicit).
         case "$val" in
