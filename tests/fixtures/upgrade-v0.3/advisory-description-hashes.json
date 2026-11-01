@@ -1,0 +1,14 @@
+{
+  "CVE-2026-116684": {
+    "alias": "GHSA-w4fh-qvv9-3v23",
+    "description_sha256": "c1e2aaaf0590b41523ffd5b456d58bed003a5aeebf5aad72234716aba3ac5b67"
+  },
+  "CVE-2026-116685": {
+    "alias": "GHSA-5h93-6whr-6q8j",
+    "description_sha256": "31c7d205115018ccbadbe37290cc2618b119c7683bc5c194b43950d9f462ab85"
+  },
+  "CVE-2026-116686": {
+    "alias": "GHSA-rwrf-2pqf-9j8j",
+    "description_sha256": "623d1fa95a6597a73b6fd8cfeecf953c317ceb2c495a571acd4845026c571788"
+  }
+}
