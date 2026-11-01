@@ -205,3 +205,39 @@ def test_existing_interpreter_probe_requires_service_account(tmp_path: Path, dro
         timeout=5,
     )
     assert (result.returncode == 0) == dropped
+
+
+@pytest.mark.parametrize("bootstrap_present", [False, True])
+def test_missing_bootstrap_lock_refuses_before_account_changes(
+    tmp_path: Path, bootstrap_present: bool
+) -> None:
+    text = (ROOT / "deploy/install.sh").read_text()
+    start = text.index("INSTALL_PYTHON=python3")
+    end = text.index('log "Ensuring service account', start)
+    source = tmp_path / "source"
+    (source / "requirements").mkdir(parents=True)
+    (source / "requirements/runtime-py3.14.txt").write_text("")
+    (source / "requirements-build.txt").write_text("")
+    if bootstrap_present:
+        (source / "requirements-bootstrap.txt").write_text("pip==26.2.2\n")
+    fixture_bin = tmp_path / "bin"
+    fixture_bin.mkdir()
+    interpreter = fixture_bin / "python3"
+    interpreter.write_text("#!/bin/sh\nprintf '3.14\\n'\n")
+    interpreter.chmod(0o755)
+    target = tmp_path / "target"
+    script = (
+        'die() { echo "$*" >&2; exit 1; }; '
+        f'PREFIX="{target}"; SRC_DIR="{source}";\n' + text[start:end]
+    )
+    result = subprocess.run(
+        ["bash", "-eu", "-c", script],
+        env={**os.environ, "PATH": str(fixture_bin) + os.pathsep + os.environ["PATH"]},
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert (result.returncode == 0) == bootstrap_present
+    assert not target.exists()
+    if not bootstrap_present:
+        assert "bootstrap lock missing" in result.stderr
