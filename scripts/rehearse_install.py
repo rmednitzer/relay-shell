@@ -13,6 +13,7 @@ import http.client
 import json
 import os
 import pwd
+import re
 import shutil
 import socket
 import stat
@@ -167,6 +168,29 @@ if t is None or t.client_id != 'synthetic-client':
     raise SystemExit('restored synthetic OAuth token was not recognized')
 """
     checked(["sudo", "-u", "relay-shell", PYTHON, "-c", code])
+
+
+def pinned_bootstrap_version(path: Path) -> str:
+    matches = re.findall(r"(?m)^pip==([^\s;\\]+)", path.read_text())
+    if len(matches) != 1:
+        raise RuntimeError("bootstrap lock must contain exactly one pinned pip version")
+    return matches[0]
+
+
+def verify_bootstrap() -> None:
+    expected = pinned_bootstrap_version(ROOT / "requirements-bootstrap.txt")
+    actual = checked(
+        [
+            "sudo",
+            "-u",
+            "relay-shell",
+            PYTHON,
+            "-c",
+            "import importlib.metadata; print(importlib.metadata.version('pip'))",
+        ]
+    ).strip()
+    if actual != expected:
+        raise RuntimeError("installed bootstrap pip does not match the reviewed lock")
 
 
 def rehearse(output: Path) -> None:
@@ -376,6 +400,7 @@ def rehearse(output: Path) -> None:
                             f"automatic {scenario} recovery changed retained identity: {path}"
                         )
                 checked(["sudo", "-u", "relay-shell", PYTHON, "-m", "pip", "check"])
+                verify_bootstrap()
                 oauth_proof()
             retained = list(Path("/var/backups/relay-shell-installer").glob("install-*"))
             if len(retained) != 3 or any(path.stat().st_mode & 0o077 for path in retained):
@@ -439,6 +464,7 @@ exec /usr/bin/sudo "$@"
             if any(inventory(path) != automatic_before[str(path)] for path in automatic_targets):
                 raise RuntimeError("explicit interrupted recovery changed retained identity")
             checked(["sudo", "-u", "relay-shell", PYTHON, "-m", "pip", "check"])
+            verify_bootstrap()
             oauth_proof()
             repeat_recovery = run([*installer, "--recover"])
             if repeat_recovery.returncode == 0:
@@ -460,6 +486,7 @@ exec /usr/bin/sudo "$@"
                 checked(["chattr", "+a", str(LOG / "audit.jsonl")])
             checked(["systemctl", "daemon-reload"])
             checked(["sudo", "-u", "relay-shell", PYTHON, "-m", "pip", "check"])
+            verify_bootstrap()
             oauth_proof()
             old_records = [
                 json.loads(line) for line in (LOG / "audit.jsonl").read_text().splitlines()

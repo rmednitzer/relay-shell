@@ -34,3 +34,15 @@ A lock fixes selected package bytes; it does not establish provenance by itself,
 absence of vulnerabilities, cross-platform qualification or reproducible native
 compilation. CI exercises each selected profile. The package is installed after
 dependencies with --no-deps; source builds require the separately locked backend.
+
+The requirements-bootstrap.txt lock, generated from requirements-bootstrap.in,
+pins installer pip independently of application profiles and build dependencies.
+The installer upgrades this hash-locked, binary-only bootstrap in its disposable
+builder and in the stopped, transaction-protected runtime before installing their
+dependency closures. Pip remains excluded from application-inventory reconciliation;
+that exception does not mean its bootstrap version is unmanaged.
+Regenerate the lock with its recorded command, review hashes/advisories, and run
+the actual installer/recovery rehearsals on both qualified OS/Python profiles.
+The pip-audit workflow audits this lock explicitly; Renovate's pip-compile manager
+owns its generated output. Bootstrap failure retains the installer's existing
+rollback and stopped-service behavior.

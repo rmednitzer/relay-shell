@@ -129,6 +129,8 @@ esac
 RUNTIME_LOCK="$SRC_DIR/requirements/runtime-py$PYTHON_PROFILE.txt"
 [ -r "$RUNTIME_LOCK" ] || die "runtime dependency lock missing"
 [ -r "$SRC_DIR/requirements-build.txt" ] || die "build tooling lock missing"
+BOOTSTRAP_LOCK="$SRC_DIR/requirements-bootstrap.txt"
+[ -r "$BOOTSTRAP_LOCK" ] || die "installer bootstrap lock missing"
 
 log "Ensuring service account 'relay-shell'"
 if ! id relay-shell >/dev/null 2>&1; then
@@ -139,6 +141,8 @@ fi
 # Build with locked tooling in an owned disposable environment, not in the runtime.
 BUILD_DIR=$(sudo -u relay-shell mktemp -d "$PREFIX/.build-XXXXXXXX")
 sudo -u relay-shell "$INSTALL_PYTHON" -m venv "$BUILD_DIR/venv"
+sudo -u relay-shell "$BUILD_DIR/venv/bin/python" -m pip install --quiet \
+    --only-binary=:all: --no-deps --require-hashes -r "$BOOTSTRAP_LOCK"
 sudo -u relay-shell "$BUILD_DIR/venv/bin/python" -m pip install --quiet \
     --only-binary=:all: --require-hashes -r "$SRC_DIR/requirements-build.txt"
 sudo -u relay-shell "$BUILD_DIR/venv/bin/python" -m build --wheel --no-isolation \
@@ -165,6 +169,8 @@ log "Creating venv at $PREFIX/venv"
 if [ ! -x "$PREFIX/venv/bin/python" ]; then
     sudo -u relay-shell python3 -m venv "$PREFIX/venv"
 fi
+sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip install --quiet \
+    --only-binary=:all: --no-deps --require-hashes -r "$BOOTSTRAP_LOCK"
 sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip install --quiet \
     --only-binary=:all: --require-hashes -r "$RUNTIME_LOCK"
 sudo -u relay-shell "$PREFIX/venv/bin/python" -m pip install --quiet \

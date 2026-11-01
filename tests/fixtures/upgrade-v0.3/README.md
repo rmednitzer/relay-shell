@@ -34,6 +34,22 @@ fails on unknown findings or changed upstream exclusion text. This is a bounded
 not-affected disposition for the fixture, not a patch, a global suppression or a
 recommendation to deploy an old SDK. Current-runtime audits remain unchanged.
 
+The newly published MCP advisories are also retained in the receipt, with their
+complete pip-audit descriptions hash-bound in `advisory-description-hashes.json`.
+The redirect and output-schema findings apply to MCP clients, while this signed
+source only constructs an MCP server; the rehearsal checks that its source imports
+none of the affected client APIs. The audience finding requires a shared issuer for
+multiple resource servers. This isolated rehearsal uses one local issuer and one
+resource server; a live proof confirms that a separately-instantiated local token
+provider refuses the first provider's opaque token. These are fixture-specific
+not-affected decisions, not a claim that the old package is safe in other
+deployments. Renew review if an advisory description, fixture role, or token
+provider behavior changes:
+
+- https://github.com/advisories/GHSA-5h93-6whr-6q8j
+- https://github.com/advisories/GHSA-rwrf-2pqf-9j8j
+- https://github.com/advisories/GHSA-w4fh-qvv9-3v23
+
 The baseline also stores raw OAuth credentials. Tests generate temporary fixture
 grants, verify their migration to hashed storage and verify that current code
 refuses legacy grants lacking resource binding. Reauthorization is required.
@@ -46,8 +62,10 @@ The current SDK revocation request model requires a `client_secret` field even
 for this public client. The fixture sends empty form text (no credential) and
 then verifies that both revoked access and refresh tokens are refused.
 
-The known advisory must remain present exactly once. Its complete reviewed audit
-description is frozen in `advisory-description.txt`, with its hash in the baseline
-manifest. Missing findings or any description change require renewed review.
+All four reviewed advisories must remain present exactly once. The existing session
+advisory's complete description is frozen in `advisory-description.txt`; descriptions
+for the additional advisories are hash-bound in
+`advisory-description-hashes.json`. Both files are bound by `baseline.json`. Missing
+findings or any description change require renewed review.
 The target runtime must match every distribution and version in its lock plus
 the application; only the venv bootstrap tool pip is exempt.

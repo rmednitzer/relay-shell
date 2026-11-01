@@ -46,3 +46,24 @@ def test_snapshot_identity_includes_modes_content_and_symlinks(tmp_path: Path) -
     file.write_text("changed")
     assert changed != rehearsal.inventory(tmp_path)
     assert original["link"][-1] == "link:data"
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("# generated\npip==26.2.2\n    --hash=sha256:abc\n", "26.2.2"),
+        ("pip>=26.2.2\n", None),
+        ("setuptools==84.2.1\n", None),
+        ("pip==26.2.2\npip==26.1\n", None),
+    ],
+)
+def test_bootstrap_lock_requires_one_exact_version(
+    tmp_path: Path, text: str, expected: str | None
+) -> None:
+    path = tmp_path / "bootstrap.txt"
+    path.write_text(text)
+    if expected is None:
+        with pytest.raises(RuntimeError, match="exactly one pinned"):
+            rehearsal.pinned_bootstrap_version(path)
+    else:
+        assert rehearsal.pinned_bootstrap_version(path) == expected

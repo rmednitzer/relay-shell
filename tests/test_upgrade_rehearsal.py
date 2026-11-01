@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -30,7 +31,12 @@ with patch.dict(sys.modules, {"rehearse_install": common}):
 def test_baseline_identity_and_both_dependency_hashes(tmp_path: Path) -> None:
     source = ROOT / "tests/fixtures/upgrade-v0.3"
     assert upgrade.manifest(source)["version"] == "0.3.0"
-    for filename in ("runtime.in", "runtime.lock", "advisory-description.txt"):
+    for filename in (
+        "runtime.in",
+        "runtime.lock",
+        "advisory-description.txt",
+        "advisory-description-hashes.json",
+    ):
         destination = tmp_path / filename.replace(".", "-")
         shutil.copytree(source, destination)
         path = destination / filename
@@ -59,16 +65,43 @@ def test_stateless_precondition_is_a_boolean_literal(tmp_path: Path) -> None:
                 upgrade.require_stateless(path)
 
 
-def test_advisory_disposition_is_exact_and_requires_complete_audit(tmp_path: Path) -> None:
+def test_advisory_dispositions_are_exact_and_require_complete_audit(tmp_path: Path) -> None:
     (tmp_path / "runtime.lock").write_text("mcp==1.28.1\nother==1.0\n")
     report = tmp_path / "audit.json"
-    description = "Not affected: stateless_http=True"
-    (tmp_path / "advisory-description.txt").write_text(description)
-    finding = {"id": "CVE-2026-59951", "description": description}
+    old_description = "Not affected: stateless_http=True"
+    (tmp_path / "advisory-description.txt").write_text(old_description)
+    descriptions = {
+        "CVE-2026-116684": "audience finding description",
+        "CVE-2026-116685": "redirect finding description",
+        "CVE-2026-116686": "schema-reference finding description",
+    }
+    review = {
+        advisory: {
+            "alias": upgrade.ADDITIONAL_ADVISORIES[advisory][0],
+            "description_sha256": hashlib.sha256(description.encode()).hexdigest(),
+        }
+        for advisory, description in descriptions.items()
+    }
+    (tmp_path / "advisory-description-hashes.json").write_text(json.dumps(review))
+    findings = [
+        {
+            "id": "CVE-2026-59951",
+            "aliases": ["GHSA-84m7-p3x7-pcfv"],
+            "description": old_description,
+        },
+        *[
+            {
+                "id": advisory,
+                "aliases": [review[advisory]["alias"]],
+                "description": description,
+            }
+            for advisory, description in descriptions.items()
+        ],
+    ]
     data = {
         "fixes": [],
         "dependencies": [
-            {"name": "mcp", "version": "1.28.1", "vulns": [finding]},
+            {"name": "mcp", "version": "1.28.1", "vulns": findings},
             {"name": "other", "version": "1.0", "vulns": []},
         ],
     }
@@ -77,22 +110,33 @@ def test_advisory_disposition_is_exact_and_requires_complete_audit(tmp_path: Pat
         report.write_text(json.dumps(data))
         return upgrade.audit_dispositions(report, tmp_path)
 
-    assert check()[0]["advisory"] == "CVE-2026-59951"
-    finding["id"] = "CVE-unknown-fixture"
+    assert {item["advisory"] for item in check()} == {
+        "CVE-2026-59951",
+        *upgrade.ADDITIONAL_ADVISORIES,
+    }
+    findings[1]["id"] = "CVE-unknown-fixture"
     with pytest.raises(ValueError, match="new reviewed disposition"):
         check()
-    finding["id"] = "CVE-2026-59951"
-    finding["description"] = "Changed upstream applicability"
+    findings[1]["id"] = "CVE-2026-116684"
+    findings[1]["description"] = "Changed upstream applicability"
     with pytest.raises(ValueError, match="new reviewed disposition"):
         check()
-    finding["description"] = "Previously Not affected with stateless_http=True, but now affected"
+    findings[1]["description"] = descriptions["CVE-2026-116684"]
+    findings[1]["aliases"] = ["GHSA-unreviewed"]
     with pytest.raises(ValueError, match="new reviewed disposition"):
         check()
-    finding["description"] = description
-    data["dependencies"][0]["vulns"] = []
-    with pytest.raises(ValueError, match="retained reviewed advisory"):
+    findings[1]["aliases"] = ["GHSA-w4fh-qvv9-3v23"]
+    findings.pop(0)
+    with pytest.raises(ValueError, match="exact reviewed fixture findings"):
         check()
-    data["dependencies"][0]["vulns"] = [finding]
+    findings.insert(
+        0,
+        {
+            "id": "CVE-2026-59951",
+            "aliases": ["GHSA-84m7-p3x7-pcfv"],
+            "description": old_description,
+        },
+    )
     data["dependencies"][0]["version"] = "1.28.2"
     with pytest.raises(ValueError):
         check()
@@ -100,3 +144,14 @@ def test_advisory_disposition_is_exact_and_requires_complete_audit(tmp_path: Pat
     data["dependencies"].pop()
     with pytest.raises(ValueError, match="exact frozen"):
         check()
+
+
+def test_mcp_server_only_guard_rejects_client_apis(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    module = source / "server.py"
+    module.write_text("from mcp.server.fastmcp import FastMCP\n")
+    upgrade.require_mcp_server_only(source)
+    module.write_text("from mcp.client.session import ClientSession\n")
+    with pytest.raises(ValueError, match="MCP client APIs"):
+        upgrade.require_mcp_server_only(source)

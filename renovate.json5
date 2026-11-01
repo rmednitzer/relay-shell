@@ -137,7 +137,8 @@
         "requirements-build.txt",
         "requirements-sbom.txt",
         "requirements-audit.txt",
-        "requirements/*.txt"
+        "requirements/*.txt",
+        "requirements-bootstrap.txt"
       ],
       "enabled": false
     },
@@ -196,7 +197,7 @@
   },
   "pip-compile": {
     "managerFilePatterns": [
-      "/^requirements-(?:build|sbom|audit)\\.txt$/",
+      "/^requirements-(?:build|sbom|audit|bootstrap)\\.txt$/",
       "/^requirements/(?:runtime|development)-py3\\.(?:12|14)\\.txt$/"
     ]
   }

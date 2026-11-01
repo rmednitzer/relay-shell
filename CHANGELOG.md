@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Hash-pin and audit installer pip independently; upgrade both the disposable builder
+  and transaction-protected runtime before installing dependency closures.
+
 ## [0.5.0] - 2026-10-22
 
 - Change edge-installer precedence: explicitly exported `RELAY_SHELL_EDGE_*` values override the operator environment file; explicitly empty optional values now fail validation instead of selecting defaults. Review exported values before reinstalling the edge.

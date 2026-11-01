@@ -31,6 +31,33 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "tests/fixtures/upgrade-v0.3"
 ORIGIN = "http://127.0.0.1:8080"
 REDIRECT = "http://127.0.0.1:49152/callback"
+ADDITIONAL_ADVISORIES = {
+    "CVE-2026-116684": (
+        "GHSA-w4fh-qvv9-3v23",
+        "not affected in the isolated fixture: one local token issuer and resource server",
+        "the fixture's opaque tokens are looked up only in its own token store",
+    ),
+    "CVE-2026-116685": (
+        "GHSA-5h93-6whr-6q8j",
+        "not affected in the fixture: it runs an MCP server, not an MCP HTTP client",
+        "signed source contains no MCP client transport or session APIs",
+    ),
+    "CVE-2026-116686": (
+        "GHSA-rwrf-2pqf-9j8j",
+        "not affected in the fixture: it runs an MCP server, not an MCP client",
+        "signed source contains no MCP client session or tool-result validation APIs",
+    ),
+}
+MCP_CLIENT_API_NAMES = frozenset(
+    {
+        "ClientSession",
+        "ClientSessionGroup",
+        "streamable_http_client",
+        "streamablehttp_client",
+        "sse_client",
+        "create_mcp_http_client",
+    }
+)
 
 
 def digest(path: Path) -> str:
@@ -58,6 +85,10 @@ def manifest(directory: Path) -> dict[str, object]:
         raise ValueError("baseline dependency contract changed without review")
     if digest(directory / "advisory-description.txt") != data.get("advisory_description_sha256"):
         raise ValueError("reviewed advisory description changed without review")
+    if digest(directory / "advisory-description-hashes.json") != data.get(
+        "additional_advisory_descriptions_sha256"
+    ):
+        raise ValueError("additional reviewed advisory descriptions changed without review")
     return data
 
 
@@ -132,6 +163,32 @@ def require_stateless(source: Path) -> None:
         raise ValueError("baseline must explicitly construct a stateless server")
 
 
+def require_mcp_server_only(source: Path) -> None:
+    if not source.is_dir():
+        raise ValueError("baseline source tree is missing")
+    for path in source.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module == "mcp.client" or (
+                    node.module is not None and node.module.startswith("mcp.client.")
+                ):
+                    raise ValueError("baseline imports MCP client APIs")
+                if any(alias.name in MCP_CLIENT_API_NAMES for alias in node.names):
+                    raise ValueError("baseline imports MCP client APIs")
+            elif isinstance(node, ast.Import):
+                if any(
+                    alias.name == "mcp.client" or alias.name.startswith("mcp.client.")
+                    for alias in node.names
+                ):
+                    raise ValueError("baseline imports MCP client APIs")
+            elif (
+                isinstance(node, (ast.Name, ast.Attribute))
+                and (node.id if isinstance(node, ast.Name) else node.attr) in MCP_CLIENT_API_NAMES
+            ):
+                raise ValueError("baseline references MCP client APIs")
+
+
 def audit_dispositions(report: Path, directory: Path) -> list[dict[str, str]]:
     if report.stat().st_size > 1_048_576:
         raise ValueError("audit report exceeds byte budget")
@@ -150,8 +207,16 @@ def audit_dispositions(report: Path, directory: Path) -> list[dict[str, str]]:
         )
     }
     reviewed_description = (directory / "advisory-description.txt").read_text()
+    additional_descriptions = json.loads(
+        (directory / "advisory-description-hashes.json").read_text()
+    )
+    if not isinstance(additional_descriptions, dict) or set(additional_descriptions) != set(
+        ADDITIONAL_ADVISORIES
+    ):
+        raise ValueError("additional reviewed advisory set changed")
     observed = set()
     dispositions = []
+    seen_advisories = set()
     for dependency in dependencies:
         name, version = dependency.get("name"), dependency.get("version")
         if (
@@ -166,28 +231,72 @@ def audit_dispositions(report: Path, directory: Path) -> list[dict[str, str]]:
             raise ValueError("duplicate dependency audit entry")
         observed.add(key)
         for vulnerability in dependency["vulns"]:
-            if (
-                key != ("mcp", "1.28.1")
-                or vulnerability.get("id") not in {"CVE-2026-59951", "GHSA-84m7-p3x7-pcfv"}
-                or vulnerability.get("description") != reviewed_description
-            ):
+            advisory_id = vulnerability.get("id")
+            aliases = vulnerability.get("aliases")
+            if key != ("mcp", "1.28.1") or not isinstance(advisory_id, str):
                 raise ValueError("dependency finding needs a new reviewed disposition")
+            if advisory_id == "CVE-2026-59951":
+                alias = "GHSA-84m7-p3x7-pcfv"
+                description_matches = vulnerability.get("description") == reviewed_description
+                disposition = "not affected: fixture explicitly uses stateless_http=True"
+                basis = "signed server source and authenticated live requests without session IDs"
+            elif advisory_id in ADDITIONAL_ADVISORIES:
+                alias, disposition, basis = ADDITIONAL_ADVISORIES[advisory_id]
+                review = additional_descriptions.get(advisory_id)
+                description_matches = (
+                    isinstance(review, dict)
+                    and review.get("alias") == alias
+                    and isinstance(vulnerability.get("description"), str)
+                    and hashlib.sha256(vulnerability["description"].encode()).hexdigest()
+                    == review.get("description_sha256")
+                )
+            else:
+                raise ValueError("dependency finding needs a new reviewed disposition")
+            if aliases != [alias] or not description_matches or advisory_id in seen_advisories:
+                raise ValueError("dependency finding needs a new reviewed disposition")
+            seen_advisories.add(advisory_id)
             dispositions.append(
                 {
                     "package": "mcp",
                     "version": "1.28.1",
-                    "advisory": "CVE-2026-59951",
-                    "disposition": "not affected in this stateless fixture",
-                    "basis": (
-                        "signed source and live no-session checks; upstream stateless exclusion"
-                    ),
+                    "advisory": advisory_id,
+                    "alias": alias,
+                    "disposition": disposition,
+                    "basis": basis,
                 }
             )
     if observed != expected:
         raise ValueError("audit did not cover the exact frozen dependency closure")
-    if len(dispositions) != 1:
-        raise ValueError("expected exactly one retained reviewed advisory finding")
+    if seen_advisories != {"CVE-2026-59951", *ADDITIONAL_ADVISORIES}:
+        raise ValueError("audit did not retain the exact reviewed fixture findings")
     return dispositions
+
+
+def local_token_isolation_proof() -> None:
+    code = """
+import asyncio
+import tempfile
+from pathlib import Path
+from relay_shell.auth.oauth import FileOAuthProvider
+
+def provider(path):
+    return FileOAuthProvider(
+        str(path), single_client=False, access_ttl=60, refresh_ttl=60, code_ttl=60
+    )
+
+async def main():
+    with tempfile.TemporaryDirectory() as root:
+        first = provider(Path(root) / "first")
+        second = provider(Path(root) / "second")
+        issued = first._issue("synthetic-client", ["mcp:tools"])
+        if await first.load_access_token(issued.access_token) is None:
+            raise RuntimeError("local provider rejected its own token")
+        if await second.load_access_token(issued.access_token) is not None:
+            raise RuntimeError("separate local provider accepted a foreign token")
+
+asyncio.run(main())
+"""
+    fixture.checked(["sudo", "-u", "relay-shell", fixture.PYTHON, "-c", code])
 
 
 def stateless_proof(token: str) -> None:
@@ -358,6 +467,7 @@ def rehearse(output: Path, build_python: str, legacy_python: str, audit_report: 
         archive(str(data["source_commit"]), legacy)
         archive(current, target)
         require_stateless(legacy / "src/relay_shell/server.py")
+        require_mcp_server_only(legacy / "src")
         dispositions = audit_dispositions(audit_report, BASELINE)
         # The service UID cannot traverse the runner checkout. Keep the verified
         # public fixture in the disposable work directory instead.
@@ -466,6 +576,7 @@ def rehearse(output: Path, build_python: str, legacy_python: str, audit_report: 
             fixture.checked(["sudo", "-u", "relay-shell", fixture.PYTHON, "-m", "pip", "check"])
             if identity() != {"relay-shell": data["version"], "mcp": data["mcp_version"]}:
                 raise RuntimeError("baseline installation identity mismatch")
+            local_token_isolation_proof()
             fixture.CONFIG.mkdir(mode=0o750)
             os.chown(fixture.CONFIG, 0, account.pw_gid)
             env_file = fixture.CONFIG / "relay-shell.env"
