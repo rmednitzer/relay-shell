@@ -148,3 +148,26 @@ review.
 nothing) the tier and basis now also reach the caller as a trailing `[NOTICE ...]` line for
 Tier 2 and Tier 3 calls. Admission rules are unchanged. See
 [ADR 0013](0013-open-by-default-with-unsafe-notices.md).
+
+
+## 2026-11-02: equivalent scan gates (patterns version 17)
+
+This performance repair addresses SC-4/UCA-4 without changing SC-1/SC-2
+classification intent. The risk is a false-negative prefilter (H-1/UCA-1), so
+gates use necessary syntax only: every separated delete rule consumes whitespace
+immediately before a dash or slash; the drive-format rule consumes a colon. The
+complete matcher and optimized matcher share rule sources. Unicode whitespace,
+positive/near-miss fixtures, generated command sequences and arbitrary Unicode
+inputs compare the optimized path to the full matcher. The privilege fast path
+skips context processing only when no original privilege keyword exists; replacing
+whole reader segments with a space cannot create one. Regex heuristics remain
+heuristics, not containment. No new dependency or runtime posture change.
+
+Rollback restores the previous complete runtime. Acceptance requires unchanged
+classification on the regression corpus, existing timing limits, full tests and
+fuzz gates; measured improvements are host- and workload-dependent.
+
+ASCII-only inputs also use equivalent ASCII regex variants for common Tier-3
+and Tier-2 scans. Inputs containing any non-ASCII character retain the original
+Unicode regexes; replacing a published table disables its optimized variant.
+Differential tests cover both paths.

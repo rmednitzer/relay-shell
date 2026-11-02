@@ -727,5 +727,5 @@ def test_pgp_private_key_block_is_redacted() -> None:
     assert body not in out
 
 
-def test_patterns_version_is_16() -> None:
-    assert patterns.PATTERNS_VERSION == "16"
+def test_patterns_version_is_17() -> None:
+    assert patterns.PATTERNS_VERSION == "17"
