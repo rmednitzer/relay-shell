@@ -271,6 +271,14 @@ alertable; any HTTP response (including 401/403/404) means the listener is up.
 
 ### 2.9 Audit-log hygiene
 
+Configure a regular audit file. Device/FIFO sinks are unsupported: initialization
+degrades to stderr without changing their permissions or waiting for a reader.
+Each rotation reopen also validates the actual descriptor; failure marks runtime
+audit health degraded. Initial regular-file hardening is best effort (append-only
+files may refuse chmod), and existing operator-created rotation-file modes remain
+unchanged. New files use mode 0600. Do not interpret a regular-file check as a
+proof of durable persistence.
+
 On a real deployment:
 
 ```bash
@@ -1204,3 +1212,8 @@ ASCII-only inputs also use equivalent ASCII regex variants for common Tier-3
 and Tier-2 scans. Inputs containing any non-ASCII character retain the original
 Unicode regexes; replacing a published table disables its optimized variant.
 Differential tests cover both paths.
+
+Audit-tail reads (plain and gzip) and chain-verification opens use the same
+regular-descriptor validation. This also prevents a regular-to-FIFO replacement
+from blocking between a path check and the actual read. Invalid paths and an
+unavailable home directory degrade initialization through the existing fallback.

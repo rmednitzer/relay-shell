@@ -245,3 +245,39 @@ unchained, head-truncated (with and without `--segment`), and genesis logs.
 No change to policy admission, tier semantics, the no-sandbox posture, or
 any tool's response shape. This pass hardened a compensating control
 (ADR 0002's first one); it did not move the trust boundary.
+
+
+## Audit sink descriptor validation (2026-11-02)
+
+A privileged validation run exposed path-based permission hardening of a device
+before file-type validation. FIFO opens could also block, including chain resume
+after initialization failure, while a rotation-open error could escape the
+handler's degraded-state update.
+
+Validate the descriptor used for writes with fstat, both initially and after
+rotation. Open nonblocking so unsupported FIFOs cannot stall initialization or
+reopen. Only the initial regular descriptor is subject to best-effort fchmod;
+preserve existing rotation-file permissions and create missing files at 0600.
+Initialization failure uses the existing stderr fallback and skips chain-tail
+reads. Reopen failures mark degraded through the existing first-reason-wins API.
+
+This changes unsupported sink handling, with no record-schema, hash-chain,
+execution-authority or policy-mode change. Control-authority STPA changes are
+not applicable; the operational constraints are nonblocking FIFO failure, no device
+metadata mutation, visible degradation and unchanged valid-file append/rotation.
+Device/symlink, FIFO with/without readers, rotation, path replacement, descriptor
+cleanup and chmod-refusal regressions test these constraints. Qualified Python
+profiles and privileged file-mode evidence must be retained at release.
+
+Operator-controlled paths and other filesystem actors remain trusted. This does
+not establish durable storage, fsync guarantees, a hostile-directory boundary or
+independent off-host evidence. Roll back the complete runtime if necessary while
+preserving accepted audit records; no data migration is required.
+
+Audit-tail reads (plain and gzip) and chain-verification opens use the same
+regular-descriptor validation. This also prevents a regular-to-FIFO replacement
+from blocking between a path check and the actual read. Invalid paths and an
+unavailable home directory degrade initialization through the existing fallback.
+
+O_NONBLOCK is not a general storage or network-filesystem timeout; regular-file
+I/O latency remains governed by the operating system and storage.
