@@ -1186,3 +1186,21 @@ it does not make PR-edited workflows immutable or establish independent human
 review. Zero required approvals and CODEOWNERS enforcement remain separate policy
 choices. Restore settings only from a reviewed prior ruleset, preserving required
 check identity; removing an aggregate is not an equivalent rollback.
+
+
+### Classifier scan gates (patterns version 17)
+
+Tier-3 matching partitions common rules from delete rules requiring whitespace
+followed by a dash/slash, and format rules requiring a colon. Necessary-syntax
+gates skip only families that cannot match; the complete regex is assembled from
+the same sources and retained as a differential-test reference. Privilege-context
+parsing runs only when the original text contains a privilege keyword. Reader
+replacement removes whole command segments and cannot introduce such a keyword.
+No command text is truncated, no flags are normalized and no policy mode, denial,
+confirmation or audit behavior changes. Keep the existing absolute timing limits
+and run the complete test suite plus fuzz tests when modifying these gates.
+
+ASCII-only inputs also use equivalent ASCII regex variants for common Tier-3
+and Tier-2 scans. Inputs containing any non-ASCII character retain the original
+Unicode regexes; replacing a published table disables its optimized variant.
+Differential tests cover both paths.

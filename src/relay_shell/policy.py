@@ -112,18 +112,19 @@ def assess(tool: str, command: str = "") -> Assessment:
     if tool in _READ_ONLY_TOOLS:
         return Assessment(Tier.READ_ONLY, BASIS_READ_ONLY)
     text = _strip_line_continuations(command or "")
-    if patterns.TIER3_PATTERN.search(text):
+    if patterns.matches_tier3(text):
         return Assessment(Tier.IRREVERSIBLE, BASIS_IRREVERSIBLE)
     # A privilege wrapper named only by a read-only command is data, unless the line can
     # evaluate text (`echo 'sudo ...' | sh`), in which case it is still scanned.
-    priv_text = (
-        text
-        if patterns.PRIV_ESC_EVAL_HINT.search(text)
-        else patterns.PRIV_ESC_READER_SEGMENT.sub(" ", text)
-    )
-    if patterns.PRIV_ESC_PATTERN.search(priv_text):
-        return Assessment(Tier.STATEFUL, BASIS_PRIVILEGE)
-    if patterns.TIER2_PATTERN.search(text):
+    if patterns.PRIV_ESC_PATTERN.search(text):
+        priv_text = (
+            text
+            if patterns.PRIV_ESC_EVAL_HINT.search(text)
+            else patterns.PRIV_ESC_READER_SEGMENT.sub(" ", text)
+        )
+        if patterns.PRIV_ESC_PATTERN.search(priv_text):
+            return Assessment(Tier.STATEFUL, BASIS_PRIVILEGE)
+    if patterns.matches_tier2(text):
         return Assessment(Tier.STATEFUL, BASIS_STATEFUL)
     if tool in _MUTATING_TOOLS:
         return Assessment(Tier.STATEFUL, BASIS_MUTATING_TOOL)

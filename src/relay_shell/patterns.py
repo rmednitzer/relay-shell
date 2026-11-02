@@ -43,6 +43,8 @@ __all__ = [
     "TIER3_PATTERN",
     "URL_CREDS_PATTERN",
     "URL_TOKEN_USERINFO_PATTERN",
+    "matches_tier2",
+    "matches_tier3",
 ]
 
 # Bump on any semantic change to a pattern (added / widened / narrowed /
@@ -197,7 +199,8 @@ __all__ = [
 #      arguments). Over-classification closed: `crontab -l`, `docker compose ps|logs|...`
 #      and `grep sudo /var/log/auth.log` / `man sudo` / `echo sudo` (a privilege wrapper
 #      named by a read-only command is data). Classification stays heuristic (ADR 0003).
-PATTERNS_VERSION = "16"
+# v17: equivalent Tier-3 rule partitioning with necessary-syntax gates.
+PATTERNS_VERSION = "17"
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
@@ -608,19 +611,8 @@ _CMD = (
 # Substrings that strongly imply an irreversible / high-blast action. Two groups:
 # distinctive tokens matched anywhere, and command names matched only in command
 # position (`_CMD`) because the same word is common as an argument or in text.
-TIER3_PATTERN = re.compile(
+_TIER3_COMMON_PATTERN = re.compile(
     r"(?imx)(?:(?<![\w])("
-    r"rm\s+-[rf]|rm\s+-[a-z]*f|"
-    # Long-option `rm` (RED-7): `rm --recursive`, `rm --force`,
-    # `rm --no-preserve-root`, and mixed forms (`rm -r --force`, `rm file
-    # --force`) — the short-flag alternatives above require a single dash
-    # immediately after `rm `, so a `--`-flag slipped past them and
-    # under-classified a genuinely destructive command below Tier 3. The
-    # intervening-token count is BOUNDED (`{0,16}?`, disjoint \S/\s): a real
-    # rm has few flags before the destructive one, and an unbounded `*?` would
-    # be O(n^2) on `rm rm rm …` (classify retries every `rm ` position) — a
-    # ReDoS on the synchronous admission path.
-    r"rm\s+(?:\S+\s+){0,16}?--(?:recursive|force|no-preserve-root)\b|"
     # Disk / filesystem destruction. The partitioners are destructive except when
     # listing (`fdisk -l`, `sgdisk -p`, `parted ... print`), which v11 over-classified.
     r"shred|mkfs|wipefs|blkdiscard|"
@@ -647,22 +639,10 @@ TIER3_PATTERN = re.compile(
     r"ip\s+link\s+set\s+\S+(?:\s+\S+){0,4}?\s+down\b|ip\s+link\s+del(?:ete)?\b|ifdown\b|"
     r":\s*\(\s*\)\s*\{|"
     # --- Windows / PowerShell 7 (ADR 0011, WIN-1) ---
-    # Destructive pwsh cmdlets are distinctive CapCase-hyphenated tokens (low
-    # false-positive risk). `Remove-Item` is Tier 3 only WITH a -Recurse/-Force
-    # flag, mirroring POSIX `rm` needing `-[rf]` (a bare single-file delete is
-    # not Tier 3). The intervening-token count is bounded ({0,16}?) like the
-    # `rm` long-option rule, so classify stays linear on `Remove-Item
-    # Remove-Item …`. (`rm -Recurse` is already caught by the POSIX `rm\s+-[rf]`
-    # rule via case-insensitivity.)
-    r"remove-item\b(?:\s+\S+){0,16}?\s+-(?:recurse|force)\b|"
     r"clear-disk|format-volume|initialize-disk|"
     r"stop-computer|restart-computer|"
     r"remove-service|remove-localuser|remove-localgroup|clear-eventlog|"
-    # cmd.exe delete/format verbs still reachable from pwsh; require the
-    # recursive/quiet slash-flag (or a drive letter for format) so a bare
-    # `del file.txt` / `Format-Table` does not over-classify.
-    r"(?:del|erase|rd|rmdir)\b(?:\s+\S+){0,8}?\s+/[sq]\b|"
-    r"format(?:\s+/\S+){0,4}\s+[a-z]:|diskpart|vssadmin\s+delete\s+shadows|"
+    r"diskpart|vssadmin\s+delete\s+shadows|"
     r"bcdedit|cipher\s+/w|(?:reg|sc)(?:\.exe)?\s+delete|wevtutil\s+cl"
     r"))"
     # Command-position group (v12): the same words as arguments or text no longer match.
@@ -674,6 +654,56 @@ TIER3_PATTERN = re.compile(
     r"redis-cli\b[^|;&\n]{0,128}?\bflush(?:all|db)\b"
     r")"
 )
+
+
+# Every delete rule below requires whitespace immediately before "-" or "/".
+# Gate this family on that necessary syntax, avoiding repeated bounded-token
+# scans at every verb in a long argument with no flags. The gate never admits or
+# rejects a command itself: the complete original rule must still match.
+# Keep the bounded intervening-token counts: an unbounded gap retries at every
+# repeated verb and can make matching quadratic when a flag does occur elsewhere.
+# Bare single-file deletes and Format-Table remain outside these Tier-3 rules.
+_TIER3_FLAG_SOURCE = (
+    r"rm\s+-[rf]|rm\s+-[a-z]*f|"
+    r"rm\s+(?:\S+\s+){0,16}?--(?:recursive|force|no-preserve-root)\b|"
+    r"remove-item\b(?:\s+\S+){0,16}?\s+-(?:recurse|force)\b|"
+    r"(?:del|erase|rd|rmdir)\b(?:\s+\S+){0,8}?\s+/[sq]\b"
+)
+_TIER3_FORMAT_SOURCE = r"format(?:\s+/\S+){0,4}\s+[a-z]:"
+_TIER3_FLAG_PATTERN = re.compile(r"(?imx)(?<![\w])(?:" + _TIER3_FLAG_SOURCE + r")")
+_TIER3_FORMAT_PATTERN = re.compile(r"(?imx)(?<![\w])" + _TIER3_FORMAT_SOURCE)
+_TIER3_FLAG_HINT = re.compile(r"\s[-/]")
+
+# Retain the complete regex as the reference contract. Both forms are assembled
+# from the same rule sources, so new common rules cannot bypass the fast matcher.
+TIER3_PATTERN = re.compile(
+    _TIER3_COMMON_PATTERN.pattern
+    + r"|(?<![\w])(?:"
+    + _TIER3_FLAG_SOURCE
+    + r"|"
+    + _TIER3_FORMAT_SOURCE
+    + r")"
+)
+
+
+_DEFAULT_TIER3_PATTERN = TIER3_PATTERN
+_TIER3_COMMON_ASCII = re.compile(
+    _TIER3_COMMON_PATTERN.pattern,
+    (_TIER3_COMMON_PATTERN.flags & ~re.UNICODE) | re.ASCII,
+)
+
+
+def matches_tier3(text: str) -> bool:
+    """Match the full Tier-3 language with necessary-syntax gates."""
+    # Published table replacement is supported; optimize only the built-in table.
+    if TIER3_PATTERN is not _DEFAULT_TIER3_PATTERN:
+        return bool(TIER3_PATTERN.search(text))
+    common = _TIER3_COMMON_ASCII if text.isascii() else _TIER3_COMMON_PATTERN
+    return bool(
+        common.search(text)
+        or (_TIER3_FLAG_HINT.search(text) and _TIER3_FLAG_PATTERN.search(text))
+        or (":" in text and _TIER3_FORMAT_PATTERN.search(text))
+    )
 
 
 # Global options (with arity) that may sit between a command and its verb (v16). A flag
@@ -790,6 +820,22 @@ TIER2_PATTERN = re.compile(
     r"|redis-cli\b[^|;&\n]{0,128}?\b(?:shutdown|config\s+set|replicaof|slaveof|debug"
     r"|script\s+flush|acl\s+(?:setuser|deluser))\b)"
 )
+
+# ASCII text has identical word, whitespace and case semantics under re.ASCII,
+# avoiding Unicode case-folding overhead. Non-ASCII input uses the original table.
+_DEFAULT_TIER2_PATTERN = TIER2_PATTERN
+_TIER2_ASCII = re.compile(TIER2_PATTERN.pattern, (TIER2_PATTERN.flags & ~re.UNICODE) | re.ASCII)
+
+
+def matches_tier2(text: str) -> bool:
+    """Preserve the published regex contract, with an ASCII-only fast path."""
+    pattern = (
+        _TIER2_ASCII
+        if TIER2_PATTERN is _DEFAULT_TIER2_PATTERN and text.isascii()
+        else TIER2_PATTERN
+    )
+    return bool(pattern.search(text))
+
 
 # Privilege escalation wrappers should not be treated as low-risk commands.
 # `runas` covers both `runas /user:Administrator …` and PowerShell's

@@ -28,6 +28,13 @@ MCP client (Claude / Inspector / SDK)
                   \---- SessionRegistry -------/   (unified local + SSH PTYs)
 ```
 
+Tier classification uses the shared pattern tables. Necessary-syntax gates skip
+delete/format rule families only when their required syntax is absent. The full
+Tier-3 regex remains the reference and replacement contract; replacing it disables
+the built-in optimization. Privilege context is parsed only when a privilege
+keyword is present. These optimizations do not truncate input or alter policy
+precedence.
+
 ## Request lifecycle
 
 Every tool body is identical in shape (`Relay.run`):
@@ -180,3 +187,8 @@ bounds), see [`runbook.md`](runbook.md) §2. The reproducible validation
 pass against the upstream `mcp` / `asyncssh` / OAuth surfaces lives in
 [ADR 0005](adr/0005-codebase-validation.md), which records the
 methodology and the most recent pass outcome.
+
+ASCII-only inputs also use equivalent ASCII regex variants for common Tier-3
+and Tier-2 scans. Inputs containing any non-ASCII character retain the original
+Unicode regexes; replacing a published table disables its optimized variant.
+Differential tests cover both paths.

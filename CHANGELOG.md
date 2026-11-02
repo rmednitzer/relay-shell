@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Performance
+
+- Avoid unnecessary bounded delete/format scans when required syntax is absent,
+  and skip privilege-context parsing when no privilege keyword occurs. Full
+  classification rules, policy precedence and timing-test thresholds are unchanged.
+
+
 - Hash-pin and audit installer pip independently; upgrade both the disposable builder
   and transaction-protected runtime before installing dependency closures.
 
