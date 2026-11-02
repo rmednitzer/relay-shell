@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-02
+
+### Fixed
+
+- Validate the actual audit descriptor before initial permission hardening and on
+  rotation reopens. Unsupported devices/FIFOs now degrade to stderr without
+  metadata changes or blocking; regular append sinks retain their behavior.
+- Validate regular descriptors for audit-tail and verification reads;
+  handle invalid paths and unavailable home directories through audit fallback.
+- Report rotation-open failures through audit health and preserve the first
+  degraded reason. Skip chain-tail reads after sink initialization fails.
+- Preserve operator-created rotation-file modes; newly created files remain
+  private. See [ADR 0007](docs/adr/0007-audit-hash-chain.md#audit-sink-descriptor-validation-2026-11-02).
+
 ## [0.5.1] - 2026-11-02
 
 ### Performance
@@ -1815,7 +1829,8 @@ All notable changes to this project are documented here. The format follows
   bundled logrotate config drops and restores the append-only attribute
   across rotation. See `docs/deployment.md` §6.
 
-[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/rmednitzer/relay-shell/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/rmednitzer/relay-shell/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/rmednitzer/relay-shell/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/rmednitzer/relay-shell/compare/v0.3.0...v0.4.0

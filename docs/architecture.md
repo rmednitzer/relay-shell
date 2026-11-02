@@ -76,6 +76,14 @@ Every tool body is identical in shape (`Relay.run`):
    for tamper-evidence ([ADR 0007](adr/0007-audit-hash-chain.md)); default off
    keeps the record byte-identical.
 
+The audit file handler validates its opened descriptor at initialization and every
+rotation reopen. It uses nonblocking open to avoid FIFO stalls, rejects nonregular
+sinks and hardens only the initial regular descriptor. Invalid initialization
+falls back to stderr and skips chain-tail reads. Reopen failures mark audit health
+degraded while tool calls continue; existing rotation-file modes are preserved.
+Regular-file type checks alone do not prove storage durability or constrain an
+operator-controlled path.
+
 A tool may fail, time out, or be denied, but it always returns a single bounded, audited
 string; the one exception is a cancelled call, which is audited and then re-raised.
 
@@ -192,3 +200,8 @@ ASCII-only inputs also use equivalent ASCII regex variants for common Tier-3
 and Tier-2 scans. Inputs containing any non-ASCII character retain the original
 Unicode regexes; replacing a published table disables its optimized variant.
 Differential tests cover both paths.
+
+Audit-tail reads (plain and gzip) and chain-verification opens use the same
+regular-descriptor validation. This also prevents a regular-to-FIFO replacement
+from blocking between a path check and the actual read. Invalid paths and an
+unavailable home directory degrade initialization through the existing fallback.

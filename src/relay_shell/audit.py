@@ -15,14 +15,17 @@ logger degrades to stderr (or silence) and records ``degraded=True``.
 from __future__ import annotations
 
 import contextlib
+import errno
 import gzip
 import json
 import logging
 import os
+import stat
 import sys
 import threading
 from collections import deque
 from dataclasses import dataclass
+from io import TextIOWrapper
 from logging.handlers import WatchedFileHandler
 from pathlib import Path
 from typing import Any
@@ -112,20 +115,37 @@ _FORMATTERS = {"jsonl": _format_jsonl, "cef": _format_cef, "leef": _format_leef}
 _CHAIN_GENESIS = "0" * 64
 
 
+def _open_regular_fd(path: str | os.PathLike[str], flags: int) -> int:
+    """Open and validate a regular descriptor without blocking on a FIFO."""
+    fd = os.open(path, flags | os.O_NONBLOCK, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(
+                errno.EINVAL,
+                "audit path is not a regular file (records not durably stored)",
+                str(path),
+            )
+        return fd
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+        raise
+
+
 def _tail_path(path: Path, lines: int) -> str:
     """Return the last non-empty lines from a plain or gzip-compressed file."""
     if lines <= 0:
         return ""
 
-    if path.suffix == ".gz":
-        compressed_records: deque[str] = deque(maxlen=lines)
-        with gzip.open(path, "rt", encoding="utf-8", errors="replace") as fh:
-            for raw in fh:
-                if raw.strip():
-                    compressed_records.append(raw.rstrip("\r\n"))
-        return "\n".join(compressed_records)
+    with os.fdopen(_open_regular_fd(path, os.O_RDONLY), "rb") as fh:
+        if path.suffix == ".gz":
+            compressed_records: deque[str] = deque(maxlen=lines)
+            with gzip.open(fh, "rt", encoding="utf-8", errors="replace") as compressed:
+                for raw in compressed:
+                    if raw.strip():
+                        compressed_records.append(raw.rstrip("\r\n"))
+            return "\n".join(compressed_records)
 
-    with path.open("rb") as fh:
         fh.seek(0, os.SEEK_END)
         size = fh.tell()
         if size == 0:
@@ -254,7 +274,9 @@ def verify_chain(path: str) -> ChainResult:
     expected_seq = 0
     expected_prev = _CHAIN_GENESIS
     try:
-        with p.open("r", encoding="utf-8", errors="replace") as fh:
+        with os.fdopen(
+            _open_regular_fd(p, os.O_RDONLY), "r", encoding="utf-8", errors="replace"
+        ) as fh:
             for lineno, raw in enumerate(fh, start=1):
                 line = raw.strip()
                 if not line:
@@ -351,11 +373,39 @@ def verify_chain(path: str) -> ChainResult:
 
 class _AuditFileHandler(WatchedFileHandler):
     owner: Any = None
+    _initial_open = True
+
+    def _open(self) -> TextIOWrapper[Any]:
+        # Validate the descriptor we will write, rather than chmodding a path
+        # that may refer to a device or change between inspection and use.
+        # O_NONBLOCK prevents an unsupported FIFO from hanging initialization
+        # or a rotation reopen. It has no effect on regular files.
+        fd = _open_regular_fd(self.baseFilename, os.O_APPEND | os.O_CREAT | os.O_WRONLY)
+        try:
+            # Existing append-only files can refuse chmod while still accepting
+            # append writes. Preserve the existing best-effort hardening policy.
+            if self._initial_open:
+                with contextlib.suppress(OSError):
+                    os.fchmod(fd, 0o600)
+            stream = os.fdopen(fd, "a", encoding=self.encoding, errors=self.errors)
+            self._initial_open = False
+            return stream
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+            raise
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            super().emit(record)
+        except OSError:
+            # WatchedFileHandler reopens before FileHandler's error handler.
+            # Surface a rejected rotation target without breaking the tool call.
+            self.handleError(record)
 
     def handleError(self, record: logging.LogRecord) -> None:
         if self.owner is not None:
-            self.owner.degraded = True
-            self.owner.degraded_reason = "audit write failed at runtime"
+            self.owner.mark_degraded("audit write failed at runtime")
         super().handleError(record)
 
 
@@ -397,24 +447,9 @@ class AuditLogger:
         try:
             target = Path(path).expanduser()
             target.parent.mkdir(parents=True, exist_ok=True)
-            # O_APPEND keeps this compatible with `chattr +a` files.
-            fd = os.open(str(target), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
-            os.close(fd)
-            # Defensive for existing files that might already be too permissive.
-            with contextlib.suppress(OSError):
-                target.chmod(0o600)
-            # OBS-1: a non-regular sink (`/dev/null`, device, FIFO) accepts
-            # writes but stores nothing durable. Flag it degraded so the
-            # `relay_shell_audit_degraded` gauge and `server_info.audit` show
-            # it; the sink itself is left as configured.
-            if not target.is_file():
-                self.degraded = True
-                self.degraded_reason = (
-                    f"audit path is not a regular file (records not durably stored): {path}"
-                )
             sink = _AuditFileHandler(str(target), encoding="utf-8", errors="backslashreplace")
             sink.owner = self
-        except OSError as exc:  # unwritable path -> degrade, never crash
+        except (OSError, ValueError, RuntimeError) as exc:  # invalid/unwritable path -> degrade
             self.degraded = True
             self.degraded_reason = str(exc)
             sink = logging.StreamHandler(sys.stderr)
@@ -426,7 +461,7 @@ class AuditLogger:
             echo.setFormatter(logging.Formatter("AUDIT %(message)s"))
             self._log.addHandler(echo)
 
-        if self.chain:
+        if self.chain and not self.degraded:
             self._resume_chain()
 
     def _resume_chain(self) -> None:
