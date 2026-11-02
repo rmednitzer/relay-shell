@@ -6,15 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-02
+
 ### Performance
 
-- Avoid unnecessary bounded delete/format scans when required syntax is absent,
-  and skip privilege-context parsing when no privilege keyword occurs. Full
-  classification rules, policy precedence and timing-test thresholds are unchanged.
+- Avoid unnecessary delete/format scans and privilege-context parsing; use an
+  ASCII fast path while preserving Unicode input and published-table overrides.
+  Keep classification semantics and timing thresholds unchanged. See
+  [ADR 0003](docs/adr/0003-tiered-authority.md#2026-11-02-equivalent-scan-gates-patterns-version-17).
 
+### Security
 
-- Hash-pin and audit installer pip independently; upgrade both the disposable builder
-  and transaction-protected runtime before installing dependency closures.
+- Hash-pin and audit installer pip independently; upgrade both the disposable
+  builder and transaction-protected runtime before installing dependency closures.
+
+### Changed
+
+- Refresh Ruff, virtualenv development tooling and pinned GitHub Actions.
+
+### Fixed
+
+- Keep release Hypothesis caches outside package source inputs.
 
 ## [0.5.0] - 2026-10-22
 
@@ -1803,7 +1815,8 @@ All notable changes to this project are documented here. The format follows
   bundled logrotate config drops and restores the append-only attribute
   across rotation. See `docs/deployment.md` §6.
 
-[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/rmednitzer/relay-shell/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/rmednitzer/relay-shell/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/rmednitzer/relay-shell/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/rmednitzer/relay-shell/compare/v0.2.0...v0.3.0
