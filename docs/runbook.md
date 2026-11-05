@@ -451,6 +451,15 @@ tracks the embedded Caddy release pin used by the real edge-routing tests; the
 Go module checksum verification remains in force. Generated hashes must be reviewed
 with their inputs using section 6.6. A version edit alone does not refresh hashes.
 
+The profile commands use `requirements/runtime.in` and
+`requirements/development.in`. These mirror the corresponding `pyproject.toml`
+dependency scopes, with alignment enforced by the release-workflow tests. The
+development input includes the runtime and build inputs. Keeping the scopes
+separate lets Renovate extract runtime locks without expecting optional
+development packages in them. Use `--option=value` in recorded compile commands;
+Renovate's parser rejects separated option arguments. Keep the library manifest,
+scope inputs, direct constraints and all affected hashed profiles aligned.
+
 The required ci-success aggregate polls all pages of check results once per cycle.
 It accepts only GitHub Actions checks for the requested PR head and selects the
 latest check ID for each required name. Missing/in-progress work remains pending;
