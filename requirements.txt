@@ -5,17 +5,17 @@
 # pins do not constitute a complete transitive lockfile. Renovate proposes
 # updates under this repository's release-age and required-check policy.
 mcp==2.3.0
-pydantic==2.14.1
-pydantic-settings==2.16.1
+pydantic==2.14.2
+pydantic-settings==2.16.2
 asyncssh==2.24.1
 uvicorn==0.54.0
-starlette==1.9.0
-anyio==4.15.1
+starlette==1.10.0
+anyio==4.16.0
 httpx==0.28.1
 PyJWT==2.15.1
 cryptography==50.0.2
 # dev / CI
-pytest==9.1.1
-pytest-asyncio==1.4.0
+pytest==9.2.0
+pytest-asyncio==1.4.1.post1
 ruff==0.17.3
-mypy==2.4.0
+mypy==2.4.1
