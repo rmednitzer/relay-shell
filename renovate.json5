@@ -149,6 +149,26 @@
       ],
       "automerge": false,
       "platformAutomerge": false
+    },
+    {
+      "description": "Organize the dashboard without changing PR grouping or update eligibility.",
+      "matchManagers": [
+        "pep621",
+        "pip_requirements",
+        "pip-compile",
+        "poetry",
+        "setup-cfg"
+      ],
+      "dependencyDashboardCategory": "Python dependencies"
+    },
+    {
+      "description": "Organize the dashboard without changing PR grouping or update eligibility.",
+      "matchManagers": [
+        "github-actions",
+        "custom.regex",
+        "pre-commit"
+      ],
+      "dependencyDashboardCategory": "CI and validation"
     }
   ],
   "customManagers": [
@@ -200,5 +220,8 @@
       "/^requirements-(?:build|sbom|audit|bootstrap)\\.txt$/",
       "/^requirements/(?:runtime|development)-py3\\.(?:12|14)\\.txt$/"
     ]
-  }
+  },
+  "dependencyDashboard": true,
+  "dependencyDashboardHeader": "Renovate dependency maintenance.\n\nRoutine updates run Monday 00:00–04:00 Europe/Vienna; lock refreshes run before 05:00. Non-major updates have a three-day release-age hold. Renovate may merge eligible non-major updates after checks pass; major updates and complete lock refreshes require review.\n\n- **Awaiting Schedule** lists work queued for its next eligible window. Recurring lock maintenance reappears for the next scheduled refresh.\n- **Pending Status Checks** can include release-age holds. Inspect the PR checks and any Renovate stability status; green CI alone does not clear the age policy.\n- Checkboxes request bot work, such as creation or rebasing; they do not approve a merge. Required checks and review still apply.",
+  "dependencyDashboardFooter": "Release-inactivity warnings require upstream review. Check commits, releases and advisories before replacing a pinned dependency or accepting an exception."
 }
