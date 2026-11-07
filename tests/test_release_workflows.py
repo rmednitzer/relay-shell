@@ -8,6 +8,8 @@ packages must not hold the OIDC/write token, tooling must be hash-locked, and a
 from __future__ import annotations
 
 import re
+import shlex
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -197,3 +199,40 @@ def test_audit_tool_has_its_own_hashed_environment() -> None:
     assert ".audit-tool/bin/python -m pip install --only-binary=:all: --require-hashes" in text
     assert '.audit-tool/bin/pip-audit --path "$AUDIT_SITE_PACKAGES"' in text
     assert "--upgrade pip" not in text
+
+
+def test_profile_inputs_match_the_declared_dependency_scopes() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+
+    def entries(name: str) -> set[str]:
+        return {
+            line.strip()
+            for line in (ROOT / name).read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        }
+
+    assert entries("requirements/runtime.in") == set(project["dependencies"])
+    assert entries("requirements/development.in") == {
+        "-r runtime.in",
+        "-r ../requirements-build.in",
+        *project["optional-dependencies"]["dev"],
+    }
+
+
+def test_lock_headers_use_renovate_compatible_option_arguments() -> None:
+    # Renovate's pip-compile parser rejects separated option/value tokens.
+    locks = [
+        *(ROOT / f"requirements-{name}.txt" for name in ("build", "sbom", "audit", "bootstrap")),
+        *ROOT.glob("requirements/*.txt"),
+    ]
+    for lock in locks:
+        command = next(
+            line.removeprefix("#    ")
+            for line in lock.read_text().splitlines()
+            if line.startswith("#    uv pip compile ")
+        )
+        arguments = shlex.split(command)
+        assert any(arg.startswith("--python-version=") for arg in arguments), lock
+        assert any(arg.startswith("--output-file=") for arg in arguments), lock
+        assert "--python-version" not in arguments, lock
+        assert "--output-file" not in arguments, lock

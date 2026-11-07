@@ -1,0 +1,13 @@
+# Mirror project.optional-dependencies.dev; keep runtime and build inputs explicit.
+-r runtime.in
+-r ../requirements-build.in
+pytest>=8.3,<10
+pytest-asyncio>=0.24,<2
+hypothesis>=6.0,<7
+httpx>=0.28,<1
+ruff==0.17.3
+mypy>=1.13,<3
+coverage[toml]>=7.6,<8
+pre-commit>=4.0,<5
+PyJWT>=2.15.0,<3
+cryptography>=50.0.0,<51

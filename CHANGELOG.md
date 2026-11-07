@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Give Renovate separate runtime/development lock inputs with manifest alignment
+  checks, and normalize the bootstrap regeneration command's option arguments.
+  This preserves runtime scope while allowing all hashed profiles to be extracted.
+
 ## [0.5.2] - 2026-11-02
 
 ### Fixed
