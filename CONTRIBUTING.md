@@ -99,8 +99,8 @@ short version:
 | Add or remove a tool         | `docs/tools.md`, `tests/test_server.py::_EXPECTED`, README capability tables, `_INSTRUCTIONS` in `server.py` |
 | Add or remove an env var     | `.env.example`, `Settings`, `docs/deployment.md` (and `notices.config_warnings` if it widens access) |
 | Add or change a module       | `docs/architecture.md` module table                                                    |
-| Add a runtime dependency     | `requirements.txt` (pinned), the `pyproject.toml` bound + a justification in the PR body |
-| Change release/SBOM tooling or a workflow | `requirements-build.in` / `requirements-sbom.in` then regenerate the hashed `.txt` locks (runbook §6.6), `tests/test_release_workflows.py` |
+| Add a runtime dependency     | `pyproject.toml` bound, `requirements.txt` pin, `requirements/runtime.in`, all affected runtime/development hashed profiles, and a justification in the PR body |
+| Change dependency/build/audit tooling | Matching `.in` inputs and all affected hashed outputs using their recorded commands (runbook §6.6), `tests/test_release_workflows.py` |
 | Change audit-record fields   | `docs/architecture.md` request lifecycle, `tests/test_audit.py`, runbook §2.3          |
 | Change a redaction/tier pattern | `src/relay_shell/patterns.py` (bump `PATTERNS_VERSION`), paired over-scrub/under-scrub (redaction) or positive/near-miss (policy) tests in `tests/test_patterns.py`, runbook §6.4 (policy heuristics) / §6.5 (redaction rules) |
 
@@ -170,7 +170,7 @@ These recur in the runbook §3.4 "common review failures" list.
 - `ruff check . && ruff format --check .` must pass. The line length
   is 100, target version is `py312`.
 - `mypy` is strict for the package and relaxed only for
-  `relay_shell.server` (FastMCP) and `asyncssh` (no stubs). Prefer
+  `relay_shell.server` (MCPServer) and `asyncssh` (no stubs). Prefer
   narrowing an override in `pyproject.toml` over `# type: ignore` in
   the file.
 - No new runtime dependency without a justification in the PR body.

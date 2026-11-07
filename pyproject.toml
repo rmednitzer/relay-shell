@@ -66,7 +66,7 @@ Changelog = "https://github.com/rmednitzer/relay-shell/blob/main/CHANGELOG.md"
 [tool.hatch.build.targets.wheel]
 packages = ["src/relay_shell"]
 
-# Ship the deploy templates inside the wheel so `relay-shell verify-deploy`
+# Ship the deploy templates inside the wheel so `relay-shell --verify-deploy`
 # can locate them via `importlib.resources` regardless of whether the
 # operator installed from a wheel, a sdist, or the source tree. The
 # source-tree (editable) fallback in `verifier.py` covers `pip install -e .`.
@@ -86,7 +86,7 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ASYNC", "PIE", "PTH", "BLE", "TID"]
-# B008: FastMCP tools use callable defaults by design.
+# B008: MCPServer tools use callable defaults by design.
 # RUF006: background tasks are owned by the session registry by design.
 # ASYNC109: timeout params are intentional and enforced via asyncio.wait_for.
 # ASYNC240: also flags non-blocking path-string ops (expanduser/join); the
@@ -118,7 +118,7 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["relay_shell.server"]
-# FastMCP's Context is generic and its tool decorator typing varies by SDK
+# MCPServer's Context is generic and its tool decorator typing varies by SDK
 # minor version; relax just these two checks for the wiring module.
 disallow_untyped_decorators = false
 disallow_any_generics = false

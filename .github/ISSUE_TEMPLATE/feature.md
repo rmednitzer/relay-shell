@@ -49,7 +49,7 @@ plus a script) and the only ask is ergonomics, say so explicitly. -->
 - an entry in `tests/test_server.py::_EXPECTED` plus the `len()` assertion
 - an entry in the README capability table
 - a unit test of the underlying helper
-- a wiring test that exercises the tool through FastMCP
+- a wiring test that exercises the tool through `MCPServer`
 - the `_INSTRUCTIONS` string in `server.py` -->
 
 ## Out of scope

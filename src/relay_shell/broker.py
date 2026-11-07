@@ -9,7 +9,7 @@ consults it and the audit record is unchanged.
 The flow, when enabled (every step lands on the normal audit stream):
 
 1. **plan** - a Tier-3 tool call with no armed confirmation returns a
-   single-use token bound to ``sha256(tool \\0 policy_text)`` with a TTL;
+   single-use token bound to ``sha256(tool \\0 op_key)`` with a TTL;
    ``work()`` does *not* run.
 2. **arm** - ``operation_confirm(token)`` marks that token armed.
 3. **execute** - re-issuing the *exact* same call finds the armed token,

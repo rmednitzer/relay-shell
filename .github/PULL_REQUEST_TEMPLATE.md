@@ -37,8 +37,10 @@ if applicable: "Closes F-6 from docs/runbook.md". -->
       `docs/deployment.md`.
 - [ ] A new permissive setting has a matching entry in `notices.config_warnings`, and the
       default configuration still refuses no command (ADR 0013).
-- [ ] No new dependency is added without a justification in the PR body
-      and a pinned version in `requirements.txt`.
+- [ ] Dependency changes justify the addition in the PR body, align
+      `pyproject.toml`, `requirements.txt` and the matching `requirements/*.in`
+      scope, and regenerate all affected runtime/development/tooling hash locks
+      for both qualified profiles (runbook §6.6 and `requirements/README.md`).
 
 ## Security-sensitive diff (runbook §3.3)
 

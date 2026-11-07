@@ -11,6 +11,8 @@ All notable changes to this project are documented here. The format follows
 - Align quickstart/deployment instructions with locked profiles and installer recovery;
   clarify audit, timeout and resource/prompt limits, edge-variable precedence and
   OAuth reauthorization. Refresh release-signature evidence through v0.5.2.
+- Correct the Vector shipping configuration, package-source guidance and parser
+  error handling; document protocol and rotation/backfill limits.
 - Use system fonts for the documentation site to avoid third-party font requests.
 
 - Give Renovate separate runtime/development lock inputs with manifest alignment
