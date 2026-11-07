@@ -86,9 +86,9 @@ isoduration==20.11.0 \
     --hash=sha256:ac2f9015137935279eac671f94f89eb00584f940f5dc49462a0c4ee692ba1bd9 \
     --hash=sha256:b2904c2a4228c3d44f409c8ae8e2370eb21a26f7ac2ec5446df141dde3452042
     # via jsonschema
-jsonpointer==3.8 \
-    --hash=sha256:a627a255641390bfb4d51d4cfbb90648078ae855b45804ef7e19ea13a4cca355 \
-    --hash=sha256:d69af85adaea202111bbc931067ead68dc16bca4592c74e1a1953152e2a330ab
+jsonpointer==3.10 \
+    --hash=sha256:3b08b9e5239f1b683e31c9561c350d75ce3fa8cdd407130ca8491fdb0c9e56f3 \
+    --hash=sha256:69349c0e738c93e9efa501397091f49ad302ae686293effd05d7755c06f88ef0
     # via jsonschema
 jsonschema==4.26.0 \
     --hash=sha256:0c26707e2efad8aa1bfc5b7ce170f3fccc2e4918ff85989ba9ffa9facb2be326 \
@@ -300,9 +300,9 @@ pip-requirements-parser==32.0.1 \
     --hash=sha256:4659bc2a667783e7a15d190f6fccf8b2486685b6dba4c19c3876314769c57526 \
     --hash=sha256:b4fa3a7a0be38243123cf9d1f3518da10c51bdb165a2b2985566247f9155a7d3
     # via cyclonedx-bom
-py-serializable==2.1.0 \
-    --hash=sha256:9d5db56154a867a9b897c0163b33a793c804c80cee984116d02d49e4578fc103 \
-    --hash=sha256:b56d5d686b5a03ba4f4db5e769dc32336e142fc3bd4d68a8c25579ebb0a67304
+py-serializable==2.2.0 \
+    --hash=sha256:2cce775abc5aac12115f9ff572a145c7276d04a770090334bd4e51ed9c782415 \
+    --hash=sha256:8e4fa02e8de819c0488ccdb69c2d3109274adcf224c02357fd8729cb12727aab
     # via cyclonedx-python-lib
 pyparsing==3.3.3 \
     --hash=sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36 \
