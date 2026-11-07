@@ -425,8 +425,10 @@ mypy
 pytest -q
 ```
 
-A green local loop is the bar before pushing. A failure in CI only is a
-CI-config bug; fix that, not the test.
+A green local loop is the bar before pushing. If a failure appears only in CI,
+compare the source revision, dependency locks, OS/interpreter, privileges and
+isolation before assigning the cause. Fix the reproduced defect without weakening
+the check.
 
 ### 4.1a Hosted development and dependency ownership
 
@@ -1089,11 +1091,17 @@ the service venv; no pip upgrade, dependency resolution or source-build fallback
 is implicit. The owned temporary builder is removed on exit. The service is not
 started by installation. Interpreter/profile mismatch or absent wheels fail.
 
-The installation remains an in-place operator procedure, not an atomic deployment
-transaction. Preserve the previous complete runtime and service configuration
-before an authorized upgrade. Dependency installation can partially modify a venv
-before a failure; restore that complete runtime before restarting, rather than
-copying individual packages. These repository changes do not execute deployment.
+The installation remains an in-place operator procedure, not an atomic deployment.
+The later failure/interruption recovery decisions in
+[ADR 0014](adr/0014-seccomp-launch-and-install-recovery.md) supersede manual-only
+recovery: with the service stopped, the installer snapshots managed targets and
+restores them on ordinary failure or handled termination. An unresolved pending
+transaction blocks new installation; use the validated `deploy/install.sh --recover`
+procedure in [Deployment §11d](deployment.md#11d-recovery-after-an-interrupted-installer).
+Do not bypass the pending record. Preserve the complete runtime and state recovery
+set before an upgrade; OAuth/SSH/audit state is outside installer rollback, and
+live-host recovery remains separately qualified. These procedures do not authorize
+a service deployment.
 Existing package compatibility ranges remain available to library consumers;
 this installer claims only the explicitly qualified locked profiles.
 

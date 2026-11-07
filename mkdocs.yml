@@ -8,7 +8,7 @@
 site_name: relay-shell
 site_description: >-
   A Model Context Protocol server for complete shell and SSH operation: open by
-  default, every call audited, risky calls flagged with notices, opt-in refusal,
+  default, per-call audit, risky calls flagged with notices, opt-in refusal,
   secret redaction and resource bounds.
 site_url: https://rmednitzer.github.io/relay-shell/
 site_author: Roman Mednitzer
@@ -34,9 +34,8 @@ theme:
       toggle:
         icon: material/weather-sunny
         name: Switch to dark mode
-  font:
-    text: Inter
-    code: JetBrains Mono
+  # System fonts avoid visitor requests to third-party font services.
+  font: false
   icon:
     repo: fontawesome/brands/github
   features:

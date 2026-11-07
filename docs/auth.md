@@ -63,7 +63,7 @@ RFC 6749.
 ### 4. Each request carries the access token
 
 Every MCP call over HTTP sends `Authorization: Bearer <access-token>`; the SDK
-calls `load_access_token` to validate it. Two guards matter there:
+calls `load_access_token` to validate it. These guards matter there:
 
 - a `refresh:`-prefixed string is **rejected** as an access token, so a refresh
   token cannot be replayed as an access token (token-type confusion, AUTH-1);
@@ -150,10 +150,12 @@ out: the access and refresh tokens are still valid on disk. (The state dir is
 
 ### 7. When a full re-authentication is required
 
-Only if the client is idle **longer than the refresh TTL (30 days by
-default)**: the refresh token has expired and the client must run the PKCE
-authorize flow again (step 2). It still does **not** re-register: the
-`client_id` persists, which matters under single-client lockdown (below).
+The client must repeat the PKCE authorization flow (step 2) when its refresh
+grant expires after **30 days without refreshing by default**, is revoked (including
+reuse detection), or no longer has the configured resource binding. Migration
+or recovery can also invalidate grants. Restart alone preserves valid grants.
+If the registration remains, the client reuses its persistent `client_id`;
+operator rejection removes that registration too, requiring onboarding again.
 
 ### 8. Revocation
 

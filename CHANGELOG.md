@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Align quickstart/deployment instructions with locked profiles and installer recovery;
+  clarify audit, timeout and resource/prompt limits, edge-variable precedence and
+  OAuth reauthorization. Refresh release-signature evidence through v0.5.2.
+- Use system fonts for the documentation site to avoid third-party font requests.
+
 - Give Renovate separate runtime/development lock inputs with manifest alignment
   checks, and normalize the bootstrap regeneration command's option arguments.
   This preserves runtime scope while allowing all hashed profiles to be extracted.
