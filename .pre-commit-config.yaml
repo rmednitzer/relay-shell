@@ -1,6 +1,6 @@
 # Pre-commit hooks for relay-shell.
 #
-# Install: `pip install pre-commit && pre-commit install`
+# Install the matching locked development profile, then run `pre-commit install`.
 # Run on a single file: `pre-commit run --files <path>`
 # Run on the whole tree: `pre-commit run --all-files`
 #
@@ -24,11 +24,11 @@ repos:
   - repo: local
     hooks:
       # mypy --strict needs the project's full import graph (asyncssh stubs
-      # override, FastMCP Context typing, etc.). Run it from the project's
+      # override, MCPServer Context typing, etc.). Run it from the project's
       # own venv rather than an isolated pre-commit env so the configured
       # overrides in pyproject.toml apply identically here and in CI. This
-      # assumes the contributor ran `pip install -e ".[dev]"` first, which
-      # the runbook §4.1 already requires.
+      # assumes the contributor installed the matching locked development profile
+      # and no-dependency editable checkout from runbook §4.1 first.
       - id: mypy
         name: mypy --strict (project venv)
         entry: mypy

@@ -298,6 +298,11 @@ reauthorization. Operational TLS/clients, broader state-policy reconciliation,
 binary-only downgrades, automatic rollback and live-host recovery remain open.
 
 
+**Runner update, 2026-11-07:** the current cross-version job now runs on
+Ubuntu 26.04 with an explicit legacy Python 3.12 interpreter. The paragraph above
+records the initial qualification; the native qualified profiles remain
+Ubuntu 24.04/Python 3.12 and Ubuntu 26.04/Python 3.14.
+
 ### Installer rollback qualification (2026-10-20)
 
 Implemented automatic restoration for ordinary installer errors and handled

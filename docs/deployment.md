@@ -71,17 +71,31 @@ job-specific SSH keys and application identities may retain their own boundaries
 
 ## 2. Install
 
+Use a trusted, reviewed checkout on a qualified host. For an upgrade, first retain
+and verify the complete recovery set in [§11](#11-backup-and-restore). Stop the
+service and prevent other actors from starting it until installation or recovery
+is complete. From the checkout root:
+
 ```bash
-sudo -u relay-shell python3 -m venv /var/lib/relay-shell/venv
-sudo -u relay-shell /var/lib/relay-shell/venv/bin/pip install --upgrade pip
-sudo -u relay-shell /var/lib/relay-shell/venv/bin/pip install \
-    -c /path/to/relay-shell/requirements.txt /path/to/relay-shell   # or: pip install relay-shell
+sudo systemctl stop relay-shell  # existing installation; skip on a fresh host
+sudo bash deploy/install.sh
 ```
 
-`deploy/install.sh` does this idempotently (it installs against `requirements.txt` when the
-checkout has one, and saves a copy of any unit, drop-in or logrotate file you edited under
-`/var/lib/relay-shell/preinstall-backups/` before replacing it). It deliberately does **not**
-auto-start the service; review the unit and configuration first.
+The installer creates the service account and venv, selects the matching hashed
+`requirements/runtime-py3.12.txt` or `runtime-py3.14.txt` profile, and builds the
+wheel separately with locked build tools. Dependencies require hashes and binary
+wheels; the built project wheel is installed without resolving dependencies.
+It reconciles the dedicated runtime distribution inventory and verifies it.
+An existing venv selects its own interpreter; unsupported profiles fail before
+runtime mutation. Keep operator tools out of this venv.
+
+Installation never starts or enables the service. Ordinary failures restore the
+managed runtime/configuration from a root-private transaction snapshot; an
+interrupted transaction blocks another install until reviewed recovery.
+OAuth, SSH trust and audit state are outside that rollback. See
+[installer failure recovery](#11c-installer-failure-recovery) and
+[interruption recovery](#11d-recovery-after-an-interrupted-installer).
+Review the unit and effective configuration before activation.
 
 Validate the resolved configuration against the service account's
 environment before enabling the unit:
@@ -241,14 +255,17 @@ reconciling the intended route: its managed template is CIDR-restricted.
 
 After approval, establish a separately protected checksum/config-management
 baseline of the **effective** Caddyfile, including the route exception, and
-alert on any deviation from that approved baseline. On the currently assessed
-relay host, a root-owned checksum is stored at
+alert on any deviation from that approved baseline. An earlier relay-host
+assessment recorded a root-owned checksum at
 `/var/lib/relay-shell/evidence/caddy-site-baseline/Caddyfile.sha256` and
 `relay-caddy-drift-check.timer` invokes a read-only hourly systemd service.
 Check it with `systemctl status relay-caddy-drift-check.timer` and
 `systemctl start relay-caddy-drift-check.service`, then inspect its journal.
 The check detects changes but does not reload Caddy, rotate the baseline or
 provide external alert delivery; configure notification routing separately.
+These checksum paths and `relay-caddy-drift-check.*` units are an earlier,
+host-local operational example; the units are not shipped in this repository.
+This guide does not establish their current presence or health on any host.
 The baseline is a recorded observation, not approval of the exception. The stock
 `--verify-deploy` will continue to report `DRIFT` against the canonical
 CIDR-restricted template; do not suppress that check without substituting a
@@ -276,8 +293,9 @@ at this host, and TCP/80 + TCP/443 reachable from the internet (port 80 is
 required for the HTTP-01 challenge).
 
 ```bash
-# Edit /etc/relay-shell/relay-shell.env (or export inline; a value in the env file
-# overrides an exported one) and set at minimum:
+# Set these in /etc/relay-shell/relay-shell.env. Explicitly exported EDGE values
+# take precedence over that file; review the environment passed through sudo.
+# Set at minimum:
 #   RELAY_SHELL_EDGE_DOMAIN=relay-shell.example.org
 #   RELAY_SHELL_EDGE_ACME_EMAIL=admin@example.org
 #   RELAY_SHELL_EDGE_CLIENT_CIDRS="203.0.113.0/24 198.51.100.0/24"
@@ -296,6 +314,11 @@ sudo deploy/install-edge.sh
 | `RELAY_SHELL_EDGE_DRY_RUN` | Set to `1` to log the resolved values and print the parameterized Caddyfile template, then exit without installing. Caddy substitutes the `{$RELAY_SHELL_EDGE_*}` placeholders at service start. |
 | `RELAY_SHELL_EDGE_FORCE` | Set to `1` to overwrite an existing `/etc/caddy/Caddyfile` that this installer did not write. Without it, the installer refuses to clobber a Caddyfile that may serve other sites on the host. |
 | `RELAY_SHELL_EDGE_CADDY_GPG_FPR` | Pin the Caddy apt repo signing key: the installer fails closed if the fetched key's fingerprint does not match (DEP-1). The key is fetched over TLS but otherwise trust-on-first-use; the installer always logs the observed fingerprint, so set this to that value (after confirming it at <https://caddyserver.com/docs/install>) to enforce it. Unset = unpinned, with a warning. Only used when the installer provisions Caddy via apt. |
+
+Explicitly exported `RELAY_SHELL_EDGE_*` variables override the operator file,
+including an explicitly empty value (which fails validation when invalid).
+Unset unintended exported overrides before applying file changes. Prefer explicit
+`sudo --preserve-env=NAME,...` for the specific variables you intend to pass.
 
 The installer is idempotent: re-run it after editing the env file to push
 changes. Both installers create `/etc/relay-shell` as `0750`
@@ -573,8 +596,9 @@ startup log list the permissive settings (root, open policy, `accept-new`/`ignor
 per-call weaker host keys, HTTP without OAuth, audit chain off). `RELAY_SHELL_UNSAFE_NOTICES=false`
 removes the trailing lines; the audit record is the same either way. A notice is information,
 not a block, and a call without one is not thereby safe, because the classifier is a heuristic.
-What still refuses a call is a resource bound (`RELAY_SHELL_MAX_INPUT`, the session and forward
-caps), never the command's meaning.
+Open mode does not bypass argument validation, SSH host verification, transport
+authentication or resource bounds (`RELAY_SHELL_MAX_INPUT`, session and forward
+caps). Those checks can refuse a request independently of the command's meaning.
 
 - `open` - full access, every call still classified and audited. The
   default.
@@ -859,9 +883,10 @@ the complete original-path venv, OAuth state, EnvironmentFiles, systemd unit and
 drop-ins, logrotate configuration, SSH trust/configuration and audit segments.
 Preserve ownership, restrictive modes and symlinks. Preserve separately managed
 credentials/inventories in their existing protected store. Verify the backup
-before starting an in-place upgrade; the installer provides no atomic swap or
-automatic rollback. It preserves EnvironmentFiles and backs up replaced managed
-templates, but those copies alone are not a complete recovery set.
+before starting an in-place upgrade. The installer provides bounded failure
+recovery for its managed targets ([§11c](#11c-installer-failure-recovery)), not an
+atomic swap or a full-state rollback after the service has run. Its managed-target
+snapshots alone are not a complete recovery set.
 
 The required release rehearsal runs the actual installer on an empty disposable
 hosted VM. It checks fresh/repeat installation, replacement of deliberately changed
@@ -901,7 +926,8 @@ reauthorization and continued audit chaining. It confirms backed-up credentials
 are not revived. Other state/policy changes after a real snapshot need their own
 review and reconciliation while external access remains stopped. Blindly restoring
 old tokens can undo revocations; restoring an older log can discard accepted audit
-history. Binary-only downgrade and automatic rollback remain unqualified.
+history. Binary-only downgrade and automatic rollback of a running,
+state-changing deployment remain unqualified.
 
 This does not recommend deploying the old release or qualify arbitrary versions,
 operational clients, TLS/edge configuration, full-host recovery or all newer policy
@@ -934,11 +960,12 @@ Successful installation deletes only its own transaction snapshot.
 
 This is failure recovery, not an atomic installation or power-loss guarantee.
 SIGKILL does not execute rollback handlers. After SIGKILL, power loss or an
-incomplete rollback, keep the service stopped and follow the full consistent
-snapshot recovery procedure above. Do not restart the installer blindly. The
-private transaction `targets.txt` records the ordered target mapping; a missing
-numbered entry means that target was absent before installation. External service
-starts, unrelated processes and storage corruption remain outside this guarantee.
+incomplete rollback, keep the service stopped and follow
+[§11d](#11d-recovery-after-an-interrupted-installer). Do not restart normal
+installation blindly. The sealed manifest binds the ordered target mapping and
+original absence of entries; a missing backup must never be interpreted as
+original absence without validating that manifest. External service starts,
+unrelated processes and storage corruption remain outside this guarantee.
 
 
 ### 11d. Recovery after an interrupted installer

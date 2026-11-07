@@ -12,17 +12,25 @@ It is operator infrastructure for hosts you own and administer. It runs with the
 of its service account, with no sandbox, and it is **open by default**: with the default
 settings no command is refused for what it does. What it adds is a record and a warning:
 
-- **Every call is audited:** one JSON line with the redacted arguments, the output's SHA-256
+- **Per-call audit:** one JSON line with the redacted arguments, the output's SHA-256
   and length (never its body), the exit code, the client and the assessed tier; an optional
   hash chain makes the log tamper-evident.
-- **Every risky call says so:** an admitted Tier 2 (changes state) or Tier 3 (irreversible)
+- **Risk notices:** an admitted Tier 2 (changes state) or Tier 3 (irreversible)
   call, or an SSH call with host-key checking off, ends with a `[NOTICE ...]` line, and
   `server_info.warnings` lists the permissive settings in effect. The tier comes from a regex
   heuristic: a call without a notice is not thereby safe.
 - **Refusal is opt-in:** `guarded` and `readonly` modes, a deny list and a Tier-3
   confirmation step are available and all off by default.
-- **Everything is bounded:** timeouts, output, input size, sessions, forwards and cached SSH
-  connections all have configured caps.
+- **Resource bounds:** configured input/output caps, session/forward limits and
+  one-shot command timeouts. Persistent sessions have no maximum lifetime; SFTP
+  transfers default to no per-call deadline. The SSH cache cap can be exceeded
+  temporarily when every connection is in use. See the [resource model](architecture.md#concurrency-and-resource-model).
+
+A crash can leave execution without a completion record; opt-in write-ahead
+`RELAY_SHELL_AUDIT_INTENT` records the intent first. Runtime audit-sink failures
+mark health degraded while calls continue. A hash chain is keyless and cannot
+prevent recomputation by a writer; integrity needs independently retained
+[off-host evidence](audit-shipper.md).
 
 This site is generated from the
 [`docs/`](https://github.com/rmednitzer/relay-shell/tree/main/docs) folder. For

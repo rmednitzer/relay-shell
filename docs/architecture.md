@@ -64,10 +64,6 @@ Every tool body is identical in shape (`Relay.run`):
    (`deployment.md` §6a).
 4. **Bound** - the body is truncated to the effective output budget (byte
    safe). An `[exit N]` prefix is added when an exit code is meaningful.
-4a. **Notice** - after the audit record is written, an admitted Tier 2/3 call (or one with
-   `known_hosts=ignore`) gets one or two trailing `[NOTICE ...]` lines appended to the returned
-   string; nothing is added to the record ([ADR 0013](adr/0013-open-by-default-with-unsafe-notices.md),
-   `RELAY_SHELL_UNSAFE_NOTICES`).
 5. **Audit** - one JSON line: timestamp, tool, tier, denied flag, redacted and
    length-bounded args, SHA-256 of the final output, output byte length, exit
    code, plus `request_id`, `client_id` and an `action` marker (`intent`, `confirm_plan`,
@@ -75,6 +71,12 @@ Every tool body is identical in shape (`Relay.run`):
    `RELAY_SHELL_AUDIT_CHAIN=true` the line additionally carries `seq`/`prev`/`chain`
    for tamper-evidence ([ADR 0007](adr/0007-audit-hash-chain.md)); default off
    keeps the record byte-identical.
+6. **Notice** - after auditing, an admitted Tier 2/3 call (or one with
+   `known_hosts=ignore`) gets `[NOTICE ...]` information in its response; nothing
+   is added to the audit record ([ADR 0013](adr/0013-open-by-default-with-unsafe-notices.md),
+   `RELAY_SHELL_UNSAFE_NOTICES`). `ssh_fanout` keeps its response valid JSON by
+   returning notices in a top-level `notices` field when the body is a JSON
+   object; errors or truncated bodies fall back to trailing notice lines.
 
 The audit file handler validates its opened descriptor at initialization and every
 rotation reopen. It uses nonblocking open to avoid FIFO stalls, rejects nonregular
@@ -84,8 +86,10 @@ degraded while tool calls continue; existing rotation-file modes are preserved.
 Regular-file type checks alone do not prove storage durability or constrain an
 operator-controlled path.
 
-A tool may fail, time out, or be denied, but it always returns a single bounded, audited
-string; the one exception is a cancelled call, which is audited and then re-raised.
+Handled tool failures, timeouts and denials return bounded text through the runner;
+a cancelled call is audited and then re-raised. This describes the normal handler
+path, not guaranteed durable evidence after process loss or a degraded sink.
+The optional intent record can expose an execution with no completion record.
 
 When `RELAY_SHELL_SECCOMP_NOTIFY=true` (and the host supports it),
 `Relay.run` also activates a per-call seccomp-notify monitor during step 3: a
@@ -146,8 +150,11 @@ The main `Relay.run` steps above correspond to specific call sites in
 | 5 Audit | `self.audit.record(...)` from `audit.AuditLogger.record`. |
 
 Resource reads (`relay-shell://...`) and prompt fetches (`prompts/get`)
-do not flow through `Relay.run` - there is no work to admit, time out,
-or truncate. They are still audited with `tool="resource:<name>"` /
+do not flow through `Relay.run`; they do not execute shell work or use its
+command-admission path. Their serialized bodies are byte-safely truncated to
+`app.clamp_output(cfg.max_output)` before hashing and return. An oversized JSON
+resource can therefore contain a truncation marker rather than parseable JSON.
+Successful reads/fetches are still audited with `tool="resource:<name>"` /
 `tool="prompt:<name>"` and `tier=0` so the operator sees what context
 the model is pulling in ([ADR 0008](adr/0008-operating-guidance-prompt.md)
 covers the prompt surface). The `Relay.run` body, the resource handlers,
@@ -170,8 +177,12 @@ produced.
   connection evicts the least-recently-used entry not in use, and a cache whose entries are
   all in use (sessions, forwards, running calls) exceeds the cap briefly rather than drop a
   live connection. `RELAY_SHELL_MAX_FORWARDS` (default 64) caps active forwards.
-- Every tool clamps its own timeout and output to the configured limits;
-  background/blocking filesystem work is offloaded with `asyncio.to_thread`.
+- One-shot command tools clamp timeouts and output to the configured limits.
+  SFTP transfers default to `timeout=0` (no per-call deadline); positive transfer
+  timeouts are clamped. Persistent PTY lifetime is governed by explicit closure
+  and idle reaping, not the one-shot command timeout. A remote timeout is not
+  proof that remote effects stopped; reconcile before retrying mutations.
+  Background/blocking filesystem work is offloaded with `asyncio.to_thread`.
 
 ## Transports
 
