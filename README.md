@@ -11,13 +11,19 @@ It is operator infrastructure for hosts you own and administer. It runs with the
 its service account, with no sandbox, and it is **open by default**: no command is refused for
 what it does. What it adds is a record and a warning:
 
-- **Every call is audited:** one JSON line with the redacted arguments, the output's hash and
+- **Per-call audit:** one JSON line with the redacted arguments, the output's hash and
   length (never its body), the exit code, the client and the assessed tier.
-- **Every risky call says so:** a call classified Tier 2 (changes state) or Tier 3
+- **Risk notices:** a call classified Tier 2 (changes state) or Tier 3
   (irreversible), or an SSH call with host-key checking off, ends with a `[NOTICE ...]` line.
   `server_info` lists the standing unsafe settings.
 - **Refusal is opt-in:** `guarded` and `readonly` modes, a deny list and a Tier-3 confirmation
   step are available and all off by default.
+
+Audit records describe completed, denied and cancelled calls; a process crash can
+leave an execution without a completion record. Opt-in `RELAY_SHELL_AUDIT_INTENT=true`
+adds a pre-execution record. Runtime sink failures mark audit health degraded while
+calls continue; monitor that health and ship evidence off-host. See the
+[audit lifecycle](docs/architecture.md#request-lifecycle).
 
 ## Tools
 
@@ -67,14 +73,22 @@ is CPython 3.12; other interpreter/OS combinations are not qualified.
 
 ```bash
 git clone https://github.com/rmednitzer/relay-shell.git && cd relay-shell
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
+python3.12 -m venv .venv
+. .venv/bin/activate
+python -m pip install --only-binary=:all: --require-hashes -r requirements/development-py3.12.txt
+python -m pip install --no-deps --no-build-isolation -e ".[dev]"
+python -m pip check
 
 relay-shell                              # stdio transport
 RELAY_SHELL_TRANSPORT=http relay-shell   # streamable-http on 127.0.0.1:8080
 relay-shell --check-config               # validate config, print unsafe-setting notes
 relay-shell --verify-deploy              # compare installed templates with the shipped ones
 ```
+
+The example uses Ubuntu 24.04 / CPython 3.12. On Ubuntu 26.04, use
+`python3.14` and `requirements/development-py3.14.txt` instead. For a service
+installation using the runtime-only lock and an isolated builder, follow the
+[deployment guide](docs/deployment.md#2-install).
 
 Register with an MCP client (stdio):
 
@@ -103,19 +117,24 @@ first. Classification is a heuristic, not a boundary]
 The classifier is a regex heuristic over the command text, not a parse of the shell language.
 A call without a notice is not thereby safe, and a notice does not block anything.
 
-Only resource bounds and one startup check refuse a call, none of them based on what the
-command does:
+Open mode controls command admission; it does not bypass argument validation,
+SSH host verification, transport authentication or resource limits. With the
+default policy, a command is not refused because of its meaning. Important bounds
+and startup checks include:
 
 | Bound | Setting (default) | Behaviour |
 |-------|-------------------|-----------|
-| Input size (command, stdin, script, env) | `RELAY_SHELL_MAX_INPUT` (2 MiB) | refused, because the policy scan is synchronous |
-| Wall-clock per call | `RELAY_SHELL_MAX_TIMEOUT` (900 s) | killed; use `shell_spawn` / `ssh_spawn` for longer work |
+| Input size (command, stdin, script, env) | `RELAY_SHELL_MAX_INPUT` (2,097,152 characters) | refused, because the policy scan is synchronous |
+| One-shot command timeout | `RELAY_SHELL_MAX_TIMEOUT` (900 s) | local process group terminated; remote termination is best effort; use `shell_spawn` / `ssh_spawn` for longer work |
 | Live sessions / forwards | `RELAY_SHELL_MAX_SESSIONS` (64), `RELAY_SHELL_MAX_FORWARDS` (64) | a new one is refused at the cap |
 | Output returned | `RELAY_SHELL_MAX_OUTPUT` (64 KiB) | truncated, not refused |
 | HTTP without OAuth on a non-loopback address | `RELAY_SHELL_ALLOW_UNAUTH_NETWORK` | refused at startup unless set |
 
 Session output buffers are also bounded, and idle sessions (`RELAY_SHELL_SESSION_IDLE_TIMEOUT`,
-1800 s) and exited, drained sessions are reaped.
+1800 s) and exited, drained sessions are reaped. Persistent sessions have no
+maximum lifetime. SFTP transfers default to `timeout=0` (no per-call deadline);
+set a positive transfer timeout when needed. After a remote timeout or disconnect,
+reconcile the remote operation before retrying a mutation.
 
 ### Making it stricter
 

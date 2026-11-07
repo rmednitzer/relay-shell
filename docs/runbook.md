@@ -321,8 +321,10 @@ Use for every PR, your own or external.
 - [ ] A new setting whose permissive value widens what a caller can do has a matching entry in
       `notices.config_warnings`, and nothing here makes the default configuration refuse a
       command (ADR 0013, `tests/test_notices.py`).
-- [ ] No new dependency is added without a justification in the PR body and
-      a pinned version in `requirements.txt`.
+- [ ] Dependency changes justify the addition in the PR body, align
+      `pyproject.toml`, `requirements.txt` and the matching `requirements/*.in`
+      scope, and regenerate all affected runtime/development/tooling hash locks
+      for both qualified profiles (see §6.6 and `requirements/README.md`).
 - [ ] No new metric is undocumented in `docs/deployment.md` §9a and the
       README diagnostics paragraph (HTTP transport adds metric blocks
       to the `/metrics` exposition).
@@ -425,8 +427,10 @@ mypy
 pytest -q
 ```
 
-A green local loop is the bar before pushing. A failure in CI only is a
-CI-config bug; fix that, not the test.
+A green local loop is the bar before pushing. If a failure appears only in CI,
+compare the source revision, dependency locks, OS/interpreter, privileges and
+isolation before assigning the cause. Fix the reproduced defect without weakening
+the check.
 
 ### 4.1a Hosted development and dependency ownership
 
@@ -550,7 +554,7 @@ successor to FastMCP) and the `asyncssh`
 module (no stubs). When upgrading `mcp`:
 
 1. Run `mypy` first.
-2. If FastMCP's tool decorator typing changed, prefer narrowing the
+2. If `MCPServer`'s tool decorator typing changed, prefer narrowing the
    override in `pyproject.toml` over `# type: ignore` in the file.
 3. If `asyncssh` ever ships stubs, drop the `ignore_missing_imports`
    override and re-run.
@@ -585,9 +589,11 @@ Before tagging a release:
 - [ ] `CHANGELOG.md` `[Unreleased]` section moved under the version + date.
 - [ ] `pyproject.toml` `version` bumped and matches `__init__.__version__`.
 - [ ] Full local loop green on a clean checkout.
-- [ ] `pip install --require-hashes -r requirements-build.txt && python -m build --no-isolation`
-      (what `release.yml` runs) produces a wheel + sdist that installs cleanly into a
-      fresh venv and exposes the `relay-shell` CLI.
+- [ ] Reproduce the current-tag build path in §6.6: locked development profile
+      constrained by the workflow-revision build lock, no-dependency editable
+      install, full tests, `python -m build --no-isolation` and `twine check`.
+      The wheel and sdist must install cleanly and expose the `relay-shell` CLI.
+      Run the non-publishing release rehearsal from a committed checkout.
 - [ ] ADRs that informed the release are linked from the changelog entry.
 - [ ] `git tag -s vX.Y.Z` (annotated, SSH-signed with the key in
       `deploy/release-signing.pub`; see §6.6) and `git push origin vX.Y.Z`.
@@ -671,7 +677,7 @@ audit-record shape, needs an ADR under `docs/adr/` before code lands; the
 5. Add tests:
    - Unit test of the underlying helper (in `tests/test_shell.py`,
      `tests/test_ssh_integration.py`, or a new module).
-   - A wiring test that calls the tool through the FastMCP instance and
+   - A wiring test that calls the tool through the `MCPServer` instance and
      asserts the audit record is correct.
 
 ### 6.2 Add a new transport
@@ -771,10 +777,14 @@ trusted from `main`). It has four gated jobs:
      GitHub's "Verified" badge plays no part). A lightweight, unsigned, GPG-signed or
      retired-key tag fails here, before anything is built
      ([`release-trust.md`](release-trust.md)).
-  2. **build** - dev install on Python 3.14 (direct pins from `requirements.txt` as
-     constraints), full test suite, then `python -m build --no-isolation` +
-     `twine check`. The build tooling (`build`, `twine`, `hatchling`) comes from the
-     hash-locked `requirements-build.txt`; the job holds a read-only token and no OIDC.
+  2. **build** - on Python 3.14, install the tagged
+     `requirements/development-py3.14.txt` with hashes and binary-only dependencies,
+     constrained by the independently fetched workflow-revision
+     `requirements-build.txt`; install the checkout with `--no-deps --no-build-isolation`.
+     Run dependency consistency, the full test suite, `python -m build --no-isolation`
+     and `twine check`. Disagreement with the build lock fails. Direct constraints
+     from `requirements.txt` are only the compatibility fallback for historical
+     tags predating complete profiles. The job holds a read-only token and no OIDC.
   3. **attest** - downloads the dist artifact and signs the SLSA build-provenance
      attestation. It installs nothing, so the `id-token` / `attestations` permissions
      never share a job with package installs.
@@ -783,7 +793,7 @@ trusted from `main`). It has four gated jobs:
      token. The environment has a required reviewer, so a human approves
      between tag push and PyPI publish.
 
-Pre-conditions (one-time setup, already done):
+Preconditions (verify external settings before publishing):
 
 - PyPI trusted-publishing form configured at
   https://pypi.org/manage/account/publishing/ with
@@ -798,7 +808,13 @@ bump (Renovate proposes updates; regenerate to keep transitive hashes consistent
 
 ```bash
 uv pip compile requirements-build.in --generate-hashes --python-version=3.14 --output-file=requirements-build.txt
-uv pip compile requirements-sbom.in  --generate-hashes --python-version=3.14 --output-file=requirements-sbom.txt
+uv pip compile requirements-sbom.in --generate-hashes --python-version=3.14 --output-file=requirements-sbom.txt
+uv pip compile requirements-bootstrap.in --generate-hashes --python-version=3.14 --output-file=requirements-bootstrap.txt
+uv pip compile requirements-audit.in --generate-hashes --python-version=3.14 --constraint=requirements.txt --output-file=requirements-audit.txt
+uv pip compile requirements/runtime.in --generate-hashes --python-version=3.12 --constraint=requirements.txt --output-file=requirements/runtime-py3.12.txt
+uv pip compile requirements/runtime.in --generate-hashes --python-version=3.14 --constraint=requirements.txt --output-file=requirements/runtime-py3.14.txt
+uv pip compile requirements/development.in --generate-hashes --python-version=3.12 --constraint=requirements.txt --constraint=requirements-build.txt --output-file=requirements/development-py3.12.txt
+uv pip compile requirements/development.in --generate-hashes --python-version=3.14 --constraint=requirements.txt --constraint=requirements-build.txt --output-file=requirements/development-py3.14.txt
 pytest -q tests/test_release_workflows.py   # pins shared with requirements.txt must agree
 ```
 
@@ -809,9 +825,13 @@ from `main`). A tag signed with a retired key fails verify by design; do not rep
 historical tags through the publisher ([`release-trust.md`](release-trust.md)). The SBOM
 spec version is pinned with `--sv 1.5` because `cyclonedx-bom` 7.x defaults to 1.6.
 
-`sbom.yml` is split the same way: a read-only `sbom` job builds the runtime-only SBOM with
-the hash-locked `cyclonedx-bom` from a separate venv, and a `publish` job (contents: write +
-OIDC, no installs) attests it and creates the release.
+`sbom.yml` is split the same way: a read-only `sbom` job builds the wheel in
+`.sbom-builder` using the workflow-revision build lock, then installs only the
+tagged `requirements/runtime-py3.14.txt` and that wheel into `.sbom-venv`.
+The hash-locked `cyclonedx-bom` runs in a separate tool venv so it cannot pollute
+that runtime inventory. Historical tags without a runtime profile retain the
+documented direct-constraint fallback. A separate `publish` job (contents: write +
+OIDC, no installs) attests the SBOM and creates the release.
 
 Per-release procedure:
 
@@ -1001,8 +1021,9 @@ cite them.
 - **Capability tables.** The tool set in `README.md`, `docs/tools.md`, the server
   `_INSTRUCTIONS` and `tests/test_server.py::_EXPECTED` must agree (pinned by tests).
   Each tool's default-tier note must match `policy.py`; each "Tests:" line must name a
-  file under `tests/`. The README status line must name the real version, Python
-  matrix and a validation date that exists in ADR 0005.
+  file under `tests/`. The README status line must name the real version, qualified
+  Python minors, transports and MCP SDK range. Dated validation evidence belongs
+  in ADR 0005 and the frozen engagement reports, not an undated status claim.
 - **Settings.** An added or removed `RELAY_SHELL_*` setting changes `Settings`,
   `.env.example` and `docs/deployment.md` together; `auth_*` settings also change
   `docs/auth.md` and `SECURITY.md`. The OAuth state files are `clients.json`,
@@ -1089,11 +1110,17 @@ the service venv; no pip upgrade, dependency resolution or source-build fallback
 is implicit. The owned temporary builder is removed on exit. The service is not
 started by installation. Interpreter/profile mismatch or absent wheels fail.
 
-The installation remains an in-place operator procedure, not an atomic deployment
-transaction. Preserve the previous complete runtime and service configuration
-before an authorized upgrade. Dependency installation can partially modify a venv
-before a failure; restore that complete runtime before restarting, rather than
-copying individual packages. These repository changes do not execute deployment.
+The installation remains an in-place operator procedure, not an atomic deployment.
+The later failure/interruption recovery decisions in
+[ADR 0014](adr/0014-seccomp-launch-and-install-recovery.md) supersede manual-only
+recovery: with the service stopped, the installer snapshots managed targets and
+restores them on ordinary failure or handled termination. An unresolved pending
+transaction blocks new installation; use the validated `deploy/install.sh --recover`
+procedure in [Deployment §11d](deployment.md#11d-recovery-after-an-interrupted-installer).
+Do not bypass the pending record. Preserve the complete runtime and state recovery
+set before an upgrade; OAuth/SSH/audit state is outside installer rollback, and
+live-host recovery remains separately qualified. These procedures do not authorize
+a service deployment.
 Existing package compatibility ranges remain available to library consumers;
 this installer claims only the explicitly qualified locked profiles.
 
@@ -1221,6 +1248,8 @@ ASCII-only inputs also use equivalent ASCII regex variants for common Tier-3
 and Tier-2 scans. Inputs containing any non-ASCII character retain the original
 Unicode regexes; replacing a published table disables its optimized variant.
 Differential tests cover both paths.
+
+### Audit descriptor validation (v0.5.2)
 
 Audit-tail reads (plain and gzip) and chain-verification opens use the same
 regular-descriptor validation. This also prevents a regular-to-FIFO replacement

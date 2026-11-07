@@ -308,6 +308,8 @@ for downstream audit consumers.
 The data shape matches the `ssh_hosts` tool output, so client code can share a renderer.
 Bodies are bounded by the same `max_output` cap tools observe through `Relay.run`; an oversize
 response is truncated with a `[TRUNCATED ...]` marker the same way tools truncate.
+A truncated JSON resource may therefore no longer parse as JSON; clients must
+handle the marker rather than assume the advertised MIME type guarantees validity.
 
 The `ssh-config` resource lists every alias the active ssh_config file declares, even if an
 entry in the inventory file overrides the same alias's spec: it describes the file, not the
@@ -325,8 +327,9 @@ handed to every client at initialize). One is registered:
 |-------------------|---------------------------|----------------------------------------------------------------------|
 | `operating_guide` | `prompt:operating_guide`  | How to choose and drive the tools: one-shot command vs persistent PTY session, the spawn+`session_*` workflow, fleet / file-transfer entry points, and the bounded, audited execution model with its error grammar. |
 
-Like a resource read, a prompt fetch does **not** flow through `Relay.run` (there is no work
-to admit, time out, or truncate) but **is** audited as tier 0. The audit `tool` is the
+Like a resource read, a prompt fetch does **not** flow through `Relay.run` (it does
+not execute shell work or use command admission), but its body is truncated before
+return and **is** audited as tier 0. The audit `tool` is the
 **stable** `prompt:<name>` label; the body is hashed (never written) and bounded by the same
 `max_output` cap tools and resources observe. `prompts/list` returns metadata only and is not
 audited; the audit fires on `prompts/get`. See [`adr/0008-operating-guidance-prompt.md`](adr/0008-operating-guidance-prompt.md).

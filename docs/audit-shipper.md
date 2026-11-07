@@ -111,36 +111,36 @@ pipeline and expose back-pressure as Prometheus metrics.
 
 ### Install
 
-Use the official Timber-maintained apt repository with an explicit
-keyring, not the `curl ... | bash` one-liner, so the steps are auditable.
+Follow the current [official APT guide](https://vector.dev/docs/setup/installation/package-managers/apt/)
+and its [manual repository instructions](https://vector.dev/highlights/2023-11-07-new-linux-repos/).
+The repository is `https://apt.vector.dev/`, suite `stable`, component `vector-0`;
+the old `repositories.timber.io` repository is retired. Do not substitute the
+Ubuntu codename for that suite.
 
-```bash
-# 1. Fetch and verify the signing key. The fingerprint is published
-#    at https://vector.dev/download/ - confirm it before importing.
-sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://repositories.timber.io/public/vector/gpg.3543DA2B.key \
-  | sudo gpg --dearmor -o /etc/apt/keyrings/vector.gpg
-sudo chmod 0644 /etc/apt/keyrings/vector.gpg
-
-# 2. Add the apt source pinned to the keyring.
-echo "deb [signed-by=/etc/apt/keyrings/vector.gpg] \
-  https://repositories.timber.io/public/vector/deb/ubuntu $(lsb_release -cs) main" \
-  | sudo tee /etc/apt/sources.list.d/vector.list
-
-# 3. Install.
-sudo apt-get update && sudo apt-get install -y vector
-```
+Review current signing-key rotation instructions, authenticate the fingerprints
+through an independent trusted channel, and scope the approved keyring with
+`signed-by`. Inspect any bootstrap script before choosing to execute it; this
+guide does not require piping a downloaded script into a shell. Select and pin a
+reviewed package version, then validate the candidate configuration before enabling
+the shipper. Repository/key setup is external state and is not qualified by Relay's CI.
 
 ### Config (`/etc/vector/vector.yaml`)
+
+The receiver must speak the Vector protocol; this sink is not an OTLP or generic
+HTTP output. Route onward to a SIEM from that receiver, or choose a separately
+validated sink for the receiver protocol you actually operate.
 
 ```yaml
 # /etc/vector/vector.yaml
 # Read the relay-shell audit log line-by-line, parse each record as
-# JSON, and ship to a remote Vector / OTel / SIEM endpoint over TLS.
+# JSON, and ship over TLS to a receiver running a Vector source.
 
 data_dir: /var/lib/vector
 
 sources:
+  vector_metrics:
+    type: internal_metrics
+
   relay_shell_audit:
     type: file
     include:
@@ -149,11 +149,10 @@ sources:
     # remembers checkpoints under data_dir.
     fingerprint:
       strategy: device_and_inode
-    # Restart from beginning if the relay host was offline during a
-    # rotation; checkpoint dedupes already-shipped records.
+    # Newly discovered files start at the beginning; existing checkpoints resume.
+    # Only the active path is selected; see the rotation/backfill limits below.
     read_from: beginning
-    # Don't follow truncations - the file is append-only on disk.
-    ignore_older_secs: 0
+    # Leave ignore_older_secs unset: zero is an age filter, not 'disabled'.
     # Bound memory.
     max_line_bytes: 1048576
 
@@ -167,7 +166,12 @@ transforms:
     source: |
       parsed, err = parse_json(.message)
       if err == null {
-        . = merge(., parsed)
+        record, object_err = object(parsed)
+        if object_err == null {
+          . = merge(., record)
+        } else {
+          .parse_error = object_err
+        }
       } else {
         .parse_error = err
       }
@@ -178,8 +182,9 @@ sinks:
   remote_collector:
     type: vector
     inputs: [parse]
-    address: collector.example.org:6000
-    compression: true
+    routing:
+      endpoints: ["https://collector.example.org:6000"]
+    compression: gzip
     tls:
       enabled: true
       verify_certificate: true
@@ -190,15 +195,31 @@ sinks:
     # drop records. Alert when usage > 80%.
     buffer:
       type: disk
-      max_size: 268435456  # 256 MiB
+      max_size: 314572800  # 300 MiB; above Vector's disk-buffer minimum
       when_full: block
 
   # Local Prometheus exporter so the shipper itself is observable.
   internal_metrics:
     type: prometheus_exporter
-    inputs: [_internal_metrics_]
+    inputs: [vector_metrics]
     address: 127.0.0.1:9598
 ```
+
+This example was checked with Vector 0.61.0 on 2026-11-07 using
+`vector validate --no-environment` and synthetic VRL inputs. Replace the receiver
+and CA paths, then run full validation and an end-to-end delivery check under the
+actual service identity before activation. Configuration validation alone does
+not test TLS, receiver availability, file ACLs or delivery.
+
+The active-file input resumes checkpoints while a running Vector retains rotated
+file handles. It does not discover archives created while Vector was stopped.
+After an outage spanning rotation, reconcile/backfill retained segments without
+assuming exactly-once delivery. The independent
+[evidence verifier and off-host mirror](https://github.com/rmednitzer/relay-shell/blob/main/deploy/evidence/README.md)
+remain necessary where complete retained history is load-bearing. See upstream
+[file-source behavior](https://vector.dev/docs/reference/configuration/sources/file/),
+[internal metrics](https://vector.dev/docs/reference/configuration/sources/internal_metrics/)
+and [Vector sink options](https://vector.dev/docs/reference/configuration/sinks/vector/).
 
 ### Run as a dedicated Vector user (recommended)
 
@@ -282,7 +303,7 @@ not the `curl ... | sh` one-liner.
 
 ```bash
 # 1. Fetch and verify the signing key. The fingerprint is published
-#    at https://docs.fluentbit.io/manual/installation/linux/ubuntu -
+#    at https://docs.fluentbit.io/manual/installation/downloads/linux/ubuntu -
 #    confirm it before importing.
 sudo install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://packages.fluentbit.io/fluentbit.key \
