@@ -88,7 +88,7 @@ jobs:
           GODEBUG: http2client=0
         run: |
           command -v go
-          go install github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.8
+          go install github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.9
           echo "CADDY_BINARY=$GOBIN/caddy" >> "$GITHUB_ENV"
 
       - name: Lint (ruff)
