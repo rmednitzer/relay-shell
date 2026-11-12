@@ -169,7 +169,7 @@ def _latest_rotated_path(target: Path) -> Path | None:
     """Find the newest sibling produced by dateext or numeric log rotation."""
     candidates: list[tuple[int, str, Path]] = []
     for path in target.parent.iterdir():
-        if path == target or not path.is_file():
+        if not path.name.startswith(target.name) or path == target or not path.is_file():
             continue
         suffix = path.name[len(target.name) :]
         if suffix.endswith(".gz"):
