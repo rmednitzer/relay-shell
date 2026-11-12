@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Restrict rotated audit-log selection to the configured log basename so unrelated
+  streams cannot supply the restart chain anchor.
+
 - Align quickstart/deployment instructions with locked profiles and installer recovery;
   clarify audit, timeout and resource/prompt limits, edge-variable precedence and
   OAuth reauthorization. Refresh release-signature evidence through v0.5.2.
