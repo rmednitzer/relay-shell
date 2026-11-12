@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-12
+
 ### Fixed
 
 - Restrict rotated audit-log selection to the configured log basename so unrelated
@@ -1845,7 +1847,8 @@ All notable changes to this project are documented here. The format follows
   bundled logrotate config drops and restores the append-only attribute
   across rotation. See `docs/deployment.md` §6.
 
-[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/rmednitzer/relay-shell/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/rmednitzer/relay-shell/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/rmednitzer/relay-shell/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/rmednitzer/relay-shell/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/rmednitzer/relay-shell/compare/v0.4.0...v0.5.0
