@@ -588,6 +588,8 @@ Before tagging a release:
 
 - [ ] `CHANGELOG.md` `[Unreleased]` section moved under the version + date.
 - [ ] `pyproject.toml` `version` bumped and matches `__init__.__version__`.
+- [ ] Update the README version and website overview release version/link/date
+      in the same PR. `tests/test_release_documentation.py` checks version alignment.
 - [ ] Full local loop green on a clean checkout.
 - [ ] Reproduce the current-tag build path in §6.6: locked development profile
       constrained by the workflow-revision build lock, no-dependency editable
@@ -832,6 +834,11 @@ The hash-locked `cyclonedx-bom` runs in a separate tool venv so it cannot pollut
 that runtime inventory. Historical tags without a runtime profile retain the
 documented direct-constraint fallback. A separate `publish` job (contents: write +
 OIDC, no installs) attests the SBOM and creates the release.
+
+After publication, append the verified tag/artifact evidence to
+`docs/release-trust.md` and merge it through the normal review path. Verify the
+Pages deployment job for that main revision, then inspect the public overview
+and release-trust page. A successful PR documentation build is not a deployment.
 
 Per-release procedure:
 
