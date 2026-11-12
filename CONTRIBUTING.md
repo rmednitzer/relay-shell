@@ -46,10 +46,13 @@ lists the questions a feature proposal should answer.
 
 ## Local loop
 
-The canonical sequence runs in seconds (matches `docs/runbook.md` §4.1):
+The canonical sequence matches `docs/runbook.md` §4.1; duration depends on the
+host and enabled integration checks:
 
 ```bash
-python -m venv .venv && . .venv/bin/activate
+# Ubuntu 24.04 / CPython 3.12 example; use python3.14 and the
+# development-py3.14.txt lock together on Ubuntu 26.04.
+python3.12 -m venv .venv && . .venv/bin/activate
 python -m pip install --only-binary=:all: --require-hashes -r requirements/development-py3.12.txt
 python -m pip install --no-deps --no-build-isolation -e ".[dev]"
 python -m pip check

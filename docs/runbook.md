@@ -416,7 +416,9 @@ Check these explicitly:
 ### 4.1 Local loop (the canonical sequence)
 
 ```bash
-python -m venv .venv && . .venv/bin/activate
+# Ubuntu 24.04 / CPython 3.12 example; use python3.14 and the
+# development-py3.14.txt lock together on Ubuntu 26.04.
+python3.12 -m venv .venv && . .venv/bin/activate
 python -m pip install --only-binary=:all: --require-hashes -r requirements/development-py3.12.txt
 python -m pip install --no-deps --no-build-isolation -e ".[dev]"
 python -m pip check
@@ -431,6 +433,21 @@ A green local loop is the bar before pushing. If a failure appears only in CI,
 compare the source revision, dependency locks, OS/interpreter, privileges and
 isolation before assigning the cause. Fix the reproduced defect without weakening
 the check.
+
+When invoking tests through a running Relay server, the test process may inherit
+`RELAY_SHELL_*` configuration and an outer seccomp filter. Use a clean test-process
+environment; do not edit the production environment to make tests pass. Inspect
+`Seccomp` / `Seccomp_filters` in `/proc/self/status` and the effective capabilities.
+A nested seccomp handshake failure is not sufficient evidence that the deployed
+server's own syscall audit channel is broken.
+
+For live seccomp acceptance, use a separate test process with the documented
+`CAP_SYS_ADMIN` prerequisite, outside the already-filtered tool child. Keep this
+privilege scoped to the test job rather than changing service or host policy.
+A capability-free run may skip those cases: report skips separately from passes.
+Reconcile both environments against the same source and dependency profile.
+Timing-test failures also require workload/context comparison; preserve their
+thresholds and do not dismiss them solely because a rerun passes.
 
 ### 4.1a Hosted development and dependency ownership
 
