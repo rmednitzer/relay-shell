@@ -62,6 +62,34 @@ No tag was created, replaced or replayed. This verification covers Git source
 identity and repository settings; it does not reproduce packages or verify
 published SBOM/package bytes or attestations.
 
+## Verification update: 2026-11-12 — v0.5.3
+
+The annotated tag `v0.5.3` has object ID
+`005a643255873772d98d1cd641c1ef65c6803bda` and targets release commit
+`5657aeda770c87d9d77f7158658dbbd72bd768eb`, merged through
+[PR #285](https://github.com/rmednitzer/relay-shell/pull/285).
+Verification against the independently fetched main-branch allowlist accepted
+signer `SHA256:toiPb4c4HuVxGNLbPkfHOnRDO5k7ZvzownZfvmVQ7Lk`;
+GitHub also reported `verified: true`, reason `valid`.
+The release commit was verified as an ancestor of protected main.
+Tag creation used the owner's configured exception to restricted creation;
+no trust anchors or repository rules were changed.
+
+The [release workflow](https://github.com/rmednitzer/relay-shell/actions/runs/43183705348)
+and [SBOM workflow](https://github.com/rmednitzer/relay-shell/actions/runs/43183705407)
+completed successfully. The release build ran the full test suite before
+producing the wheel and source distribution. The configured PyPI environment
+approval preceded OIDC publication.
+
+The downloaded wheel and source distribution matched PyPI's SHA-256 digests.
+Both package attestations and both JSON/XML SBOM attestations were independently
+verified against this repository, their expected `release.yml` or `sbom.yml`
+workflow, and the exact release commit. The wheel
+`relay_shell-0.5.3-py3-none-any.whl` has SHA-256
+`f3416dc663b6820e7c1a73e936d25bf0b1c7f0e32148d17eb7865d060ee858ae`.
+These checks establish the recorded source/artifact provenance; they do not
+claim a separate reproducible rebuild or exhaustive runtime assurance.
+
 ## Policy
 
 - Do not add historical signing keys to the production release allowlist.
