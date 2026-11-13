@@ -2,4 +2,4 @@
 # .github/workflows/docs.yml. The direct dependency is pinned; transitive
 # dependencies are resolved at install time. Renovate manages the pin. `mkdocs-material` pulls in mkdocs, pymdown-extensions,
 # and the rest of the toolchain transitively.
-mkdocs-material==9.8.0
+mkdocs-material==9.8.1
