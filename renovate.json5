@@ -1,227 +1,229 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:best-practices",
-    ":semanticCommits",
-    "schedule:weekly"
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:best-practices',
+    ':semanticCommits',
+    'schedule:weekly',
   ],
-  "timezone": "Europe/Vienna",
-  "labels": [
-    "dependencies"
+  timezone: 'Europe/Vienna',
+  labels: [
+    'dependencies',
   ],
-  "prConcurrentLimit": 10,
-  "prHourlyLimit": 2,
-  "lockFileMaintenance": {
-    "enabled": true,
-    "schedule": [
-      "before 5am on monday"
+  prConcurrentLimit: 10,
+  prHourlyLimit: 2,
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: [
+      'before 5am on monday',
     ],
-    "automerge": false,
-    "description": "Complete lock refreshes require review because they can change transitive dependencies across version boundaries."
+    automerge: false,
+    description: 'Complete lock refreshes require review because they can change transitive dependencies across version boundaries.',
   },
-  "vulnerabilityAlerts": {
-    "labels": [
-      "dependencies",
-      "security"
+  vulnerabilityAlerts: {
+    labels: [
+      'dependencies',
+      'security',
     ],
-    "schedule": [
-      "at any time"
+    schedule: [
+      'at any time',
     ],
-    "minimumReleaseAge": null,
-    "description": "Security remediation bypasses the routine update window and release-age delay; update-type review rules still apply."
+    minimumReleaseAge: null,
+    description: 'Security remediation bypasses the routine update window and release-age delay; update-type review rules still apply.',
   },
-  "osvVulnerabilityAlerts": true,
-  "packageRules": [
+  osvVulnerabilityAlerts: true,
+  packageRules: [
     {
-      "description": "Allow Renovate itself to merge only after all checks, including its minimum-release-age status, pass; GitHub platform auto-merge does not reliably gate on this non-required status.",
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "digest",
-        "pin",
-        "pinDigest"
+      description: 'Allow Renovate itself to merge only after all checks, including its minimum-release-age status, pass; GitHub platform auto-merge does not reliably gate on this non-required status.',
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+        'digest',
+        'pin',
+        'pinDigest',
       ],
-      "automerge": true,
-      "platformAutomerge": false,
-      "minimumReleaseAge": "3 days"
+      automerge: true,
+      platformAutomerge: false,
+      minimumReleaseAge: '3 days',
     },
     {
-      "description": "Group all GitHub Actions updates so concurrent bumps do not collide on the same workflow files. separateMajorMinor is on by default, so majors still split into their own 'github-actions (major)' PR, which the major rule below labels and keeps out of automerge.",
-      "matchManagers": [
-        "github-actions"
+      description: "Group all GitHub Actions updates so concurrent bumps do not collide on the same workflow files. separateMajorMinor is on by default, so majors still split into their own 'github-actions (major)' PR, which the major rule below labels and keeps out of automerge.",
+      matchManagers: [
+        'github-actions',
       ],
-      "groupName": "github-actions"
+      groupName: 'github-actions',
     },
     {
-      "description": "Group non-major Python dependency updates into a single PR.",
-      "matchManagers": [
-        "pep621",
-        "pip_requirements",
-        "pip-compile",
-        "poetry",
-        "setup-cfg"
+      description: 'Group non-major Python dependency updates into a single PR.',
+      matchManagers: [
+        'pep621',
+        'pip_requirements',
+        'pip-compile',
+        'poetry',
+        'setup-cfg',
       ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
+      matchUpdateTypes: [
+        'minor',
+        'patch',
       ],
-      "groupName": "python dependencies"
+      groupName: 'python dependencies',
     },
     {
-      "description": "Major updates: separate, labelled, never automerged, across every manager. Majors already fail to match the automerge rule above, so automerge is false by default; it is stated for the same reason as lockFileMaintenance. This rule deliberately carries no matchManagers so that a major GitHub Actions, Docker, or Terraform bump is labelled for review like a major code dependency.",
-      "matchUpdateTypes": [
-        "major"
+      description: 'Major updates: separate, labelled, never automerged, across every manager. Majors already fail to match the automerge rule above, so automerge is false by default; it is stated for the same reason as lockFileMaintenance. This rule deliberately carries no matchManagers so that a major GitHub Actions, Docker, or Terraform bump is labelled for review like a major code dependency.',
+      matchUpdateTypes: [
+        'major',
       ],
-      "automerge": false,
-      "labels": [
-        "dependencies",
-        "major-review"
-      ]
+      automerge: false,
+      labels: [
+        'dependencies',
+        'major-review',
+      ],
     },
     {
-      "description": "Group pre-commit hook updates into one PR.",
-      "matchManagers": [
-        "pre-commit"
+      description: 'Group pre-commit hook updates into one PR.',
+      matchManagers: [
+        'pre-commit',
       ],
-      "groupName": "pre-commit hooks"
+      groupName: 'pre-commit hooks',
     },
     {
-      "description": "Update the exact Ruff dependency, CI command, and pre-commit hook together to prevent formatter version drift.",
-      "matchPackageNames": [
-        "ruff",
-        "astral-sh/ruff-pre-commit"
+      description: 'Update the exact Ruff dependency, CI command, and pre-commit hook together to prevent formatter version drift.',
+      matchPackageNames: [
+        'ruff',
+        'astral-sh/ruff-pre-commit',
       ],
-      "groupName": "ruff toolchain"
+      groupName: 'ruff toolchain',
     },
     {
-      "description": "Keep build, release and auxiliary jobs on the tested Python line until CI support and hashed build locks are updated together.",
-      "matchManagers": [
-        "github-actions"
+      description: 'Keep build, release and auxiliary jobs on the tested Python line until CI support and hashed build locks are updated together.',
+      matchManagers: [
+        'github-actions',
       ],
-      "matchPackageNames": [
-        "python",
-        "actions/python-versions"
+      matchPackageNames: [
+        'python',
+        'actions/python-versions',
       ],
-      "allowedVersions": "<3.15"
+      allowedVersions: '<3.15',
     },
     {
-      "description": "Keep the qualified Python 3.12 minor (including legacy fixture admission) stable; changing a minor requires explicit OS/profile, lock and CI review.",
-      "matchManagers": [
-        "github-actions"
+      description: 'Keep the qualified Python 3.12 minor (including legacy fixture admission) stable; changing a minor requires explicit OS/profile, lock and CI review.',
+      matchManagers: [
+        'github-actions',
       ],
-      "matchPackageNames": [
-        "python",
-        "actions/python-versions"
+      matchPackageNames: [
+        'python',
+        'actions/python-versions',
       ],
-      "matchCurrentValue": "/^3\\.12(?:\\.|$)/",
-      "allowedVersions": "/^3\\.12(?:\\.|$)/"
+      matchCurrentValue: '/^3\\.12(?:\\.|$)/',
+      allowedVersions: '/^3\\.12(?:\\.|$)/',
     },
     {
-      "description": "Keep the qualified Python 3.14 minor (including legacy fixture admission) stable; changing a minor requires explicit OS/profile, lock and CI review.",
-      "matchManagers": [
-        "github-actions"
+      description: 'Keep the qualified Python 3.14 minor (including legacy fixture admission) stable; changing a minor requires explicit OS/profile, lock and CI review.',
+      matchManagers: [
+        'github-actions',
       ],
-      "matchPackageNames": [
-        "python",
-        "actions/python-versions"
+      matchPackageNames: [
+        'python',
+        'actions/python-versions',
       ],
-      "matchCurrentValue": "/^3\\.14(?:\\.|$)/",
-      "allowedVersions": "/^3\\.14(?:\\.|$)/"
+      matchCurrentValue: '/^3\\.14(?:\\.|$)/',
+      allowedVersions: '/^3\\.14(?:\\.|$)/',
     },
     {
-      "description": "Generated tooling outputs belong to pip-compile so version and hash regeneration stay coupled.",
-      "matchManagers": [
-        "pip_requirements"
+      description: 'Generated tooling outputs belong to pip-compile so version and hash regeneration stay coupled.',
+      matchManagers: [
+        'pip_requirements',
       ],
-      "matchFileNames": [
-        "requirements-build.txt",
-        "requirements-sbom.txt",
-        "requirements-audit.txt",
-        "requirements/*.txt",
-        "requirements-bootstrap.txt"
+      matchFileNames: [
+        'requirements-build.txt',
+        'requirements-sbom.txt',
+        'requirements-audit.txt',
+        'requirements/*.txt',
+        'requirements-bootstrap.txt',
       ],
-      "enabled": false
+      enabled: false,
     },
     {
-      "description": "Review complete hashed build and SBOM closure refreshes before integration.",
-      "matchManagers": [
-        "pip-compile"
+      description: 'Review complete hashed build and SBOM closure refreshes before integration.',
+      matchManagers: [
+        'pip-compile',
       ],
-      "automerge": false,
-      "platformAutomerge": false
+      automerge: false,
+      platformAutomerge: false,
     },
     {
-      "description": "Organize the dashboard without changing PR grouping or update eligibility.",
-      "matchManagers": [
-        "pep621",
-        "pip_requirements",
-        "pip-compile",
-        "poetry",
-        "setup-cfg"
+      description: 'Organize the dashboard without changing PR grouping or update eligibility.',
+      matchManagers: [
+        'pep621',
+        'pip_requirements',
+        'pip-compile',
+        'poetry',
+        'setup-cfg',
       ],
-      "dependencyDashboardCategory": "Python dependencies"
+      dependencyDashboardCategory: 'Python dependencies',
     },
     {
-      "description": "Organize the dashboard without changing PR grouping or update eligibility.",
-      "matchManagers": [
-        "github-actions",
-        "custom.regex",
-        "pre-commit"
+      description: 'Organize the dashboard without changing PR grouping or update eligibility.',
+      matchManagers: [
+        'github-actions',
+        'custom.regex',
+        'pre-commit',
       ],
-      "dependencyDashboardCategory": "CI and validation"
-    }
+      dependencyDashboardCategory: 'CI and validation',
+    },
   ],
-  "customManagers": [
+  customManagers: [
     {
-      "customType": "regex",
-      "description": "Track exact Python package pins embedded in CI workflow commands.",
-      "managerFilePatterns": [
-        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      customType: 'regex',
+      description: 'Track exact Python package pins embedded in CI workflow commands.',
+      managerFilePatterns: [
+        '/^\\.github/workflows/[^/]+\\.ya?ml$/',
       ],
-      "matchStrings": [
-        "\\b(?<depName>[A-Za-z][A-Za-z0-9_.-]*)(?:\\[[A-Za-z0-9_,.-]+\\])?==(?<currentValue>\\d+\\.\\d+(?:\\.[0-9A-Za-z-]+)*)"
+      matchStrings: [
+        '\\b(?<depName>[A-Za-z][A-Za-z0-9_.-]*)(?:\\[[A-Za-z0-9_,.-]+\\])?==(?<currentValue>\\d+\\.\\d+(?:\\.[0-9A-Za-z-]+)*)',
       ],
-      "datasourceTemplate": "pypi",
-      "versioningTemplate": "pep440"
+      datasourceTemplate: 'pypi',
+      versioningTemplate: 'pep440',
     },
     {
-      "customType": "regex",
-      "description": "Track exact npm CLI pins invoked through npx in CI workflows.",
-      "managerFilePatterns": [
-        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      customType: 'regex',
+      description: 'Track exact npm CLI pins invoked through npx in CI workflows.',
+      managerFilePatterns: [
+        '/^\\.github/workflows/[^/]+\\.ya?ml$/',
       ],
-      "matchStrings": [
-        "npx\\s+(?:-y|--yes)\\s+(?:--package\\s+)?(?<depName>[A-Za-z0-9_.-]+)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      matchStrings: [
+        'npx\\s+(?:-y|--yes)\\s+(?:--package\\s+)?(?<depName>[A-Za-z0-9_.-]+)@(?<currentValue>\\d+\\.\\d+\\.\\d+)',
       ],
-      "datasourceTemplate": "npm",
-      "versioningTemplate": "semver"
+      datasourceTemplate: 'npm',
+      versioningTemplate: 'semver',
     },
     {
-      "customType": "regex",
-      "description": "Track the Caddy prerequisite used by the real edge-routing CI tests.",
-      "managerFilePatterns": [
-        "/^\\.github/workflows/ci\\.yml$/"
+      customType: 'regex',
+      description: 'Track the Caddy prerequisite used by the real edge-routing CI tests.',
+      managerFilePatterns: [
+        '/^\\.github/workflows/ci\\.yml$/',
       ],
-      "matchStrings": [
-        "go install github\\.com/caddyserver/caddy/v2/cmd/caddy@(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)"
+      matchStrings: [
+        'go install github\\.com/caddyserver/caddy/v2/cmd/caddy@(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)',
       ],
-      "depNameTemplate": "caddyserver/caddy",
-      "datasourceTemplate": "github-releases",
-      "versioningTemplate": "semver"
-    }
+      depNameTemplate: 'caddyserver/caddy',
+      datasourceTemplate: 'github-releases',
+      versioningTemplate: 'semver',
+    },
   ],
-  "pruneStaleBranches": true,
-  "pruneBranchAfterAutomerge": true,
-  "pre-commit": {
-    "enabled": true
+  pruneStaleBranches: true,
+  pruneBranchAfterAutomerge: true,
+  'pre-commit': {
+    enabled: true,
   },
-  "pip-compile": {
-    "managerFilePatterns": [
-      "/^requirements-(?:build|sbom|audit|bootstrap)\\.txt$/",
-      "/^requirements/(?:runtime|development)-py3\\.(?:12|14)\\.txt$/"
-    ]
+  'pip-compile': {
+    managerFilePatterns: [
+      '/^requirements-(?:build|sbom|audit|bootstrap)\\.txt$/',
+      '/^requirements/(?:runtime|development)-py3\\.(?:12|14)\\.txt$/',
+    ],
   },
-  "dependencyDashboard": true,
-  "dependencyDashboardHeader": "Renovate dependency maintenance.\n\nRoutine updates run Monday 00:00–04:00 Europe/Vienna; lock refreshes run before 05:00. Non-major updates have a three-day release-age hold. Renovate may merge eligible non-major updates after checks pass; major updates and complete lock refreshes require review.\n\n- **Awaiting Schedule** lists work queued for its next eligible window. Recurring lock maintenance reappears for the next scheduled refresh.\n- **Pending Status Checks** can include release-age holds. Inspect the PR checks and any Renovate stability status; green CI alone does not clear the age policy.\n- Checkboxes request bot work, such as creation or rebasing; they do not approve a merge. Required checks and review still apply.",
-  "dependencyDashboardFooter": "Release-inactivity warnings require upstream review. Check commits, releases and advisories before replacing a pinned dependency or accepting an exception."
+  dependencyDashboard: {
+    enabled: true,
+    header: 'Renovate dependency maintenance.\n\nRoutine updates run Monday 00:00–04:00 Europe/Vienna; lock refreshes run before 05:00. Non-major updates have a three-day release-age hold. Renovate may merge eligible non-major updates after checks pass; major updates and complete lock refreshes require review.\n\n- **Awaiting Schedule** lists work queued for its next eligible window. Recurring lock maintenance reappears for the next scheduled refresh.\n- **Pending Status Checks** can include release-age holds. Inspect the PR checks and any Renovate stability status; green CI alone does not clear the age policy.\n- Checkboxes request bot work, such as creation or rebasing; they do not approve a merge. Required checks and review still apply.',
+    footer: 'Release-inactivity warnings require upstream review. Check commits, releases and advisories before replacing a pinned dependency or accepting an exception.',
+  },
 }
