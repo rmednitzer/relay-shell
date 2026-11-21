@@ -10,5 +10,5 @@
   "compiler": "uv 0.12.23",
   "runtime_input_sha256": "055db86c02080679a4446e2dfa6fa9e065803d8947ba91cd84c3c2bb316607cf",
   "advisory_description_sha256": "2ca21d813a89ead1d1639385ef1a4d6db2ae3ae4394b31bb1695ab5a336c8f8b",
-  "additional_advisory_descriptions_sha256": "fb87374c2a26ae3a94913e612b60a873bcc34cfcdf40a714cccd94a4418f1dc6"
+  "additional_advisory_descriptions_sha256": "733d19d706387bb2a6f97c84b4e0d40c51c85dc55bc05740906e85fe70048029"
 }

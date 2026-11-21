@@ -1,4 +1,8 @@
 {
+  "CVE-2026-115563": {
+    "alias": "GHSA-qx49-fqc8-xw99",
+    "description_sha256": "e771461d605059fd503edf2c17f33b15660928ca1ca9c8e423bf2ceb4733752b"
+  },
   "CVE-2026-116684": {
     "alias": "GHSA-w4fh-qvv9-3v23",
     "description_sha256": "c1e2aaaf0590b41523ffd5b456d58bed003a5aeebf5aad72234716aba3ac5b67"
