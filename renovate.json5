@@ -151,6 +151,12 @@
       platformAutomerge: false,
     },
     {
+      description: 'Require review of the binary that runs the required secret scan.',
+      matchManagers: ['custom.regex'],
+      matchPackageNames: ['gitleaks/gitleaks'],
+      automerge: false,
+    },
+    {
       description: 'Organize the dashboard without changing PR grouping or update eligibility.',
       matchManagers: [
         'pep621',
@@ -209,6 +215,16 @@
       datasourceTemplate: 'github-releases',
       versioningTemplate: 'semver',
     },
+    {
+      customType: 'regex',
+      description: 'Track the Gitleaks release installed by the secret-scan workflow.',
+      managerFilePatterns: ['/^\\.github/workflows/gitleaks\\.yml$/'],
+      matchStrings: ['(?:^|\\n)[ \\t]+GITLEAKS_VERSION: "(?<currentValue>\\d+\\.\\d+\\.\\d+)"'],
+      depNameTemplate: 'gitleaks/gitleaks',
+      datasourceTemplate: 'github-releases',
+      extractVersionTemplate: '^v(?<version>\\d+\\.\\d+\\.\\d+)$',
+      versioningTemplate: 'semver',
+    },
   ],
   pruneStaleBranches: true,
   pruneBranchAfterAutomerge: true,
@@ -223,7 +239,6 @@
   },
   dependencyDashboard: {
     enabled: true,
-    header: 'Renovate dependency maintenance.\n\nRoutine updates run Monday 00:00–04:00 Europe/Vienna; lock refreshes run before 05:00. Non-major updates have a three-day release-age hold. Renovate may merge eligible non-major updates after checks pass; major updates and complete lock refreshes require review.\n\n- **Awaiting Schedule** lists work queued for its next eligible window. Recurring lock maintenance reappears for the next scheduled refresh.\n- **Pending Status Checks** can include release-age holds. Inspect the PR checks and any Renovate stability status; green CI alone does not clear the age policy.\n- Checkboxes request bot work, such as creation or rebasing; they do not approve a merge. Required checks and review still apply.',
-    footer: 'Release-inactivity warnings require upstream review. Check commits, releases and advisories before replacing a pinned dependency or accepting an exception.',
+    header: 'Renovate dependency maintenance.\n\nRoutine updates run Monday 00:00–04:00 Europe/Vienna; lock refreshes run before 05:00. Non-major updates have a three-day release-age hold. Renovate may merge eligible non-major updates after checks pass; major updates and complete lock refreshes require review.\n\n- **Awaiting Schedule** lists work queued for its next eligible window. Recurring lock maintenance reappears for the next scheduled refresh.\n- **Pending Status Checks** can include release-age holds. Inspect the PR checks and any Renovate stability status; green CI alone does not clear the age policy.\n- Checkboxes request bot work, such as creation or rebasing; they do not approve a merge. Required checks and review still apply.\n\nRelease-inactivity warnings require upstream review. Check commits, releases and advisories before replacing a pinned dependency or accepting an exception.',
   },
 }

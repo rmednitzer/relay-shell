@@ -469,7 +469,10 @@ profiles, including their recorded uv regeneration commands. Direct
 pip_requirements edits to those generated outputs are disabled, and complete
 tooling refreshes require review rather than automerge. A custom manager also
 tracks the embedded Caddy release pin used by the real edge-routing tests; the
-Go module checksum verification remains in force. Generated hashes must be reviewed
+Go module checksum verification remains in force. Renovate also tracks the
+Gitleaks binary in the secret-scan workflow. Its updates require review of the
+upstream release, checksum manifest and a successful scan before merge.
+Generated hashes must be reviewed
 with their inputs using section 6.6. A version edit alone does not refresh hashes.
 
 The profile commands use `requirements/runtime.in` and
