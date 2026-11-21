@@ -74,6 +74,7 @@ def test_advisory_dispositions_are_exact_and_require_complete_audit(tmp_path: Pa
         "CVE-2026-116684": "audience finding description",
         "CVE-2026-116685": "redirect finding description",
         "CVE-2026-116686": "schema-reference finding description",
+        "CVE-2026-115563": "OAuth client provider finding description",
     }
     review = {
         advisory: {
@@ -114,6 +115,11 @@ def test_advisory_dispositions_are_exact_and_require_complete_audit(tmp_path: Pa
         "CVE-2026-59951",
         *upgrade.ADDITIONAL_ADVISORIES,
     }
+    oauth_finding = next(item for item in findings if item["id"] == "CVE-2026-115563")
+    findings.remove(oauth_finding)
+    with pytest.raises(ValueError, match="exact reviewed fixture findings"):
+        check()
+    findings.append(oauth_finding)
     findings[1]["id"] = "CVE-unknown-fixture"
     with pytest.raises(ValueError, match="new reviewed disposition"):
         check()
@@ -155,3 +161,18 @@ def test_mcp_server_only_guard_rejects_client_apis(tmp_path: Path) -> None:
     module.write_text("from mcp.client.session import ClientSession\n")
     with pytest.raises(ValueError, match="MCP client APIs"):
         upgrade.require_mcp_server_only(source)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "OAuthClientProvider",
+        "ClientCredentialsOAuthProvider",
+        "PrivateKeyJWTOAuthProvider",
+        "RFC7523OAuthClientProvider",
+    ],
+)
+def test_server_only_guard_rejects_oauth_provider_references(tmp_path: Path, name: str) -> None:
+    (tmp_path / "server.py").write_text(f"provider_type = sdk.{name}\n")
+    with pytest.raises(ValueError, match="MCP client APIs"):
+        upgrade.require_mcp_server_only(tmp_path)

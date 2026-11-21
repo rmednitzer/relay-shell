@@ -32,6 +32,11 @@ BASELINE = ROOT / "tests/fixtures/upgrade-v0.3"
 ORIGIN = "http://127.0.0.1:8080"
 REDIRECT = "http://127.0.0.1:49152/callback"
 ADDITIONAL_ADVISORIES = {
+    "CVE-2026-115563": (
+        "GHSA-qx49-fqc8-xw99",
+        "not affected in the fixture: the signed baseline serves MCP over HTTP",
+        "the baseline uses no SDK OAuth client provider; the rehearsal client uses http.client",
+    ),
     "CVE-2026-116684": (
         "GHSA-w4fh-qvv9-3v23",
         "not affected in the isolated fixture: one local token issuer and resource server",
@@ -50,6 +55,10 @@ ADDITIONAL_ADVISORIES = {
 }
 MCP_CLIENT_API_NAMES = frozenset(
     {
+        "OAuthClientProvider",
+        "ClientCredentialsOAuthProvider",
+        "PrivateKeyJWTOAuthProvider",
+        "RFC7523OAuthClientProvider",
         "ClientSession",
         "ClientSessionGroup",
         "streamable_http_client",
