@@ -151,6 +151,12 @@
       platformAutomerge: false,
     },
     {
+      description: 'Require review of the binary that runs the required secret scan.',
+      matchManagers: ['custom.regex'],
+      matchPackageNames: ['gitleaks/gitleaks'],
+      automerge: false,
+    },
+    {
       description: 'Organize the dashboard without changing PR grouping or update eligibility.',
       matchManagers: [
         'pep621',
@@ -207,6 +213,16 @@
       ],
       depNameTemplate: 'caddyserver/caddy',
       datasourceTemplate: 'github-releases',
+      versioningTemplate: 'semver',
+    },
+    {
+      customType: 'regex',
+      description: 'Track the Gitleaks release installed by the secret-scan workflow.',
+      managerFilePatterns: ['/^\\.github/workflows/gitleaks\\.yml$/'],
+      matchStrings: ['(?:^|\\n)[ \\t]+GITLEAKS_VERSION: "(?<currentValue>\\d+\\.\\d+\\.\\d+)"'],
+      depNameTemplate: 'gitleaks/gitleaks',
+      datasourceTemplate: 'github-releases',
+      extractVersionTemplate: '^v(?<version>\\d+\\.\\d+\\.\\d+)$',
       versioningTemplate: 'semver',
     },
   ],
