@@ -50,6 +50,15 @@ provider behavior changes:
 - https://github.com/advisories/GHSA-rwrf-2pqf-9j8j
 - https://github.com/advisories/GHSA-w4fh-qvv9-3v23
 
+For CVE-2026-115563, the affected role is an HTTP client using one of the SDK's
+OAuth client providers. The signed v0.3.0 source implements the MCP server.
+The rehearsal sends requests to that server on loopback with Python's
+`http.client`. Before executing the baseline, the source check rejects references
+to the four client providers named in the advisory. The recovery receipt retains
+the finding for the frozen `mcp==1.28.1` fixture.
+
+https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-qx49-fqc8-xw99
+
 The baseline also stores raw OAuth credentials. Tests generate temporary fixture
 grants, verify their migration to hashed storage and verify that current code
 refuses legacy grants lacking resource binding. Reauthorization is required.
@@ -62,7 +71,7 @@ The current SDK revocation request model requires a `client_secret` field even
 for this public client. The fixture sends empty form text (no credential) and
 then verifies that both revoked access and refresh tokens are refused.
 
-All four reviewed advisories must remain present exactly once. The existing session
+All five reviewed advisories must remain present exactly once. The existing session
 advisory's complete description is frozen in `advisory-description.txt`; descriptions
 for the additional advisories are hash-bound in
 `advisory-description-hashes.json`. Both files are bound by `baseline.json`. Missing
