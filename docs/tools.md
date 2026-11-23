@@ -325,7 +325,16 @@ log (only a short fingerprint). When the broker is disabled, this reports so
 and changes nothing. Tier 0 (it arms ephemeral state and authorizes nothing on
 its own; the retried call is re-classified and re-admitted from scratch).
 
-Tests: `tests/test_broker.py`, `tests/test_tool_wrappers.py`.
+With `RELAY_SHELL_CONFIRM_APPROVAL=signature` (ADR 0015) the token alone does not
+arm: the plan response adds a one-line challenge (`relay-shell-confirm v1 {...}`
+naming the tool, the redacted arguments, the operation hash and the expiry), the
+operator signs it on their own machine with
+`ssh-keygen -Y sign -n relay-shell-confirm -f <key> <file>`, and the client passes the
+`.sig` contents as `signature`. Only a key in `RELAY_SHELL_CONFIRM_ALLOWED_SIGNERS` and
+only a signature over that token's own challenge arm it; the reply names the approving
+principal, and the audit record adds `approver` and `signature_sha256`.
+
+Tests: `tests/test_broker.py`, `tests/test_tool_wrappers.py`, `tests/test_confirm_signature.py`.
 
 ## Resources
 

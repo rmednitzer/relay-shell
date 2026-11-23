@@ -8,6 +8,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Opt-in operator approval for Tier-3 confirmations (ADR 0015):
+  `RELAY_SHELL_CONFIRM_APPROVAL=signature` with `RELAY_SHELL_CONFIRM_ALLOWED_SIGNERS`.
+  A plan returns a one-line challenge naming the tool, the redacted arguments, the
+  operation hash and the expiry. Only an SSH signature over that line
+  (`ssh-keygen -Y sign -n relay-shell-confirm`) by an allowed operator key arms the
+  token, passed as the new optional `signature` argument of `operation_confirm`. The
+  service account cannot approve its own calls this way, which a host-side approval verb
+  could not prevent. Verification uses asyncssh's SSHSIG support. The arm record adds
+  `approver` and `signature_sha256`, and `server_info.confirm` adds `approval` and
+  `signers`. The default (`client`) is unchanged.
+
+### Added
+
 - Every tool advertises MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`,
   `idempotentHint`, `openWorldHint`) so clients can auto-allow read-only diagnostics and
   prompt for the rest. `readOnlyHint` is derived from the policy's Tier-0 set;

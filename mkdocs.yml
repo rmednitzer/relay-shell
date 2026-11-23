@@ -102,3 +102,4 @@ nav:
       - 0012 · Cancel-safe session teardown: adr/0012-cancel-safe-session-teardown.md
       - 0013 · Open by default, with unsafe notices: adr/0013-open-by-default-with-unsafe-notices.md
       - 0014 · Fresh-process auditing and installer recovery: adr/0014-seccomp-launch-and-install-recovery.md
+      - 0015 · Signed operator approval: adr/0015-signed-operator-approval.md

@@ -655,7 +655,38 @@ exact operation and expire after `RELAY_SHELL_CONFIRM_TTL` seconds (default 120,
 range 5..3600). This is an added safeguard, never a bypass (the deny list and
 mode policy still run first), so it composes with any mode. Default off keeps
 the audit record byte-identical. `server_info.confirm` reports the live posture
-(`tier3`, `ttl`, `pending` token count).
+(`tier3`, `ttl`, `pending` token count, `approval`, `signers`).
+
+By default the client that received a token arms it itself (ADR 0009): friction, not a
+human approval. To require the operator, set `RELAY_SHELL_CONFIRM_APPROVAL=signature` and
+point `RELAY_SHELL_CONFIRM_ALLOWED_SIGNERS` at an OpenSSH allowed_signers file
+([ADR 0015](adr/0015-signed-operator-approval.md)). The file is root-owned, mode 0644, one
+line per operator key, for example:
+
+```text
+operator@example namespaces="relay-shell-confirm" sk-ssh-ed25519@openssh.com AAAA... operator
+```
+
+and the environment file sets:
+
+```text
+RELAY_SHELL_CONFIRM_TIER3=true
+RELAY_SHELL_CONFIRM_TTL=600
+RELAY_SHELL_CONFIRM_APPROVAL=signature
+RELAY_SHELL_CONFIRM_ALLOWED_SIGNERS=/etc/relay-shell/confirm-signers
+```
+
+A Tier-3 plan then returns a line starting `relay-shell-confirm v1`. The operator saves
+that line to a file on their own machine, reads it (it names the tool, the redacted
+arguments and the expiry), signs it with
+`ssh-keygen -Y sign -n relay-shell-confirm -f <key> <file>`, and hands the contents of
+`<file>.sig` back to the client, which passes them to
+`operation_confirm(token=..., signature=...)` and re-issues the call. Keep the signing key
+off the relay (a hardware `-sk` key adds touch). The file is read once at startup; any
+unparsable line, wildcard principal, `cert-authority` entry or group/other-writable file
+refuses startup (`relay-shell --check-config` reports it). A service account with root can
+still replace the file and restart the service, so cover the file with AIDE or the drift
+check and compare `server_info.confirm.signers` fingerprints after restarts.
 
 ### 8b. Windows targets over OpenSSH + PowerShell 7
 
@@ -715,6 +746,9 @@ annotated template. Operator-relevant ones not covered above:
 
 - **HTTP listener:** `RELAY_SHELL_HTTP_HOST` / `RELAY_SHELL_HTTP_PORT` (default
   `127.0.0.1:8080`; see §4).
+- **Tier-3 approval:** `RELAY_SHELL_CONFIRM_APPROVAL` (`client` default, or `signature`) and
+  `RELAY_SHELL_CONFIRM_ALLOWED_SIGNERS` (allowed_signers path, required for `signature`);
+  see §8a.
 - **Resource bounds:** `RELAY_SHELL_MAX_OUTPUT` / `_MAX_OUTPUT_HARD` (output
   caps, defaults 65536 and 1048576 bytes), `RELAY_SHELL_DEFAULT_TIMEOUT` / `_MAX_TIMEOUT`
   (timeout used when a `shell_exec` / `ssh_exec` caller omits it, default 60 s, + the clamp

@@ -29,6 +29,11 @@ confused-deputy replay). The gate lives only in the central runner, like the
 deny list and tier classifier, so it covers every Tier-3-capable tool without
 per-wrapper plumbing.
 
+Operator approval (ADR 0015, opt-in): constructed with a ``verifier``, the broker
+keeps the challenge line it issued with each token, :meth:`arm` refuses, and only
+:meth:`arm_signed` with an SSH signature over that exact line arms the token. The
+binding, single use, TTL and client checks are unchanged.
+
 This is a *safeguard on top of* the tier/mode policy, never a replacement: the
 deny list and mode checks still run first, and the retried call is
 re-classified and re-admitted from scratch. Enabling it adds friction to
@@ -72,6 +77,7 @@ class Challenge:
 
     token: str
     ttl: int
+    text: str = ""  # the line to sign, when operator approval is on
 
 
 @dataclass
@@ -80,6 +86,7 @@ class _Entry:
     expires_at: float  # monotonic-clock deadline
     client_id: str = ""  # authenticated client that planned it ("" = no identity)
     armed: bool = False
+    challenge: str = ""  # the line an approval must sign (operator approval only)
 
 
 class ConfirmationBroker:
@@ -97,8 +104,12 @@ class ConfirmationBroker:
         *,
         clock: Callable[[], float] = time.monotonic,
         max_pending: int = _MAX_PENDING,
+        verifier: Callable[[str, str], str | None] | None = None,
     ) -> None:
         self._ttl = max(1, int(ttl))
+        # `verifier(challenge, signature)` returns the approving principal or None.
+        # When set, only a signed approval arms a token (ADR 0015).
+        self._verifier = verifier
         self._clock = clock
         self._max_pending = max_pending
         self._lock = threading.Lock()
@@ -107,6 +118,11 @@ class ConfirmationBroker:
     @property
     def ttl(self) -> int:
         return self._ttl
+
+    @property
+    def requires_signature(self) -> bool:
+        """True when tokens can be armed only by :meth:`arm_signed`."""
+        return self._verifier is not None
 
     def _sweep(self, now: float) -> None:
         """Drop expired tokens, then hard-bound the store. Caller holds lock."""
@@ -123,25 +139,36 @@ class ConfirmationBroker:
             )[:overflow]:
                 del self._by_token[tok]
 
-    def plan(self, tool: str, op_key: str, client_id: str = "") -> Challenge:
+    def plan(
+        self,
+        tool: str,
+        op_key: str,
+        client_id: str = "",
+        describe: Callable[[str, str], str] | None = None,
+    ) -> Challenge:
         """Mint a fresh single-use token for ``(tool, op_key)`` owned by ``client_id``.
 
         Each call issues a new token; a prior un-armed token for the same
         operation is left to expire on its own (the sweep reclaims it). The
         token is unguessable (128 bits) and only useful within its TTL and
-        only for this exact operation.
+        only for this exact operation. With operator approval on,
+        ``describe(token, op_hash)`` renders the line the approver signs; it is
+        stored with the token and returned as :attr:`Challenge.text`.
         """
         now = self._clock()
         token = secrets.token_urlsafe(16)
+        op_hash = _op_hash(tool, op_key)
+        text = describe(token, op_hash) if (describe and self._verifier) else ""
         with self._lock:
             self._sweep(now)
             self._by_token[token] = _Entry(
-                op_hash=_op_hash(tool, op_key),
+                op_hash=op_hash,
                 expires_at=now + self._ttl,
                 client_id=client_id,
+                challenge=text,
             )
             self._sweep(now)  # re-bound after the insert
-        return Challenge(token=token, ttl=self._ttl)
+        return Challenge(token=token, ttl=self._ttl, text=text)
 
     def arm(self, token: str, client_id: str = "") -> bool:
         """Arm a pending token (the ``operation_confirm`` step).
@@ -151,8 +178,11 @@ class ConfirmationBroker:
         unknown, expired or foreign token (indistinguishable, so another client learns
         nothing about a token it did not plan). Arming authorizes nothing on its own: the
         retried call is still re-classified and re-admitted by the policy layer before
-        :meth:`consume` releases it.
+        :meth:`consume` releases it. With operator approval on this always
+        returns ``False``: only :meth:`arm_signed` arms a token.
         """
+        if self._verifier is not None:
+            return False
         now = self._clock()
         with self._lock:
             self._sweep(now)
@@ -161,6 +191,47 @@ class ConfirmationBroker:
                 return False
             entry.armed = True
             return True
+
+    def check_signature(self, token: str, client_id: str, signature: str) -> str | None:
+        """The principal whose signature approves this pending token, else ``None``.
+
+        Read-only: verifies without arming, so the caller can audit the approver
+        before the arm step runs. ``None`` for an unknown, expired or foreign
+        token, a missing verifier, or a signature that does not verify over the
+        challenge issued with this token.
+        """
+        if self._verifier is None or not signature:
+            return None
+        now = self._clock()
+        with self._lock:
+            self._sweep(now)
+            entry = self._by_token.get(token)
+            if entry is None or entry.client_id != client_id or not entry.challenge:
+                return None
+            challenge = entry.challenge
+        # Verify outside the lock: it is CPU work on caller-supplied bytes.
+        return self._verifier(challenge, signature)
+
+    def arm_signed(self, token: str, client_id: str, signature: str) -> str | None:
+        """Arm a pending token with an operator's signature; returns the approver.
+
+        The signature must verify over the exact challenge issued with this
+        token (which names the tool, the redacted arguments, the operation hash
+        and the expiry). Unknown, expired and foreign tokens are refused exactly
+        as in :meth:`arm`. The entry is re-checked after verification, so a
+        token that expired or was consumed meanwhile is not armed.
+        """
+        principal = self.check_signature(token, client_id, signature)
+        if principal is None:
+            return None
+        now = self._clock()
+        with self._lock:
+            self._sweep(now)
+            entry = self._by_token.get(token)
+            if entry is None or entry.client_id != client_id:
+                return None
+            entry.armed = True
+            return principal
 
     def consume(self, tool: str, op_key: str, client_id: str = "") -> bool:
         """Burn an armed token matching ``(tool, op_key)`` that ``client_id`` planned.

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime
 import ipaddress
 import json
 import logging
@@ -34,6 +35,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import ToolAnnotations
 
 from . import __version__, seccomp
+from .approval import SignatureVerifier, build_challenge, default_server_name
 from .audit import AuditLogger
 from .auth.resource import ResourceBoundMCPServer
 from .broker import ConfirmationBroker
@@ -164,6 +166,12 @@ def _find_sudo_binary() -> str:
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
     return ""
+
+
+def _utc_after(seconds: int) -> str:
+    """UTC wall-clock time ``seconds`` from now, ISO 8601 to the second."""
+    when = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=seconds)
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _confirm_op_key(policy_text: str, audit_args: dict[str, Any]) -> str:
@@ -479,6 +487,13 @@ class Relay:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        # Operator approval of Tier-3 confirmations (ADR 0015). Loaded before anything
+        # else so a bad allowed-signers file fails startup (and --check-config) early.
+        self.signers: SignatureVerifier | None = (
+            SignatureVerifier(settings.confirm_allowed_signers)
+            if settings.confirm_tier3 and settings.confirm_approval == "signature"
+            else None
+        )
         self.audit = AuditLogger(
             settings.audit_path,
             also_stderr=settings.audit_stderr,
@@ -488,7 +503,14 @@ class Relay:
         self.policy = Policy(settings.policy_mode, settings.policy_deny, settings.policy_allow)
         # Tier-3 confirmation broker (ADR 0009). None unless opted in; the default
         # configuration never consults it.
-        self.broker = ConfirmationBroker(settings.confirm_ttl) if settings.confirm_tier3 else None
+        self.broker = (
+            ConfirmationBroker(
+                settings.confirm_ttl,
+                verifier=self.signers.verify if self.signers is not None else None,
+            )
+            if settings.confirm_tier3
+            else None
+        )
         self.inventory = Inventory(settings.ssh_config, settings.inventory).load()
         self.sessions = SessionRegistry(
             settings.max_sessions,
@@ -602,13 +624,40 @@ class Relay:
             if self.broker.consume(tool, op_key, client_id):
                 confirm_action = "confirm_execute"
             else:
-                challenge = self.broker.plan(tool, op_key, client_id)
-                body = (
-                    f"[CONFIRM REQUIRED tier {int(decision.tier)} "
-                    f"({decision.tier.name}): this irreversible operation needs a second "
-                    f'step. Call operation_confirm(token="{challenge.token}") then re-issue '
-                    f"this exact call within {challenge.ttl}s.]"
-                )
+                ttl = self.broker.ttl
+                expires = _utc_after(ttl)
+
+                def _describe(token: str, op_hash: str) -> str:
+                    # The operator signs this line: tool, redacted args (never a raw
+                    # secret), the binding hash and the expiry (ADR 0015).
+                    return build_challenge(
+                        token=token,
+                        tool=tool,
+                        args=red,
+                        op_hash=op_hash,
+                        expires=expires,
+                        server=default_server_name(),
+                    )
+
+                challenge = self.broker.plan(tool, op_key, client_id, describe=_describe)
+                if challenge.text:
+                    body = (
+                        f"[CONFIRM REQUIRED tier {int(decision.tier)} "
+                        f"({decision.tier.name}): this irreversible operation needs the "
+                        "operator's signed approval. Show the operator the line below; they "
+                        "save it to a file and sign it on their own machine with\n"
+                        "  ssh-keygen -Y sign -n relay-shell-confirm -f <key> <file>\n"
+                        f'Then call operation_confirm(token="{challenge.token}", '
+                        "signature=<contents of <file>.sig>) and re-issue this exact call "
+                        f"within {challenge.ttl}s.]\n{challenge.text}"
+                    )
+                else:
+                    body = (
+                        f"[CONFIRM REQUIRED tier {int(decision.tier)} "
+                        f"({decision.tier.name}): this irreversible operation needs a second "
+                        f'step. Call operation_confirm(token="{challenge.token}") then '
+                        f"re-issue this exact call within {challenge.ttl}s.]"
+                    )
                 self.audit.record(
                     tool=tool,
                     args=red,
@@ -1737,6 +1786,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                     "tier3": cfg.confirm_tier3,
                     "ttl": cfg.confirm_ttl,
                     "pending": app.broker.pending() if app.broker is not None else 0,
+                    "approval": cfg.confirm_approval if cfg.confirm_tier3 else "",
+                    "signers": app.signers.describe() if app.signers is not None else [],
                 },
                 "seccomp": {
                     "notify": cfg.seccomp_notify,
@@ -1767,7 +1818,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         )
 
     @mcp.tool(annotations=_tool_annotations("operation_confirm"))
-    async def operation_confirm(token: str, ctx: Context | None = None) -> str:
+    async def operation_confirm(token: str, signature: str = "", ctx: Context | None = None) -> str:
         """Arm a Tier-3 confirmation token, then re-issue the original call.
 
         Second step of the opt-in confirmation flow (ADR 0009). When the
@@ -1775,18 +1826,49 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         irreversible (Tier 3) call first returns a token instead of running;
         pass that token here to arm it, then re-issue the *exact* same call to
         execute it. Tokens are single-use and expire after
-        ``RELAY_SHELL_CONFIRM_TTL`` seconds. When the broker is disabled this
-        reports that and changes nothing.
+        ``RELAY_SHELL_CONFIRM_TTL`` seconds. When the deployment requires the
+        operator's approval (``RELAY_SHELL_CONFIRM_APPROVAL=signature``, ADR 0015),
+        also pass ``signature``: the operator's ``ssh-keygen -Y sign -n
+        relay-shell-confirm`` output over the challenge line the plan returned.
+        You cannot create that signature yourself; ask the operator. When the
+        broker is disabled this reports that and changes nothing.
         """
 
         # The arming client must be the one the token was issued to (A14-C10b); the same
         # verified identity the audit record carries, never request metadata.
         _, arming_client = _ctx_ids(ctx)
+        signed = app.broker is not None and app.broker.requires_signature
+        # Verify before the runner so the audit record names the approving principal.
+        # Read-only (nothing is armed here); _work re-verifies and arms.
+        signer = (
+            app.broker.check_signature(token, arming_client, signature)
+            if signed and app.broker is not None
+            else None
+        )
 
         async def _work() -> tuple[str, int | None]:
             if app.broker is None:
                 return (
                     "[confirmation broker disabled (RELAY_SHELL_CONFIRM_TIER3 is off)]",
+                    None,
+                )
+            if app.broker.requires_signature:
+                if not signature:
+                    return (
+                        "[operator approval required: pass signature=<ssh-keygen -Y sign "
+                        "-n relay-shell-confirm output over the challenge line>; only the "
+                        "operator can create it]",
+                        None,
+                    )
+                principal = app.broker.arm_signed(token, arming_client, signature)
+                if principal is not None:
+                    return (
+                        f"[armed by {principal}: re-issue the exact Tier-3 call now to execute it]",
+                        None,
+                    )
+                return (
+                    "[invalid or expired confirmation token, or a signature that does not "
+                    "verify over its challenge]",
                     None,
                 )
             if app.broker.arm(token, arming_client):
@@ -1795,12 +1877,17 @@ def build_server(settings: Settings | None = None) -> MCPServer:
 
         # Audit the arm attempt, but never log the raw capability token: a
         # non-replayable fingerprint is enough to correlate with the plan
-        # record without putting a live token in the audit trail.
+        # record without putting a live token in the audit trail. With signature
+        # approval the record also names the verified approver (or "" if none).
         fingerprint = sha256_hex(token)[:12] if token else ""
+        audit_args: dict[str, Any] = {"token_sha256": fingerprint}
+        if signed:
+            audit_args["signature_sha256"] = sha256_hex(signature)[:12] if signature else ""
+            audit_args["approver"] = signer or ""
         return await app.run(
             tool="operation_confirm",
             ctx=ctx,
-            audit_args={"token_sha256": fingerprint},
+            audit_args=audit_args,
             policy_text="",
             max_output=1024,
             work=_work,
