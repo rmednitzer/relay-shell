@@ -165,6 +165,22 @@ def test_instructions_carry_tool_selection_guidance() -> None:
     assert "one workflow" in text  # spawn + session_* are not alternatives
 
 
+def test_instructions_mark_returned_content_untrusted() -> None:
+    """``_INSTRUCTIONS`` tells the client that tool output is data, not instructions.
+
+    relay-shell hands an agent with the service account's (often root) authority
+    whatever a host, file or log contains, which is the classic prompt-injection
+    path. The hint is guidance only (no output is filtered), but a future trim of
+    the string must not silently drop it.
+    """
+    from relay_shell import server as srv
+
+    text = " ".join(srv._INSTRUCTIONS.lower().split())
+    assert "untrusted content" in text
+    assert "not instructions" in text
+    assert "check with the operator" in text
+
+
 async def test_mode_selection_tools_cross_reference(settings: Settings) -> None:
     """The exec/spawn tool descriptions disambiguate each other.
 
@@ -181,3 +197,52 @@ async def test_mode_selection_tools_cross_reference(settings: Settings) -> None:
     # SSH: one-shot <-> PTY session cross-reference.
     assert "ssh_spawn" in desc["ssh_exec"]
     assert "ssh_exec" in desc["ssh_spawn"]
+
+
+def test_tool_hint_table_covers_exactly_the_registered_tools() -> None:
+    """Every registered tool has a hint row and no row names an unknown tool."""
+    from relay_shell import server as srv
+
+    assert set(srv._TOOL_HINTS) == _EXPECTED
+
+
+async def test_tool_annotations_follow_the_policy_tier(settings: Settings) -> None:
+    """Advertised MCP annotations match the policy and never claim more safety than it.
+
+    ``readOnlyHint`` must equal Tier-0 membership (so a client that auto-allows
+    read-only tools auto-allows only what ``readonly`` mode admits), except
+    ``operation_confirm``, which arms an irreversible call and so must reach the
+    client's approval prompt. A read-only tool is never marked destructive, and
+    the arbitrary-command tools are advertised as destructive and open-world.
+    """
+    from relay_shell.policy import is_read_only_tool
+
+    mcp = build_server(settings)
+    tools = {t.name: t for t in await mcp.list_tools()}
+    for name, tool in tools.items():
+        ann = tool.annotations
+        assert ann is not None, name
+        expected_read_only = is_read_only_tool(name) and name != "operation_confirm"
+        assert ann.read_only_hint is expected_read_only, name
+        if ann.read_only_hint:
+            assert ann.destructive_hint is False, name
+    for name in (
+        "shell_exec",
+        "shell_script",
+        "shell_spawn",
+        "ssh_exec",
+        "ssh_spawn",
+        "ssh_fanout",
+        "session_send",
+    ):
+        ann = tools[name].annotations
+        assert ann is not None
+        assert ann.read_only_hint is False and ann.destructive_hint is True, name
+        assert ann.open_world_hint is True, name
+    confirm = tools["operation_confirm"].annotations
+    assert confirm is not None
+    assert confirm.read_only_hint is False and confirm.destructive_hint is True
+    for name in ("server_info", "ssh_hosts", "session_list", "audit_tail", "ssh_forward_list"):
+        ann = tools[name].annotations
+        assert ann is not None
+        assert ann.read_only_hint is True and ann.idempotent_hint is True, name

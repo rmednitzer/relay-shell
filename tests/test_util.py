@@ -42,6 +42,15 @@ def test_gen_id_unique() -> None:
     assert gen_id("sh").startswith("sh-")
 
 
+def test_gen_id_carries_128_bits() -> None:
+    # Session and forward handles act as bearer handles; 128 random bits keeps
+    # them unguessable outside the shared session listing (was 48 bits).
+    prefix, _, body = gen_id("ssh").partition("-")
+    assert prefix == "ssh"
+    assert len(body) == 32
+    int(body, 16)  # hex only
+
+
 # --- property tests for truncate ------------------------------------------
 #
 # `truncate` underpins the output cap on every tool. These properties hold for any

@@ -68,6 +68,45 @@ Conventions:
 Each tool entry below names the test files that exercise it (file names, not line numbers,
 which drift). The tool-list contract is `tests/test_server.py`.
 
+## Tool annotations
+
+Every tool advertises MCP `ToolAnnotations` so a client can decide what to prompt for, for
+example auto-allowing the read-only diagnostics and asking before anything else. They are
+hints: they change no admission, classification or audit decision, and the MCP
+specification tells clients not to rely on them for security. `readOnlyHint` is true only
+for tools the policy always classifies Tier 0 (`policy.is_read_only_tool`), so a client that
+auto-allows read-only tools admits no more than `readonly` mode would. The one exception is
+`operation_confirm`: Tier 0 for admission, but advertised as not read-only and destructive,
+because arming a token approves an irreversible call and that should reach the client's
+approval prompt. `ssh_check` is advertised read-only although a host outside the inventory
+raises it to Tier 1. The other hints are static and describe what a tool can do, not what a
+given call does: the shell tools are destructive because any command may be.
+
+| Tool | readOnly | destructive | idempotent | openWorld |
+|------|----------|-------------|------------|-----------|
+| `shell_exec`, `shell_script`, `shell_spawn`, `ssh_exec`, `ssh_spawn`, `ssh_fanout`, `session_send` | no | yes | no | yes |
+| `ssh_upload`, `ssh_download` | no | yes | yes | yes |
+| `session_kill` | no | yes | no | no |
+| `operation_confirm` | no | yes | no | no |
+| `ssh_forward` | no | no | no | yes |
+| `ssh_keyscan` | no | no | yes | yes |
+| `session_resize`, `ssh_forward_close` | no | no | yes | no |
+| `ssh_check` | yes | no | yes | yes |
+| `session_list`, `ssh_forward_list`, `ssh_hosts`, `server_info`, `audit_tail` | yes | no | yes | no |
+| `session_recv` | yes | no | no (drains the buffer) | no |
+
+The table is pinned by `tests/test_server.py` (`_TOOL_HINTS` in `server.py` is the source).
+
+## Returned content is untrusted
+
+Tool results carry whatever the operated systems produce: command output, file contents,
+remote banners, session output, transferred files and audit records. Any of it may have been
+written by someone other than the operator and can contain text aimed at the model (prompt
+injection). The server instructions and the `operating_guide` prompt tell the client to treat
+it as data and to check with the operator before acting on requests found in it. relay-shell
+does not scan or filter output for this; `[NOTICE ...]` lines describe the command that ran,
+not what it returned.
+
 ## Choosing a tool
 
 The guidance the server hands the client at initialize (the `MCPServer` `instructions` string)

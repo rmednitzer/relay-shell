@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Every tool advertises MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`,
+  `idempotentHint`, `openWorldHint`) so clients can auto-allow read-only diagnostics and
+  prompt for the rest. `readOnlyHint` is derived from the policy's Tier-0 set;
+  `operation_confirm` is advertised as not read-only so arming a Tier-3 token reaches the
+  client's approval prompt. Hints only: admission, classification and audit are unchanged.
+  See `docs/tools.md` (Tool annotations).
+- The server instructions and the `operating_guide` prompt state that returned content
+  (command output, files, banners, session output, audit records) is untrusted data, not
+  instructions. Guidance only; no output is filtered.
+
+### Changed
+
+- Session and forward ids carry 128 random bits (`sh-`/`ssh-`/`fwd-` plus 32 hex
+  characters) instead of 48. Defence in depth: every approved client can already list
+  them, so this is not a fix for a reachable guessing attack. Clients that parsed the old
+  12-character form need no change beyond accepting the longer id.
+
 ## [0.5.3] - 2026-11-12
 
 ### Fixed

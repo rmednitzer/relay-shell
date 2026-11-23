@@ -43,7 +43,9 @@ The trust boundary is the MCP transport. Treat everything arriving over it as
 potentially attacker-influenced (prompt injection through tool results, file
 contents, or remote command output). The controls below reduce risk within the
 deployment posture. Command classification and redaction are heuristic; arbitrary
-shell execution is not a containment boundary:
+shell execution is not a containment boundary. The untrusted-content guidance in the
+server instructions and `operating_guide`, and the MCP tool annotations
+(`docs/tools.md`), are hints to the client, not controls:
 
 - **Tiered authority** (`docs/adr/0003-tiered-authority.md`). Every call is
   classified Tier 0 (read-only) to Tier 3 (irreversible). `RELAY_SHELL_POLICY_MODE`:
