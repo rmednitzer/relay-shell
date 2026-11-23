@@ -11,10 +11,10 @@ that received the token. ADR 0009 says so plainly: "a client fully in control ca
 call `operation_confirm` itself and proceed". The gate is friction against
 single-turn persuasion, not a human approval.
 
-The 2026-11-23 comparison with the Vertex control plane found the same gap there
-(Vertex ADR-011: "the digest is not human approval") and a deployment where it
-matters: the production relay runs with `RELAY_SHELL_CONFIRM_TIER3=true`, so it
-pays for the extra step without getting a human in the loop. MCP tool annotations
+A review against a sibling MCP control plane (as in ADR 0009) found the same gap
+there: a confirmation digest held by the requesting model is not human approval.
+Any deployment that sets `RELAY_SHELL_CONFIRM_TIER3=true` pays for the extra step
+without getting a human in the loop. MCP tool annotations
 (`operation_confirm` advertised as not read-only, PR #298) make a client prompt
 more likely, but only on clients that honour annotations.
 
@@ -123,9 +123,9 @@ pending-token cap.
 - Operators need an SSH key outside the relay and a way to move the challenge line
   and the signature between the chat and their terminal. That is deliberate cost
   for rare irreversible work.
-- Vertex's ADR-011 plans passkey approval on a server-rendered page. A shared
-  approval service could replace this mechanism later; the broker's verifier hook
-  is the only integration point.
+- A passkey approval on a server-rendered page, or a shared approval service,
+  could replace this mechanism later; the broker's verifier hook is the only
+  integration point.
 
 ## Rejected alternatives
 
