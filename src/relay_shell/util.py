@@ -47,6 +47,15 @@ def truncate(text: str, limit: int) -> str:
     return f"{head}\n\n[TRUNCATED - {len(raw)} bytes total, {limit} shown]"
 
 
+# 128 bits of entropy (defence in depth). Session and forward handles act as
+# bearer handles: whoever presents one can drive the PTY or close the forward.
+# Today every approved client can already list them (sessions are shared by
+# design, docs/auth.md), so guessing adds nothing; the wider id keeps handles
+# unguessable if they ever appear where the listing does not (logs, transcripts,
+# a future per-client view). The previous token_hex(6) gave 48 bits.
+_ID_ENTROPY_BYTES = 16
+
+
 def gen_id(prefix: str) -> str:
-    """A short, unguessable id with a human-readable prefix."""
-    return f"{prefix}-{secrets.token_hex(6)}"
+    """An unguessable id (128 random bits, hex) with a human-readable prefix."""
+    return f"{prefix}-{secrets.token_hex(_ID_ENTROPY_BYTES)}"

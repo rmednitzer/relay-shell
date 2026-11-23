@@ -27,7 +27,15 @@ from enum import IntEnum
 
 from . import patterns
 
-__all__ = ["Assessment", "Policy", "PolicyDecision", "Tier", "assess", "classify"]
+__all__ = [
+    "Assessment",
+    "Policy",
+    "PolicyDecision",
+    "Tier",
+    "assess",
+    "classify",
+    "is_read_only_tool",
+]
 
 
 class Tier(IntEnum):
@@ -64,6 +72,19 @@ _READ_ONLY_TOOLS = frozenset(
         "operation_confirm",
     }
 )
+
+
+def is_read_only_tool(tool: str) -> bool:
+    """Whether ``assess`` classifies ``tool`` Tier 0 whatever its arguments.
+
+    A call site may still raise the floor (``ssh_check`` does for a host outside
+    the inventory).
+
+    The server derives each tool's MCP ``readOnlyHint`` from this, so the
+    advertised hint and the tier the policy applies cannot drift apart.
+    """
+    return tool in _READ_ONLY_TOOLS
+
 
 # Tools whose primary effect is to change remote/local state.
 _MUTATING_TOOLS = frozenset({"ssh_upload", "ssh_download", "ssh_forward"})
