@@ -146,6 +146,7 @@ Every option below is opt-in and they combine:
 | Observe only | `RELAY_SHELL_POLICY_MODE=readonly` |
 | Refuse specific text (checked first, in every mode) | `RELAY_SHELL_POLICY_DENY` |
 | Two-step confirmation for Tier-3 calls | `RELAY_SHELL_CONFIRM_TIER3=true` |
+| Tier-3 calls approved only by an operator's SSH signature | also `RELAY_SHELL_CONFIRM_APPROVAL=signature` + `RELAY_SHELL_CONFIRM_ALLOWED_SIGNERS` |
 | Verified SSH host keys, no per-call downgrade | `RELAY_SHELL_SSH_KNOWN_HOSTS=strict`, `RELAY_SHELL_SSH_ALLOW_WEAKER_KNOWN_HOSTS=false` |
 | Tamper-evident audit | `RELAY_SHELL_AUDIT_CHAIN=true`, plus the off-host sync in `deploy/evidence/` |
 | Authenticated HTTP transport | `RELAY_SHELL_AUTH_ENABLED=true` (OAuth 2.1) behind the Caddy edge |

@@ -26,6 +26,7 @@ _TRANSPORTS = {"stdio", "http"}
 _POLICY_MODES = {"open", "guarded", "readonly"}
 _KNOWN_HOSTS = {"strict", "accept-new", "ignore"}
 _AUDIT_FORMATS = {"jsonl", "cef", "leef"}
+_CONFIRM_APPROVALS = {"client", "signature"}
 _AUDIT_SESSION_INPUT = {"redacted", "hash"}
 
 
@@ -107,6 +108,13 @@ class Settings(BaseSettings):
     # minted token stays valid before it must be re-planned.
     confirm_tier3: bool = False
     confirm_ttl: int = Field(default=120, ge=5, le=3600)
+    # Who may arm a confirmation token (ADR 0015). `client` (default, ADR 0009): the
+    # MCP client that planned it, via `operation_confirm(token)`. `signature`: only an
+    # SSH signature over the challenge line, made with a key listed in
+    # `confirm_allowed_signers` (OpenSSH allowed_signers format, read once at startup),
+    # in the `relay-shell-confirm` namespace. Needs `confirm_tier3=true`.
+    confirm_approval: str = "client"
+    confirm_allowed_signers: str = ""
 
     # Audit
     audit_path: str = "/var/log/relay-shell/audit.jsonl"
@@ -242,6 +250,28 @@ class Settings(BaseSettings):
                 "RELAY_SHELL_ALLOW_UNAUTH_NETWORK=true if an authenticating proxy is the "
                 "only way to reach the port"
             )
+        return self
+
+    @field_validator("confirm_approval")
+    @classmethod
+    def _v_confirm_approval(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in _CONFIRM_APPROVALS:
+            raise ValueError(f"confirm_approval must be one of {sorted(_CONFIRM_APPROVALS)}")
+        return v
+
+    @model_validator(mode="after")
+    def _v_signature_approval(self) -> Settings:
+        # Signature approval only means something when the broker exists, and it is
+        # useless without signers; refuse both at startup rather than run without it.
+        if self.confirm_approval == "signature":
+            if not self.confirm_tier3:
+                raise ValueError("confirm_approval=signature requires confirm_tier3=true")
+            if not self.confirm_allowed_signers.strip():
+                raise ValueError(
+                    "confirm_approval=signature requires confirm_allowed_signers "
+                    "(an OpenSSH allowed_signers file)"
+                )
         return self
 
     @model_validator(mode="after")

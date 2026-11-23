@@ -234,3 +234,12 @@ STPA trace (authority handover; an approval click alone is not the argument):
   client from confirming its own operation, and an unauthenticated deployment has a single
   identity by construction. The broker remains a friction safeguard, not a sandbox
   (ADR 0002).
+
+### 2026-11-23 follow-up: operator approval (ADR 0015)
+
+The "a client fully in control can call `operation_confirm` itself" limit is now
+addressable where it matters: [ADR 0015](0015-signed-operator-approval.md) adds an
+opt-in mode in which only an SSH signature over the server-issued challenge line,
+made with an allowed operator key, arms a token. The binding, TTL, single use and
+client binding above are unchanged; the default (`client`) keeps this ADR's
+behaviour and record shape.

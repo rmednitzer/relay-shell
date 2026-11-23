@@ -46,7 +46,7 @@ if applicable: "Closes F-6 from docs/runbook.md". -->
 
 Tick if this PR touches any of: `patterns.py`, `audit.py`, `redaction.py`,
 `policy.py`, the `Relay.run()` body or a resource handler in `server.py`,
-`auth/oauth.py`, `metrics.py`, `seccomp.py`, `broker.py`, `sshpool.py`, `verifier.py`,
+`auth/oauth.py`, `metrics.py`, `seccomp.py`, `broker.py`, `approval.py`, `sshpool.py`, `verifier.py`,
 `deploy/install*.sh`, `deploy/Caddyfile`, `deploy/evidence/*`, or the release/SBOM
 workflows and their tooling locks. (Full list with rationale: runbook §3.3.)
 

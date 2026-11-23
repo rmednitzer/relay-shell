@@ -116,6 +116,7 @@ syscall and is default off, so the lifecycle above is otherwise unchanged.
 | `policy` | Tier 0..3 classification with its basis (consumes `patterns`); `open`/`guarded`/`readonly` admission. |
 | `notices` | The `[NOTICE ...]` text for risky admitted calls and the standing `server_info.warnings` list (ADR 0013). |
 | `broker` | Opt-in Tier-3 confirmation broker: single-use, TTL-bounded tokens bound to the operation (`sha256(tool \0 op_key)`) and to the planning client, gating IRREVERSIBLE ops behind a plan → arm → execute handshake ([ADR 0009](adr/0009-tier3-confirmation-broker.md)). |
+| `approval` | Opt-in operator approval of Tier-3 confirmations: the one-line challenge the operator signs and the SSHSIG verifier over an allowed-signers file loaded at startup ([ADR 0015](adr/0015-signed-operator-approval.md)). |
 | `metrics` | In-memory Prometheus counter + gauge registry rendered at `GET /metrics` (HTTP only). |
 | `seccomp` | Opt-in, audit-only seccomp-notify channel: a version-pinned BPF filter + per-spawn supervisor that appends `syscall_notify` lines for a spawned child's syscalls, never blocking. Covers one-shot executors and local PTY sessions (the transport adopts the monitor for the session's lifetime). `CAP_SYS_ADMIN`-gated, Linux/`x86_64` ([ADR 0006](adr/0006-seccomp-notify-audit-channel.md)). |
 | `errors` | Error types and the uniform `[ERROR: ...]` formatter. |
